@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..claude_worker import ClaudeWorkerError, invoke_claude_run
 from ..db import get_db
 from ..models import ClaudeRun, EvidenceBank, Job, JobCapture, MasterResume
 from ..run_directory import (
@@ -77,3 +78,11 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> ClaudeRun:
     if run is None:
         raise HTTPException(status_code=404, detail="claude run not found")
     return run
+
+
+@router.post("/{run_id}/invoke", response_model=ClaudeRunRead)
+def invoke_run(run_id: str, db: Session = Depends(get_db)) -> ClaudeRun:
+    try:
+        return invoke_claude_run(run_id, db)
+    except ClaudeWorkerError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
