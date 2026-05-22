@@ -6,6 +6,8 @@
   --accent: #6e8cff;
   --content-bg: #f7f7fb;
   --content-fg: #1c1c22;
+  --error: #c0364f;
+  --border: #d6d6df;
 }
 
 * {
@@ -50,7 +52,9 @@ html,
 }
 
 .nav-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 8px 12px;
   border-radius: 6px;
   color: inherit;
@@ -67,6 +71,21 @@ html,
   color: white;
 }
 
+.nav-badge {
+  background: var(--accent);
+  color: white;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.nav-link-active .nav-badge {
+  background: white;
+  color: var(--accent);
+}
+
 .content {
   flex: 1;
   background: var(--content-bg);
@@ -81,4 +100,95 @@ html,
 
 .placeholder p {
   color: #555;
+}
+
+.capture-list,
+.job-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.capture-list-item,
+.job-list-item {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.capture-meta,
+.job-meta {
+  color: #666;
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+  max-width: 640px;
+}
+
+.field span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea,
+.field select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.field input[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+button[type="submit"] {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error {
+  color: var(--error);
+  font-weight: 500;
+}
+
+.job-description {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  max-width: 720px;
+}
+
+.run-meta dt {
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.run-meta dd {
+  margin: 0 0 8px 0;
 }

@@ -1,0 +1,174 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
+const {
+  getJobMock,
+  listMasterResumesMock,
+  listEvidenceBanksMock,
+  createRunMock,
+  getRunMock,
+  listCapturesMock,
+  ApiErrorMock,
+} = vi.hoisted(() => {
+  class ApiErrorMock extends Error {
+    status: number;
+    body: unknown;
+    constructor(message: string, status: number, body: unknown) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+      this.body = body;
+    }
+  }
+  return {
+    getJobMock: vi.fn(),
+    listMasterResumesMock: vi.fn(),
+    listEvidenceBanksMock: vi.fn(),
+    createRunMock: vi.fn(),
+    getRunMock: vi.fn(),
+    listCapturesMock: vi.fn(),
+    ApiErrorMock,
+  };
+});
+
+vi.mock("../api", () => ({
+  getJob: getJobMock,
+  listMasterResumes: listMasterResumesMock,
+  listEvidenceBanks: listEvidenceBanksMock,
+  createRun: createRunMock,
+  getRun: getRunMock,
+  listCaptures: listCapturesMock,
+  ApiError: ApiErrorMock,
+}));
+
+import { JobDetailPage } from "../pages/JobDetailPage";
+import { RunDetailPage } from "../pages/RunDetailPage";
+
+function renderJob(jobId: string) {
+  return render(
+    <MemoryRouter initialEntries={[`/jobs/${jobId}`]}>
+      <Routes>
+        <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+        <Route path="/runs/:runId" element={<RunDetailPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+const job = {
+  id: "job-1",
+  source_platform: "linkedin",
+  external_url: "https://www.linkedin.com/jobs/view/1",
+  external_job_id: null,
+  company: "Acme Corp",
+  title: "Senior Engineer",
+  location: "Remote",
+  description_text: "Build cool things.",
+  application_method: "easy_apply",
+  created_from_capture_id: null,
+  created_at: "2026-05-22T12:01:00Z",
+  updated_at: "2026-05-22T12:01:00Z",
+};
+
+const resume = {
+  id: "resume-1",
+  name: "Calvin – Generalist",
+  source_path: null,
+  content_markdown: "# Calvin",
+  created_at: "2026-05-22T10:00:00Z",
+  updated_at: "2026-05-22T10:00:00Z",
+};
+
+const evidenceBank = {
+  id: "bank-1",
+  name: "Backend evidence",
+  source_path: null,
+  content_markdown: "# Evidence",
+  created_at: "2026-05-22T10:00:00Z",
+  updated_at: "2026-05-22T10:00:00Z",
+};
+
+const newRun = {
+  id: "run-1",
+  job_id: "job-1",
+  master_resume_id: "resume-1",
+  evidence_bank_id: "bank-1",
+  run_dir: "runs/run-1",
+  status: "created",
+  prompt_hash: "p",
+  input_hash: "i",
+  output_hash: null,
+  created_at: "2026-05-22T12:02:00Z",
+  started_at: null,
+  completed_at: null,
+  error_message: null,
+};
+
+describe("JobDetailPage generate resume flow", () => {
+  beforeEach(() => {
+    getJobMock.mockResolvedValue(job);
+    listMasterResumesMock.mockResolvedValue([resume]);
+    listEvidenceBanksMock.mockResolvedValue([evidenceBank]);
+    getRunMock.mockResolvedValue(newRun);
+    listCapturesMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates a run and navigates to the run page", async () => {
+    const user = userEvent.setup();
+    createRunMock.mockResolvedValue(newRun);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+    await user.selectOptions(
+      screen.getByLabelText(/evidence bank/i),
+      "bank-1",
+    );
+
+    await user.click(screen.getByRole("button", { name: /generate resume/i }));
+
+    await waitFor(() =>
+      expect(createRunMock).toHaveBeenCalledWith({
+        job_id: "job-1",
+        master_resume_id: "resume-1",
+        evidence_bank_id: "bank-1",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("blocks generate when no master resume is selected", async () => {
+    const user = userEvent.setup();
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: /generate resume/i }));
+
+    expect(
+      await screen.findByText(/pick a master resume/i),
+    ).toBeInTheDocument();
+    expect(createRunMock).not.toHaveBeenCalled();
+  });
+});
