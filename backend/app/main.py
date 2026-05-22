@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .db import Base, engine
-from .routers import applications, captures, evidence_banks, jobs, master_resumes
+from .routers import applications, captures, evidence_banks, jobs, master_resumes, runs
 
 
 def create_app() -> FastAPI:
@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
     app.include_router(master_resumes.router)
     app.include_router(evidence_banks.router)
     app.include_router(applications.router)
+    app.include_router(runs.router)
 
     return app
 
