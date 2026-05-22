@@ -121,6 +121,65 @@ cmd_list() {
   done < <(yaml_query list)
 }
 
+
+cmd_run_interactive() {
+  local task_id="$1"
+
+  load_task "$task_id"
+
+  ensure_clean_git_tree
+  ensure_dependencies_done "$task_id"
+
+  local prompt_file
+  prompt_file="$(mktemp "/tmp/jobapply-agent-${task_id}.XXXXXX.md")"
+
+  cat > "$prompt_file" <<EOF
+# Agent Task: $TASK_ID
+
+Read and execute the task file exactly:
+
+\`\`\`text
+$TASK_FILE
+\`\`\`
+
+Before editing:
+- read the task file
+- read all background docs it references
+- state the intended scope briefly
+
+During implementation:
+- stay within scope
+- respect allowed/forbidden files if listed
+- do not make unrelated changes
+
+After implementation:
+- run the verification commands listed in the task
+- stage changes
+- commit with the exact commit message required by the task
+- do not push
+
+Task file contents:
+
+$(cat "$TASK_FILE")
+EOF
+
+  echo "Starting interactive Claude Code for task $TASK_ID"
+  echo "  task file: $TASK_FILE"
+  echo "  worktree:  $WORKTREE"
+  echo "  prompt:    $prompt_file"
+  echo
+  echo "Claude Code will open interactively so you can approve tool prompts."
+  echo "If Claude does not automatically read the prompt, paste this:"
+  echo
+  echo "Read and execute: $prompt_file"
+  echo
+
+  "$CLAUDE_BIN" \
+    --worktree "$WORKTREE" \
+    --permission-mode "${CLAUDE_PERMISSION_MODE:-acceptEdits}" \
+    "$prompt_file"
+}
+
 cmd_status() {
   local current_status="" status id
   while IFS=$'\t' read -r status id; do
@@ -292,6 +351,7 @@ agentctl.sh - agent task orchestration harness
 
 Usage:
   scripts/agentctl.sh run <task-id>
+  scripts/agentctl.sh run-interactive <task-id>
   scripts/agentctl.sh review <task-id>
   scripts/agentctl.sh status
   scripts/agentctl.sh list
@@ -305,6 +365,8 @@ main() {
   if [[ "$#" -gt 0 ]]; then shift; fi
   case "$cmd" in
     run)    cmd_run "$@" ;;
+    run-interactive) require_task_id
+	    cmd_run_interactive "$TASK_ID";;
     review) cmd_review "$@" ;;
     status) cmd_status "$@" ;;
     list)   cmd_list "$@" ;;
