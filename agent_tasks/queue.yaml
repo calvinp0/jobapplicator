@@ -70,7 +70,7 @@ tasks:
     file: "agent_tasks/005-extension-capture.md"
     branch: "agent/005-extension-capture"
     worktree: "agent-005-extension-capture"
-    status: "ready"
+    status: "done"
     depends_on:
       - "002-backend-models"
       - "003-agent-orchestration"
