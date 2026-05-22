@@ -151,3 +151,21 @@ class ClaudeRunRead(_ORMModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     error_message: Optional[str]
+
+
+# ---- ResumeVersion ----
+
+class ResumeVersionRead(_ORMModel):
+    id: str
+    job_id: str
+    master_resume_id: str
+    claude_run_id: Optional[str]
+    version_number: int
+    content_markdown: Optional[str]
+    docx_path: Optional[str]
+    pdf_path: Optional[str]
+    content_hash: Optional[str]
+    prompt_hash: Optional[str]
+    source: str
+    approved_at: Optional[datetime]
+    created_at: datetime
