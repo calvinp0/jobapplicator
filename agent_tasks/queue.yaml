@@ -145,7 +145,7 @@ tasks:
     file: "agent_tasks/010-frontend-job-capture-flow.md"
     branch: "agent/010-frontend-job-capture-flow"
     worktree: "agent-010-frontend-job-capture-flow"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "005-extension-capture"
       - "009-frontend-shell"
