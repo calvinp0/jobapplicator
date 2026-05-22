@@ -87,22 +87,32 @@ The run command:
 4. Verifies that every entry in `depends_on` has status `done`.
 5. Verifies the current git tree is clean.
 6. Refuses to re-run a task whose status is already `done`.
-7. Starts Claude Code with `--worktree <worktree>` and the permission mode from
+7. Ensures the task worktree exists. If a worktree whose final path segment
+   matches the task's `worktree` field is not already registered with git, the
+   harness creates one at `.claude/worktrees/<worktree>` on a new branch
+   `worktree-<worktree>` branched from `main`. Tasks whose worktree is `main`
+   skip this step.
+8. If the worktree branch is behind `main`, merges `main` into it with
+   `--no-edit`. If the merge has conflicts, the harness aborts the merge
+   (`git merge --abort`) and exits non-zero so the operator can resolve
+   manually.
+9. Starts Claude Code with `--worktree <worktree>` and the permission mode from
    `CLAUDE_PERMISSION_MODE` (default `acceptEdits`).
-8. Passes the full task file content into the Claude prompt, along with
-   instructions to:
-   - read the referenced background documents
-   - stay within the task's scope
-   - touch only files inside `allowed_paths`
-   - run the listed verification commands
-   - stage and commit changes locally with the commit message named in the task
-   - **not** push
-9. After Claude returns, prints recent commits and `git status`.
+10. Passes the full task file content into the Claude prompt, along with
+    instructions to:
+    - read the referenced background documents
+    - stay within the task's scope
+    - touch only files inside `allowed_paths`
+    - run the listed verification commands
+    - stage and commit changes locally with the commit message named in the task
+    - **not** push
+11. After Claude returns, prints recent commits, `git status`, and the exact
+    next command (`scripts/agentctl.sh review <task-id>`).
 
 If the local Claude Code build does not support `--worktree` or
-`--permission-mode`, the equivalent manual workflow is to create the worktree
-with `git worktree add` and run Claude Code from inside it. The script is short
-enough that adjusting the invocation is straightforward.
+`--permission-mode`, the equivalent manual workflow is to run Claude Code from
+inside the worktree path printed by the harness. The script is short enough
+that adjusting the invocation is straightforward.
 
 ## Review Command
 
@@ -137,7 +147,11 @@ The harness's own behavior is independently verifiable with:
 bash -n scripts/agentctl.sh
 scripts/agentctl.sh list
 scripts/agentctl.sh status
+scripts/agentctl.sh ready
 ```
+
+`ready` is a convenience query that filters `list` to only tasks whose
+status is `ready` — i.e. tasks the operator can dispatch right now.
 
 ## Merge Policy
 
