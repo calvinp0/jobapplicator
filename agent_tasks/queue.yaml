@@ -175,7 +175,7 @@ tasks:
     file: "agent_tasks/012-improve-agent-orchestration.md"
     branch: "agent/012-agent-orchestration-automation"
     worktree: "agent-012-agent-orchestration-automation"
-    status: "ready"
+    status: "done"
     depends_on:
       - "003-agent-orchestration"
     verification:
