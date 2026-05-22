@@ -1,0 +1,83 @@
+# Agent task queue.
+#
+# This file is read by scripts/agentctl.sh.
+# See docs/contracts/agent_orchestration.md for the field contract
+# and status semantics.
+
+tasks:
+  - id: "001-scaffold"
+    title: "Normalize project scaffold"
+    file: "agent_tasks/001-scaffold-project.md"
+    branch: "main"
+    worktree: "main"
+    status: "done"
+    depends_on: []
+    verification:
+      - "tree -a -I '.git|__pycache__|node_modules'"
+    allowed_paths:
+      - "**"
+
+  - id: "002-backend-models"
+    title: "Add backend models and capture API"
+    file: "agent_tasks/002-backend-models-and-capture-api.md"
+    branch: "main"
+    worktree: "main"
+    status: "done"
+    depends_on:
+      - "001-scaffold"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/**"
+      - "docs/contracts/api_capture_payload.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "003-agent-orchestration"
+    title: "Add agent orchestration harness"
+    file: "agent_tasks/003-agent-orchestration-harness.md"
+    branch: "agent/003-agent-orchestration"
+    worktree: "agent-003-agent-orchestration"
+    status: "ready"
+    depends_on:
+      - "002-backend-models"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh list"
+      - "scripts/agentctl.sh status"
+    allowed_paths:
+      - "scripts/**"
+      - "agent_tasks/queue.yaml"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/003-agent-orchestration-harness.md"
+
+  - id: "004-extension-capture"
+    title: "Add browser extension current-page capture"
+    file: "agent_tasks/004-extension-capture.md"
+    branch: "agent/004-extension-capture"
+    worktree: "agent-004-extension-capture"
+    status: "planned"
+    depends_on:
+      - "003-agent-orchestration"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "extension/**"
+      - "docs/contracts/browser_extension_capture.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "005-run-directory-writer"
+    title: "Add Claude run directory writer"
+    file: "agent_tasks/005-run-directory-writer.md"
+    branch: "agent/005-run-directory-writer"
+    worktree: "agent-005-run-directory-writer"
+    status: "planned"
+    depends_on:
+      - "003-agent-orchestration"
+      - "002-backend-models"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/**"
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/queue.yaml"
