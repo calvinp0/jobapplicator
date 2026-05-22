@@ -123,61 +123,50 @@ cmd_list() {
 
 
 cmd_run_interactive() {
-  local task_id="$1"
+  local task_id="${1:-}"
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh run-interactive <task-id>"
+  require_queue
+  require_python_yaml
 
-  load_task "$task_id"
+  local status task_file worktree
+  status="$(yaml_query status_of "$task_id")"
+  task_file="$(yaml_query field "$task_id" file)"
+  worktree="$(yaml_query field "$task_id" worktree)"
 
-  ensure_clean_git_tree
-  ensure_dependencies_done "$task_id"
+  [[ -n "$task_file" ]] || die "task '$task_id' has no 'file' field"
+  [[ -n "$worktree" ]] || die "task '$task_id' has no 'worktree' field"
 
-  local prompt_file
-  prompt_file="$(mktemp "/tmp/jobapply-agent-${task_id}.XXXXXX.md")"
+  local abs_task_file="$REPO_ROOT/$task_file"
+  [[ -f "$abs_task_file" ]] || die "task file not found: $abs_task_file"
 
-  cat > "$prompt_file" <<EOF
-# Agent Task: $TASK_ID
+  if [[ "$status" == "done" ]]; then
+    err "task '$task_id' is already marked done; refusing to re-run"
+    exit 1
+  fi
 
-Read and execute the task file exactly:
+  check_dependencies "$task_id"
+  ensure_clean_worktree
 
-\`\`\`text
-$TASK_FILE
-\`\`\`
+  local prompt
+  prompt="$(build_run_interactive_prompt "$task_id" "$abs_task_file")"
 
-Before editing:
-- read the task file
-- read all background docs it references
-- state the intended scope briefly
+  printf 'Starting interactive Claude Code for task %s\n' "$task_id"
+  printf '  task file: %s\n' "$task_file"
+  printf '  worktree:  %s\n' "$worktree"
+  printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
+  printf '\nInteractive supervised mode: Claude will stop before committing and wait for you to type "commit".\n\n'
 
-During implementation:
-- stay within scope
-- respect allowed/forbidden files if listed
-- do not make unrelated changes
+  if ! "$CLAUDE_BIN" \
+      --worktree "$worktree" \
+      --permission-mode "$CLAUDE_PERMISSION_MODE" \
+      "$prompt"; then
+    die "Claude Code exited with a non-zero status"
+  fi
 
-After implementation:
-- run the verification commands listed in the task
-- stage changes
-- commit with the exact commit message required by the task
-- do not push
-
-Task file contents:
-
-$(cat "$TASK_FILE")
-EOF
-
-  echo "Starting interactive Claude Code for task $TASK_ID"
-  echo "  task file: $TASK_FILE"
-  echo "  worktree:  $WORKTREE"
-  echo "  prompt:    $prompt_file"
-  echo
-  echo "Claude Code will open interactively so you can approve tool prompts."
-  echo "If Claude does not automatically read the prompt, paste this:"
-  echo
-  echo "Read and execute: $prompt_file"
-  echo
-
-  "$CLAUDE_BIN" \
-    --worktree "$WORKTREE" \
-    --permission-mode "${CLAUDE_PERMISSION_MODE:-acceptEdits}" \
-    "$prompt_file"
+  printf '\nSession ended. Recent commits:\n'
+  git -C "$REPO_ROOT" log --oneline -5
+  printf '\nGit status:\n'
+  git -C "$REPO_ROOT" status --short
 }
 
 cmd_status() {
@@ -229,6 +218,35 @@ Required behavior:
 - Stage and commit your changes locally with the commit message the task specifies.
 - Do not push.
 - Do not modify agent_tasks/queue.yaml status fields; the user will mark the task done after review.
+
+Task file: ${task_file}
+
+----- BEGIN TASK FILE -----
+$(cat "$task_file")
+----- END TASK FILE -----
+EOF
+}
+
+build_run_interactive_prompt() {
+  local task_id="$1" task_file="$2"
+  cat <<EOF
+You are executing agent task ${task_id}.
+
+You are running in interactive supervised mode.
+
+Read and execute the task exactly. Stay within scope, obey allowed/forbidden paths, and do not make unrelated changes.
+
+Implement the requested changes and run the verification commands listed in the task.
+
+After verification, show:
+- git status --short
+- git diff --stat
+- git diff --name-only
+- test/verification results
+
+Do not stage or commit yet.
+
+Stop and ask the user to type "commit" before staging changes and committing with the exact commit message required by the task. Do not push.
 
 Task file: ${task_file}
 
@@ -365,8 +383,7 @@ main() {
   if [[ "$#" -gt 0 ]]; then shift; fi
   case "$cmd" in
     run)    cmd_run "$@" ;;
-    run-interactive) require_task_id
-	    cmd_run_interactive "$TASK_ID";;
+    run-interactive) cmd_run_interactive "$@" ;;
     review) cmd_review "$@" ;;
     status) cmd_status "$@" ;;
     list)   cmd_list "$@" ;;
