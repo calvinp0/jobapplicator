@@ -127,3 +127,27 @@ class ApplicationRead(_ORMModel):
 
 
 APPLICATION_STATUS_SET = set(APPLICATION_STATUSES)
+
+
+# ---- ClaudeRun ----
+
+class ClaudeRunCreate(BaseModel):
+    job_id: str
+    master_resume_id: str
+    evidence_bank_id: Optional[str] = None
+
+
+class ClaudeRunRead(_ORMModel):
+    id: str
+    job_id: str
+    master_resume_id: str
+    evidence_bank_id: Optional[str]
+    run_dir: str
+    status: str
+    prompt_hash: Optional[str]
+    input_hash: Optional[str]
+    output_hash: Optional[str]
+    created_at: datetime
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    error_message: Optional[str]
