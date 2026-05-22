@@ -232,3 +232,6 @@ runs/*
 
 # Claude Code local worktrees
 .claude/worktrees/
+
+# Claude Code local worktrees
+.claude/worktrees/
