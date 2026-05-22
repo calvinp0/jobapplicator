@@ -1,0 +1,16 @@
+{
+  "name": "jobapply-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser extension current-page capture provider for the local job application cockpit.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "jsdom": "^24.1.0",
+    "vitest": "^1.6.0"
+  }
+}
