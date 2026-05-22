@@ -169,3 +169,22 @@ tasks:
     allowed_paths:
       - "evals/**"
       - "agent_tasks/queue.yaml"
+
+  - id: "012-agent-orchestration-automation"
+    title: "Improve agent orchestration automation"
+    file: "agent_tasks/012-improve-agent-orchestration.md"
+    branch: "agent/012-agent-orchestration-automation"
+    worktree: "agent-012-agent-orchestration-automation"
+    status: "ready"
+    depends_on:
+      - "003-agent-orchestration"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh list"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/queue.yaml"
+      - "agent_tasks/012-improve-agent-orchestration.md"
