@@ -235,3 +235,7 @@ runs/*
 
 # Claude Code local worktrees
 .claude/worktrees/
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/worktrees/
