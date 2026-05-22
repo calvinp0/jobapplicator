@@ -7,6 +7,7 @@
 #   review <task-id>  Start a review-only Claude session for a task.
 #   status            Print task ids grouped by status.
 #   list              Print every task with its status and title.
+#   ready             Print tasks whose status is 'ready'.
 #
 # Configuration via environment variables:
 #   CLAUDE_BIN                       Claude Code executable. Default: claude
@@ -121,6 +122,21 @@ cmd_list() {
   done < <(yaml_query list)
 }
 
+cmd_ready() {
+  local found=0
+  printf '%-30s %s\n' "ID" "TITLE"
+  printf '%-30s %s\n' "------------------------------" "-----"
+  while IFS=$'\t' read -r id status title; do
+    [[ -z "$id" ]] && continue
+    [[ "$status" == "ready" ]] || continue
+    printf '%-30s %s\n' "$id" "$title"
+    found=1
+  done < <(yaml_query list)
+  if [[ "$found" -eq 0 ]]; then
+    printf '(no tasks with status=ready)\n'
+  fi
+}
+
 
 cmd_run_interactive() {
   local task_id="${1:-}"
@@ -200,6 +216,61 @@ check_dependencies() {
     fi
   done < <(yaml_query deps "$task_id")
   [[ "$missing" -eq 0 ]] || exit 1
+}
+
+# worktree_path <name>
+#
+# Print the absolute path of the existing worktree whose final path segment
+# matches <name>. Empty output (and exit 0) means no such worktree exists.
+worktree_path() {
+  local name="$1"
+  git -C "$REPO_ROOT" worktree list --porcelain \
+    | awk -v name="$name" '
+        /^worktree / { wt=$2; if (wt ~ ("/" name "$")) { print wt; exit } }
+      '
+}
+
+# ensure_worktree <name>
+#
+# Print the worktree path, creating the worktree if it does not yet exist.
+# New worktrees are created at .claude/worktrees/<name> on a new branch
+# named worktree-<name>, branched from main. Matches Claude Code's
+# --worktree convention so a subsequent `claude --worktree <name>` reuses
+# the same checkout.
+ensure_worktree() {
+  local name="$1" wt
+  wt="$(worktree_path "$name")"
+  if [[ -n "$wt" ]]; then
+    printf '%s\n' "$wt"
+    return 0
+  fi
+  wt="$REPO_ROOT/.claude/worktrees/$name"
+  mkdir -p "$REPO_ROOT/.claude/worktrees"
+  printf 'Creating worktree %s at %s\n' "$name" "$wt" >&2
+  git -C "$REPO_ROOT" worktree add -b "worktree-$name" "$wt" main >&2
+  printf '%s\n' "$wt"
+}
+
+# merge_main_if_behind <worktree_path>
+#
+# If main has commits the worktree branch does not, merge main into the
+# worktree branch with `--no-edit`. If the merge fails (conflicts), abort
+# it and exit non-zero — the operator resolves manually before re-running.
+merge_main_if_behind() {
+  local wt="$1" main_sha base
+  main_sha="$(git -C "$REPO_ROOT" rev-parse main)"
+  base="$(git -C "$wt" merge-base HEAD main 2>/dev/null || true)"
+  if [[ "$base" == "$main_sha" ]]; then
+    return 0
+  fi
+  printf 'Worktree is behind main; merging main into worktree branch...\n' >&2
+  if ! git -C "$wt" merge --no-edit main >&2; then
+    git -C "$wt" merge --abort >/dev/null 2>&1 || true
+    err "auto-merge of main into worktree failed (conflicts).
+   Resolve manually in: $wt
+   Then re-run: scripts/agentctl.sh run <task-id>"
+    exit 1
+  fi
 }
 
 build_run_prompt() {
@@ -307,17 +378,23 @@ cmd_run() {
   check_dependencies "$task_id"
   ensure_clean_worktree
 
+  local wt_path=""
+  if [[ "$worktree" != "main" ]]; then
+    wt_path="$(ensure_worktree "$worktree")"
+    merge_main_if_behind "$wt_path"
+  fi
+
   local prompt
   prompt="$(build_run_prompt "$task_id" "$abs_task_file")"
 
   printf 'Starting Claude Code for task %s\n' "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
+  [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
   printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
 
   # If the local Claude build does not support --worktree, run this instead:
-  #   git worktree add "../$worktree" -b "agent/$task_id"
-  #   (cd "../$worktree" && "$CLAUDE_BIN" --permission-mode "$CLAUDE_PERMISSION_MODE" -p "$prompt")
+  #   (cd "$wt_path" && "$CLAUDE_BIN" --permission-mode "$CLAUDE_PERMISSION_MODE" -p "$prompt")
   if ! "$CLAUDE_BIN" \
       --worktree "$worktree" \
       --permission-mode "$CLAUDE_PERMISSION_MODE" \
@@ -329,6 +406,7 @@ cmd_run() {
   git -C "$REPO_ROOT" log --oneline -5
   printf '\nGit status:\n'
   git -C "$REPO_ROOT" status --short
+  printf '\nNext: scripts/agentctl.sh review %s\n' "$task_id"
 }
 
 cmd_review() {
@@ -373,6 +451,7 @@ Usage:
   scripts/agentctl.sh review <task-id>
   scripts/agentctl.sh status
   scripts/agentctl.sh list
+  scripts/agentctl.sh ready
 
 See docs/contracts/agent_orchestration.md for the full contract.
 EOF
@@ -387,6 +466,7 @@ main() {
     review) cmd_review "$@" ;;
     status) cmd_status "$@" ;;
     list)   cmd_list "$@" ;;
+    ready)  cmd_ready "$@" ;;
     ""|help|-h|--help) cmd_help ;;
     *) err "unknown command: $cmd"; cmd_help; exit 2 ;;
   esac
