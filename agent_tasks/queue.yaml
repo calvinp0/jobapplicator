@@ -37,7 +37,7 @@ tasks:
     file: "agent_tasks/003-agent-orchestration-harness.md"
     branch: "agent/003-agent-orchestration"
     worktree: "agent-003-agent-orchestration"
-    status: "ready"
+    status: "done"
     depends_on:
       - "002-backend-models"
     verification:
@@ -50,13 +50,29 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/003-agent-orchestration-harness.md"
 
-  - id: "004-extension-capture"
-    title: "Add browser extension current-page capture"
-    file: "agent_tasks/004-extension-capture.md"
-    branch: "agent/004-extension-capture"
-    worktree: "agent-004-extension-capture"
-    status: "planned"
+  - id: "004-create-implementation-task-pack"
+    title: "Create implementation task pack"
+    file: "agent_tasks/004-create-implementation-task-pack.md"
+    branch: "main"
+    worktree: "main"
+    status: "review"
     depends_on:
+      - "003-agent-orchestration"
+    verification:
+      - "scripts/agentctl.sh list"
+      - "scripts/agentctl.sh status"
+      - "ls agent_tasks/"
+    allowed_paths:
+      - "agent_tasks/**"
+
+  - id: "005-extension-capture"
+    title: "Add browser extension current-page capture"
+    file: "agent_tasks/005-extension-capture.md"
+    branch: "agent/005-extension-capture"
+    worktree: "agent-005-extension-capture"
+    status: "ready"
+    depends_on:
+      - "002-backend-models"
       - "003-agent-orchestration"
     verification:
       - "npm test"
@@ -66,18 +82,90 @@ tasks:
       - "docs/contracts/browser_extension_capture.md"
       - "agent_tasks/queue.yaml"
 
-  - id: "005-run-directory-writer"
+  - id: "006-run-directory-writer"
     title: "Add Claude run directory writer"
-    file: "agent_tasks/005-run-directory-writer.md"
-    branch: "agent/005-run-directory-writer"
-    worktree: "agent-005-run-directory-writer"
-    status: "planned"
+    file: "agent_tasks/006-run-directory-writer.md"
+    branch: "agent/006-run-directory-writer"
+    worktree: "agent-006-run-directory-writer"
+    status: "ready"
     depends_on:
-      - "003-agent-orchestration"
       - "002-backend-models"
+      - "003-agent-orchestration"
     verification:
       - "pytest"
     allowed_paths:
       - "backend/**"
-      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "007-claude-code-worker"
+    title: "Add Claude Code worker invocation"
+    file: "agent_tasks/007-claude-code-worker.md"
+    branch: "agent/007-claude-code-worker"
+    worktree: "agent-007-claude-code-worker"
+    status: "planned"
+    depends_on:
+      - "006-run-directory-writer"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "008-resume-version-import"
+    title: "Add resume version import and approval"
+    file: "agent_tasks/008-resume-version-import.md"
+    branch: "agent/008-resume-version-import"
+    worktree: "agent-008-resume-version-import"
+    status: "planned"
+    depends_on:
+      - "007-claude-code-worker"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "009-frontend-shell"
+    title: "Add frontend shell"
+    file: "agent_tasks/009-frontend-shell.md"
+    branch: "agent/009-frontend-shell"
+    worktree: "agent-009-frontend-shell"
+    status: "ready"
+    depends_on:
+      - "003-agent-orchestration"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "frontend/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "010-frontend-job-capture-flow"
+    title: "Add frontend job capture flow"
+    file: "agent_tasks/010-frontend-job-capture-flow.md"
+    branch: "agent/010-frontend-job-capture-flow"
+    worktree: "agent-010-frontend-job-capture-flow"
+    status: "planned"
+    depends_on:
+      - "005-extension-capture"
+      - "009-frontend-shell"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "frontend/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "011-eval-harness"
+    title: "Add evaluation harness"
+    file: "agent_tasks/011-eval-harness.md"
+    branch: "agent/011-eval-harness"
+    worktree: "agent-011-eval-harness"
+    status: "planned"
+    depends_on:
+      - "006-run-directory-writer"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "evals/**"
       - "agent_tasks/queue.yaml"
