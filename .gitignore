@@ -229,3 +229,6 @@ runs/*
 .idea/
 .vscode/
 
+
+# Claude Code local worktrees
+.claude/worktrees/
