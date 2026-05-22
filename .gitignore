@@ -216,3 +216,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local job application run outputs
+# Each Claude Code run writes a hashed artifact tree under runs/<run_id>/
+# per docs/contracts/claude_run_directory.md. Keep the folder anchored
+# in git via runs/.gitkeep, but never commit run contents.
+runs/*
+!runs/.gitkeep
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
