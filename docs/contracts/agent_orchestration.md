@@ -56,10 +56,12 @@ Status values are:
 - `done` — reviewed, merged, and considered complete.
 - `failed` — attempted and abandoned; new attempts should use a new task id.
 
-The harness reads statuses but does not write them. The user updates the queue
-when transitioning a task between states (typically from `ready` to `running`
-when starting, from `running` to `review` after the agent commits, and from
-`review` to `done` after the user accepts the work).
+The user updates most statuses by hand when transitioning a task between
+states (typically from `ready` to `running` when starting, and from
+`running` to `review` after the agent commits). The one transition the
+harness can write itself is `review` → `done`, via the `complete` command
+(see below), which refuses to mark a task done until its worktree branch is
+reachable from `main`.
 
 ## Worktree Isolation
 
@@ -135,6 +137,53 @@ The review prompt asks the reviewer to assess:
 - whether unrelated files were changed
 - whether the commit message is appropriate
 
+## Sync Command
+
+```
+scripts/agentctl.sh sync <task-id>
+```
+
+Refreshes the task's worktree without invoking Claude:
+
+1. Looks up the task and reads its `worktree` field.
+2. If `worktree` is `main`, exits with a no-op message.
+3. Ensures the worktree exists (creating it at
+   `.claude/worktrees/<worktree>` on branch `worktree-<worktree>` if not).
+4. Verifies the worktree's working tree is clean. (Unlike `run`, `sync`
+   does **not** require the main checkout to be clean — it only touches
+   the child worktree.)
+5. If the worktree branch is behind `main`, merges `main` into it with
+   `--no-edit`. On conflict the merge is aborted and the command exits
+   non-zero so the operator can resolve manually.
+
+Use `sync` to keep a long-running task's worktree current with `main` in
+between `run` invocations.
+
+## Complete Command
+
+```
+scripts/agentctl.sh complete <task-id> [--dry-run]
+```
+
+Marks a task `done` in `queue.yaml` after verifying its branch has landed
+on `main`:
+
+1. Looks up the task and its current status.
+2. If status is already `done`, exits successfully without changes.
+3. Otherwise, unless the task targets `main`, verifies that the branch
+   `worktree-<worktree>` is reachable from `main` (i.e. already merged).
+   If the branch exists locally but is not yet merged, the command
+   refuses and prints the manual merge command to run first. A branch
+   that does not exist locally is treated as already cleaned up
+   post-merge.
+4. Rewrites the task's `status` line in `queue.yaml` to `"done"`,
+   preserving surrounding formatting and comments.
+5. Prints the suggested follow-up commit command.
+
+With `--dry-run`, steps 1–3 still run (so the merge-reachability check is
+still enforced), but step 4 is skipped and the planned transition is
+printed instead.
+
 ## Verification Commands
 
 Verification commands listed under a task's `verification` field are run by the
@@ -148,6 +197,8 @@ bash -n scripts/agentctl.sh
 scripts/agentctl.sh list
 scripts/agentctl.sh status
 scripts/agentctl.sh ready
+scripts/agentctl.sh sync <task-id>
+scripts/agentctl.sh complete <task-id> --dry-run
 ```
 
 `ready` is a convenience query that filters `list` to only tasks whose

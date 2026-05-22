@@ -5,6 +5,10 @@
 # Subcommands:
 #   run <task-id>     Start Claude Code on a task in an isolated worktree.
 #   review <task-id>  Start a review-only Claude session for a task.
+#   sync <task-id>    Ensure task worktree exists and is up to date with main.
+#   complete <task-id> [--dry-run]
+#                     Mark a task done in queue.yaml after verifying its
+#                     worktree branch has been merged into main.
 #   status            Print task ids grouped by status.
 #   list              Print every task with its status and title.
 #   ready             Print tasks whose status is 'ready'.
@@ -441,6 +445,158 @@ cmd_review() {
   fi
 }
 
+cmd_sync() {
+  local task_id="${1:-}"
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh sync <task-id>"
+  require_queue
+  require_python_yaml
+
+  local worktree
+  worktree="$(yaml_query field "$task_id" worktree)"
+  [[ -n "$worktree" ]] || die "task '$task_id' has no 'worktree' field"
+
+  if [[ "$worktree" == "main" ]]; then
+    printf 'task %s targets main; nothing to sync.\n' "$task_id"
+    return 0
+  fi
+
+  local wt_path
+  wt_path="$(ensure_worktree "$worktree")"
+
+  if [[ -n "$(git -C "$wt_path" status --porcelain)" ]]; then
+    err "worktree '$wt_path' is not clean; commit or stash before syncing:"
+    git -C "$wt_path" status --short >&2
+    exit 1
+  fi
+
+  merge_main_if_behind "$wt_path"
+
+  printf 'Worktree for %s is in sync with main.\n' "$task_id"
+  printf '  worktree-path: %s\n' "$wt_path"
+}
+
+# branch_merged_into_main <branch>
+#
+# Exit 0 if <branch> exists and is reachable from main (i.e. already merged
+# into main, or main is at/ahead of the branch tip). Exit 1 if the branch
+# exists but is not yet merged. Exit 0 if the branch does not exist locally
+# — we treat a missing branch as already cleaned up post-merge.
+branch_merged_into_main() {
+  local branch="$1"
+  if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    return 0
+  fi
+  git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" main
+}
+
+# write_status <task-id> <new-status> <dry-run-flag>
+#
+# Update the status field of the named task in queue.yaml. Performs an
+# in-place text edit so YAML comments and formatting are preserved. When
+# <dry-run-flag> is "1", prints the planned transition without writing.
+write_status() {
+  local task_id="$1" new_status="$2" dry_run="$3"
+  require_queue
+  require_python_yaml
+  CLAUDE_QUEUE_FILE="$QUEUE_FILE" \
+  CLAUDE_TASK_ID="$task_id" \
+  CLAUDE_NEW_STATUS="$new_status" \
+  CLAUDE_DRY_RUN="$dry_run" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os, sys, re
+
+path = os.environ["CLAUDE_QUEUE_FILE"]
+task_id = os.environ["CLAUDE_TASK_ID"]
+new_status = os.environ["CLAUDE_NEW_STATUS"]
+dry_run = os.environ["CLAUDE_DRY_RUN"] == "1"
+
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+
+id_pat = re.compile(r'^(\s*)-\s*id:\s*["\']?' + re.escape(task_id) + r'["\']?\s*$')
+status_pat = re.compile(r'^(\s*)status:\s*["\']?([^"\'#\s]+)["\']?\s*(#.*)?$')
+new_block_pat = re.compile(r'^\s*-\s*id:\s*')
+
+in_block = False
+found = False
+old_status = None
+out = []
+for line in lines:
+    if not in_block and id_pat.match(line):
+        in_block = True
+        out.append(line)
+        continue
+    if in_block and new_block_pat.match(line):
+        in_block = False
+    if in_block:
+        m = status_pat.match(line)
+        if m:
+            indent, old_status = m.group(1), m.group(2)
+            found = True
+            out.append(f'{indent}status: "{new_status}"\n')
+            in_block = False
+            continue
+    out.append(line)
+
+if not found:
+    sys.stderr.write(f"error: could not find status line for task '{task_id}' in {path}\n")
+    sys.exit(2)
+
+print(f"task '{task_id}' status: {old_status} -> {new_status}")
+if dry_run:
+    print("(dry-run; queue.yaml not modified)")
+else:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.writelines(out)
+    print(f"updated {path}")
+PYEOF
+}
+
+cmd_complete() {
+  local task_id="" dry_run=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run=1; shift ;;
+      -*) die "usage: agentctl.sh complete <task-id> [--dry-run]" ;;
+      *)
+        [[ -z "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]"
+        task_id="$1"; shift ;;
+    esac
+  done
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]"
+  require_queue
+  require_python_yaml
+
+  local status worktree
+  status="$(yaml_query status_of "$task_id")"
+  worktree="$(yaml_query field "$task_id" worktree)"
+  [[ -n "$worktree" ]] || die "task '$task_id' has no 'worktree' field"
+
+  if [[ "$status" == "done" ]]; then
+    printf 'task %s is already done; no change.\n' "$task_id"
+    if [[ "$dry_run" -eq 1 ]]; then
+      printf '(dry-run; queue.yaml not modified)\n'
+    fi
+    return 0
+  fi
+
+  if [[ "$worktree" != "main" ]]; then
+    local branch="worktree-$worktree"
+    if ! branch_merged_into_main "$branch"; then
+      err "branch '$branch' is not yet merged into main."
+      err "Merge it manually (e.g. 'git merge --no-ff $branch') then re-run:"
+      err "  scripts/agentctl.sh complete $task_id"
+      exit 1
+    fi
+  fi
+
+  write_status "$task_id" "done" "$dry_run"
+  if [[ "$dry_run" -eq 0 ]]; then
+    printf '\nNext: commit the queue update, e.g.\n'
+    printf '  git add agent_tasks/queue.yaml && git commit -m "Mark %s done"\n' "$task_id"
+  fi
+}
+
 cmd_help() {
   cat <<'EOF'
 agentctl.sh - agent task orchestration harness
@@ -449,6 +605,8 @@ Usage:
   scripts/agentctl.sh run <task-id>
   scripts/agentctl.sh run-interactive <task-id>
   scripts/agentctl.sh review <task-id>
+  scripts/agentctl.sh sync <task-id>
+  scripts/agentctl.sh complete <task-id> [--dry-run]
   scripts/agentctl.sh status
   scripts/agentctl.sh list
   scripts/agentctl.sh ready
@@ -464,6 +622,8 @@ main() {
     run)    cmd_run "$@" ;;
     run-interactive) cmd_run_interactive "$@" ;;
     review) cmd_review "$@" ;;
+    sync)   cmd_sync "$@" ;;
+    complete) cmd_complete "$@" ;;
     status) cmd_status "$@" ;;
     list)   cmd_list "$@" ;;
     ready)  cmd_ready "$@" ;;
