@@ -87,7 +87,7 @@ tasks:
     file: "agent_tasks/006-run-directory-writer.md"
     branch: "agent/006-run-directory-writer"
     worktree: "agent-006-run-directory-writer"
-    status: "ready"
+    status: "done"
     depends_on:
       - "002-backend-models"
       - "003-agent-orchestration"
@@ -102,7 +102,7 @@ tasks:
     file: "agent_tasks/007-claude-code-worker.md"
     branch: "agent/007-claude-code-worker"
     worktree: "agent-007-claude-code-worker"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "006-run-directory-writer"
     verification:
@@ -161,7 +161,7 @@ tasks:
     file: "agent_tasks/011-eval-harness.md"
     branch: "agent/011-eval-harness"
     worktree: "agent-011-eval-harness"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "006-run-directory-writer"
     verification:
