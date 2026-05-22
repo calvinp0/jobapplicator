@@ -13,7 +13,8 @@ from ..run_directory import (
     default_runs_root,
     default_runtime_prompts_root,
 )
-from ..schemas import ClaudeRunCreate, ClaudeRunRead
+from ..run_import import RunImportError, import_run_outputs
+from ..schemas import ClaudeRunCreate, ClaudeRunRead, ResumeVersionRead
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -86,3 +87,15 @@ def invoke_run(run_id: str, db: Session = Depends(get_db)) -> ClaudeRun:
         return invoke_claude_run(run_id, db)
     except ClaudeWorkerError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/import", response_model=ResumeVersionRead, status_code=status.HTTP_201_CREATED)
+def import_run(run_id: str, db: Session = Depends(get_db)):
+    try:
+        result = import_run_outputs(run_id, db)
+    except RunImportError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+    return result.resume_version
