@@ -50,8 +50,22 @@ export function listEvidenceBanks(): Promise<EvidenceBank[]> {
   return apiRequest("/evidence-banks");
 }
 
+export interface CreateRunPayload {
+  job_id: string;
+  master_resume_id: string;
+  evidence_bank_id?: string | null;
+}
+
+export function createRun(payload: CreateRunPayload): Promise<ClaudeRun> {
+  return apiRequest("/runs", { method: "POST", body: payload });
+}
+
 export function listRuns(): Promise<ClaudeRun[]> {
   return apiRequest("/runs");
+}
+
+export function getRun(runId: string): Promise<ClaudeRun> {
+  return apiRequest(`/runs/${runId}`);
 }
 
 export function listApplications(): Promise<Application[]> {
