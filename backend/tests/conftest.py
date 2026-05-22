@@ -37,6 +37,7 @@ def client() -> Iterator:
         "app.routers.runs",
         "app.routers",
         "app.run_directory",
+        "app.claude_worker",
         "app.schemas",
         "app.models",
         "app.db",
