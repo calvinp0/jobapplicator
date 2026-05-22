@@ -102,7 +102,7 @@ tasks:
     file: "agent_tasks/007-claude-code-worker.md"
     branch: "agent/007-claude-code-worker"
     worktree: "agent-007-claude-code-worker"
-    status: "ready"
+    status: "done"
     depends_on:
       - "006-run-directory-writer"
     verification:
@@ -116,7 +116,7 @@ tasks:
     file: "agent_tasks/008-resume-version-import.md"
     branch: "agent/008-resume-version-import"
     worktree: "agent-008-resume-version-import"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "007-claude-code-worker"
     verification:
