@@ -270,7 +270,7 @@ tasks:
     file: "agent_tasks/017-frontend-resume-version-approval-and-open-file.md"
     branch: "agent/017-frontend-resume-version-approval-and-open-file"
     worktree: "agent-017-frontend-resume-version-approval-and-open-file"
-    status: "ready"
+    status: "done"
     depends_on:
       - "014-backend-application-submit-and-open-file"
       - "016-frontend-runs-list-and-detail"
@@ -293,7 +293,7 @@ tasks:
     file: "agent_tasks/018-frontend-applications-and-submit-flow.md"
     branch: "agent/018-frontend-applications-and-submit-flow"
     worktree: "agent-018-frontend-applications-and-submit-flow"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "017-frontend-resume-version-approval-and-open-file"
     verification:
