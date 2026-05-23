@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
+  createApplication,
   createRun,
   getJob,
   listEvidenceBanks,
@@ -31,6 +32,10 @@ export function JobDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyingVersionId, setApplyingVersionId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!jobId) return;
@@ -58,6 +63,26 @@ export function JobDetailPage() {
       cancelled = true;
     };
   }, [jobId]);
+
+  async function handleCreateApplication(versionId: string) {
+    if (!jobId) return;
+    setApplyingVersionId(versionId);
+    setApplyError(null);
+    try {
+      const application = await createApplication({
+        job_id: jobId,
+        resume_version_id: versionId,
+        status: "approved",
+      });
+      navigate(`/applications/${application.id}`);
+    } catch (err: unknown) {
+      const message =
+        err instanceof ApiError ? err.message : "Failed to create application";
+      setApplyError(message);
+    } finally {
+      setApplyingVersionId(null);
+    }
+  }
 
   async function handleGenerate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,6 +164,44 @@ export function JobDetailPage() {
           ))}
         </ul>
       )}
+
+      <h3>Apply</h3>
+      {(() => {
+        const approved = resumeVersions.filter((v) => v.approved_at);
+        if (approved.length === 0) {
+          return (
+            <p className="settings-empty">
+              Approve a resume version first (see Resume versions above).
+            </p>
+          );
+        }
+        return (
+          <ul className="resume-version-list">
+            {approved.map((v) => (
+              <li key={v.id} className="resume-version-list-item">
+                <span>
+                  Version {v.version_number}{" "}
+                  <span className="resume-version-status">(approved)</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCreateApplication(v.id)}
+                  disabled={applyingVersionId !== null}
+                >
+                  {applyingVersionId === v.id
+                    ? "Creating…"
+                    : "Create application"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        );
+      })()}
+      {applyError ? (
+        <p role="alert" className="error">
+          {applyError}
+        </p>
+      ) : null}
 
       <h3>Generate tailored resume</h3>
       <form onSubmit={handleGenerate} noValidate>
