@@ -160,16 +160,18 @@ PYEOF
 # Resolve a task reference (full id, "014", or "14") to its full task id by
 # querying queue.yaml. Prints the resolved id to stdout. If the reference
 # was a shortcut, also prints a "Resolved task <ref> -> <id>" notice to
-# stderr so it does not pollute the captured output. Exits non-zero if the
+# stderr so it does not pollute captured output. Exits non-zero if the
 # reference matches zero or multiple tasks (yaml_query writes the error).
 resolve_task_id() {
-  local input="$1" resolved
-  printf 'DEBUG: resolve_task_id called with input=%q\n' "$input" >&2
+  local input="$1"
+  local resolved
+
   resolved="$(yaml_query resolve "$input")" || exit $?
-  printf 'DEBUG: yaml_query resolve returned %q\n' "$resolved" >&2
+
   if [[ "$resolved" != "$input" ]]; then
     printf 'Resolved task %s -> %s\n' "$input" "$resolved" >&2
   fi
+
   printf '%s\n' "$resolved"
 }
 
