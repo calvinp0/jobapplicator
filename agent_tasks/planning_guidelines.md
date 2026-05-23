@@ -169,7 +169,10 @@ accumulate in history. Promote a plan by copying its scoped task files into
 
 ## Verification command working directories
 
-Verification commands must run from the repository root.
+Verification commands must be repo-root-relative — `scripts/agentctl.sh`
+runs them from the task worktree root, not from a subdirectory. Use
+explicit `cd <workspace> && ...` for package-specific commands so the
+working directory is unambiguous to a human reading the task file.
 
 For frontend tasks, use:
 
@@ -190,5 +193,10 @@ For backend tasks, use:
 ```bash
 pytest
 ```
+
+The harness inspects each task's verification list and, before running
+the commands, prepares the `frontend/` or `extension/` workspace if it
+is referenced and `node_modules` has not yet been installed there.
+Planners do not need to add an explicit `npm install` step.
 
 
