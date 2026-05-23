@@ -98,11 +98,29 @@ Tasks whose `worktree` is `main` run on the current checkout in place. They are
 reserved for foundational changes (initial scaffold, top-level docs) where there
 is no risk of conflicting parallel work.
 
-All other tasks run in an isolated git worktree, created by Claude Code via
-`--worktree <name>`. This keeps the main checkout clean and allows multiple
-tasks to be inspected in parallel without rebasing.
+All other tasks run in an isolated git worktree at
+`.claude/worktrees/<worktree>` on branch `worktree-<worktree>`, branched
+from `main`. The harness creates the worktree on first use. This keeps
+the main checkout clean and allows multiple tasks to be inspected in
+parallel without rebasing.
 
 The harness refuses to start a new run when the current git tree is dirty.
+
+### Launching Claude inside the task worktree
+
+`run`, `run-interactive`, and `review` launch Claude with the process
+working directory set to the task worktree path. The harness does this
+by `cd`-ing into the worktree directory before invoking `$CLAUDE_BIN`.
+`--worktree <name>` is also passed for Claude Code builds that honor it,
+but the explicit `cd` is the authoritative isolation mechanism — the
+harness does not rely on `--worktree` alone.
+
+The Claude prompt for `run` and `run-interactive` includes a
+worktree-context header that names the task worktree path and the main
+checkout path, and instructs the agent not to edit the main checkout.
+This is defense-in-depth against a Claude session that drifts out of its
+worktree and writes files into the main repository checkout (referred to
+below as "shadow files").
 
 ## Run Command
 
@@ -127,10 +145,16 @@ The run command:
    `--no-edit`. If the merge has conflicts, the harness aborts the merge
    (`git merge --abort`) and exits non-zero so the operator can resolve
    manually.
-9. Starts Claude Code with `--worktree <worktree>` and the permission mode from
-   `CLAUDE_PERMISSION_MODE` (default `acceptEdits`).
-10. Passes the full task file content into the Claude prompt, along with
-    instructions to:
+9. Starts Claude Code from inside the resolved task worktree path
+   (`cd <worktree-path>`) with `--worktree <worktree>` and the
+   permission mode from `CLAUDE_PERMISSION_MODE` (default
+   `acceptEdits`). The explicit `cd` is the authoritative isolation
+   mechanism; `--worktree` is passed for builds that honor it but is
+   not relied on alone.
+10. Passes the full task file content into the Claude prompt, along
+    with a worktree-context header that names the worktree path and the
+    main checkout path and instructs the agent not to edit the main
+    checkout, plus instructions to:
     - read the referenced background documents
     - stay within the task's scope
     - touch only files inside `allowed_paths`
@@ -191,7 +215,7 @@ between `run` invocations.
 ## Complete Command
 
 ```
-scripts/agentctl.sh complete <task-id> [--dry-run]
+scripts/agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
 scripts/agentctl.sh complete --continue <task-id>
 ```
 
@@ -209,7 +233,15 @@ message `Update agent task statuses`.
    without committing anything.
 3. Locates the worktree whose checked-out branch is `main` (via
    `git worktree list --porcelain`) and refuses to proceed if that
-   worktree has uncommitted changes.
+   worktree has uncommitted changes. The dirty-main report is grouped
+   into "Tracked changes", "Untracked files", and — when the task
+   branch exists — "Possible shadow files from task branch", which
+   lists untracked files in main whose paths are already tracked in
+   `worktree-<worktree>`. These are likely files that should only have
+   lived on the task branch and leaked into the main checkout. The
+   report prints a targeted `git clean -f -- <paths>` command for those
+   files, and also points at the `--clean-shadow-files` flag (see
+   below). The harness never auto-runs cleanup at this point.
 4. Confirms the task worktree exists. For tasks whose `worktree` is
    `main`, this step is a no-op (the task ran in place).
 5. Runs every command in the task's `verification` list inside the task
@@ -259,6 +291,32 @@ would commit queue update
 For an already-done task, dry-run prints `Task <id> is already done.`
 and exits successfully. For a branch whose tip already matches `main`,
 dry-run prints `would skip merge (...)` in place of the merge line.
+
+### `--clean-shadow-files`
+
+`complete <task-id> --clean-shadow-files` performs targeted cleanup of
+"shadow files" in the main checkout before the dirty-main check runs.
+A shadow file is an untracked file in the main worktree whose path is
+already tracked in the task branch (`worktree-<worktree>`). These are
+the files most likely to have leaked out of a misbehaving task run.
+
+The flag's behavior is deliberately narrow:
+
+- It only removes files reported by the shadow-file detection above.
+- It never removes modified tracked files.
+- It never runs `git clean -fd` or any recursive directory clean.
+- It removes each shadow file via `git clean -f -- <path>`, one at a
+  time, after printing the full list.
+- It does nothing for tasks whose `worktree` is `main` (there is no
+  separate task branch to compare against).
+
+When combined with `--dry-run`, the flag prints the files it would
+remove without removing them.
+
+If main remains dirty after shadow-file cleanup (e.g. because the
+dirtiness is in modified tracked files), `complete` exits with the
+normal dirty-main report and does not proceed to merge or status
+updates.
 
 ### `--continue` after a merge conflict
 
