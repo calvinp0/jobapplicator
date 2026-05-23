@@ -578,7 +578,7 @@ tasks:
     file: "agent_tasks/032-frontend-visual-cockpit-redesign.md"
     branch: "agent/032-frontend-visual-cockpit-redesign"
     worktree: "agent-032-frontend-visual-cockpit-redesign"
-    status: "ready"
+    status: "done"
     depends_on:
       - "030-frontend-user-facing-headings-and-status"
     verification:
