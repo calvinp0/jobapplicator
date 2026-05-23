@@ -166,3 +166,29 @@ accumulate in history. Promote a plan by copying its scoped task files into
   it.
 - **Hidden dependencies.** If task B can only run after task A, list A in
   B's `depends_on`. Do not rely on operator memory.
+
+## Verification command working directories
+
+Verification commands must run from the repository root.
+
+For frontend tasks, use:
+
+```bash
+cd frontend && npm test
+cd frontend && npm run build
+```
+
+For extension tasks, use:
+
+```bash
+cd extension && npm test
+cd extension && npm run build
+```
+
+For backend tasks, use:
+
+```bash
+pytest
+```
+
+
