@@ -194,7 +194,7 @@ tasks:
     file: "agent_tasks/013-agent-planner.md"
     branch: "agent/013-agent-planner"
     worktree: "agent-013-agent-planner"
-    status: "ready"
+    status: "done"
     depends_on:
       - "012-agent-orchestration-automation"
     verification:
