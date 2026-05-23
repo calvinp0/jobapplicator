@@ -122,6 +122,31 @@ This is defense-in-depth against a Claude session that drifts out of its
 worktree and writes files into the main repository checkout (referred to
 below as "shadow files").
 
+### Permission propagation
+
+Claude Code reads `.claude/settings.local.json` relative to its working
+directory, but that file is gitignored — so a fresh task worktree starts
+with no Claude permission allowlist and prompts on every routine command
+(`npm install`, `git add`, `npm test`, etc.). To avoid that, every
+command that may launch Claude inside a task worktree (`run`,
+`run-interactive`, `review`, `sync`) calls a permission-propagation
+helper after ensuring the worktree exists. The helper symlinks
+`<main>/.claude/settings.local.json` to
+`<task-worktree>/.claude/settings.local.json` so the operator's
+permission allowlist is visible inside the worktree.
+
+The helper:
+
+- is a no-op when the main checkout has no `.claude/settings.local.json`.
+- is a no-op when the target is the main checkout itself.
+- is a no-op when the correct symlink already exists.
+- never reads or prints the settings file contents.
+- never overwrites an existing non-symlink file at the target; that case
+  warns and proceeds so a custom per-worktree settings file is preserved.
+
+`.claude/settings.local.json` remains gitignored at every worktree
+level, so the symlink is never committed.
+
 ## Run Command
 
 ```
@@ -537,8 +562,11 @@ broken dependencies.
   any of the following well-known patterns that are absent from
   `permissions.allow`: `Bash(git add:*)`, `Bash(git commit:*)`,
   `Bash(npm install:*)`, `Bash(npm test:*)`, `Bash(npm run build:*)`,
-  `Bash(pytest:*)`, `Bash(bash -n:*)`. The file's contents are never
-  printed.
+  `Bash(pytest:*)`, `Bash(bash -n:*)`. Then, for each registered task
+  worktree, reports whether `.claude/settings.local.json` is visible
+  inside it (`PASS worktree <name> has Claude settings visible` or
+  `WARN worktree <name> missing .claude/settings.local.json`). The file's
+  contents are never printed.
 - **Workspaces** — if `frontend/package.json` exists, checks for
   `frontend/node_modules/.bin/vitest`; if `extension/package.json`
   exists, checks for `extension/node_modules`. A missing marker is a
