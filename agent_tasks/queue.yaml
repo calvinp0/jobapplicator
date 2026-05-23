@@ -355,7 +355,7 @@ tasks:
     file: "agent_tasks/021-agentctl-prevent-main-worktree-pollution.md"
     branch: "agent/021-agentctl-prevent-main-worktree-pollution"
     worktree: "agent-021-agentctl-prevent-main-worktree-pollution"
-    status: "ready"
+    status: "done"
     depends_on:
       - "020-agentctl-complete-merges-branches"
     verification:
