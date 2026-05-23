@@ -390,3 +390,26 @@ tasks:
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/022-agentctl-frontend-worktree-verification.md"
       - "agent_tasks/queue.yaml"
+
+
+
+  - id: "023-agentctl-doctor"
+    title: "Add agent harness doctor command"
+    file: "agent_tasks/023-agentctl-doctor.md"
+    branch: "agent/023-agentctl-doctor"
+    worktree: "agent-023-agentctl-doctor"
+    status: "ready"
+    depends_on:
+      - "022-agentctl-frontend-worktree-verification"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh doctor"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh plan --help"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/023-agentctl-doctor.md"
+      - "agent_tasks/queue.yaml"
