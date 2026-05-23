@@ -121,24 +121,6 @@ export function ResumeVersionDetailPage() {
         </dd>
         <dt>Source</dt>
         <dd>{version.source}</dd>
-        <dt>Claude run</dt>
-        <dd>
-          {version.claude_run_id ? (
-            <Link to={`/runs/${version.claude_run_id}`}>
-              {version.claude_run_id}
-            </Link>
-          ) : (
-            "—"
-          )}
-        </dd>
-        <dt>Content hash</dt>
-        <dd>
-          <code>{truncateHash(version.content_hash)}</code>
-        </dd>
-        <dt>Prompt hash</dt>
-        <dd>
-          <code>{truncateHash(version.prompt_hash)}</code>
-        </dd>
         <dt>Created</dt>
         <dd>{formatTimestamp(version.created_at)}</dd>
         <dt>Approved</dt>
@@ -147,10 +129,6 @@ export function ResumeVersionDetailPage() {
             ? `Approved on ${formatTimestamp(version.approved_at)}`
             : "Not approved"}
         </dd>
-        <dt>DOCX path</dt>
-        <dd>{version.docx_path ? <code>{version.docx_path}</code> : "—"}</dd>
-        <dt>PDF path</dt>
-        <dd>{version.pdf_path ? <code>{version.pdf_path}</code> : "—"}</dd>
       </dl>
 
       <div className="run-actions">
@@ -175,6 +153,42 @@ export function ResumeVersionDetailPage() {
           {actionError}
         </p>
       ) : null}
+
+      <details className="advanced-details">
+        <summary>Advanced details</summary>
+        <dl className="run-meta">
+          <dt>Resume version id</dt>
+          <dd>
+            <code>{version.id}</code>
+          </dd>
+          <dt>Claude run id</dt>
+          <dd>
+            {version.claude_run_id ? (
+              <Link to={`/runs/${version.claude_run_id}`}>
+                <code>{version.claude_run_id}</code>
+              </Link>
+            ) : (
+              "—"
+            )}
+          </dd>
+          <dt>Content hash</dt>
+          <dd>
+            <code>{truncateHash(version.content_hash)}</code>
+          </dd>
+          <dt>Prompt hash</dt>
+          <dd>
+            <code>{truncateHash(version.prompt_hash)}</code>
+          </dd>
+          <dt>DOCX path</dt>
+          <dd>
+            {version.docx_path ? <code>{version.docx_path}</code> : "—"}
+          </dd>
+          <dt>PDF path</dt>
+          <dd>
+            {version.pdf_path ? <code>{version.pdf_path}</code> : "—"}
+          </dd>
+        </dl>
+      </details>
 
       {version.content_markdown ? (
         <details className="resume-version-markdown">

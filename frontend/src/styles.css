@@ -271,6 +271,37 @@ button[type="submit"]:disabled {
   margin-top: 16px;
 }
 
+.advanced-details {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  color: #555;
+  font-size: 13px;
+}
+
+.advanced-details > summary {
+  cursor: pointer;
+  color: #666;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.advanced-details > summary:hover {
+  color: #222;
+}
+
+.advanced-details .run-meta {
+  margin: 0;
+}
+
+.advanced-details .run-meta dt {
+  font-weight: 500;
+}
+
+.advanced-details code {
+  font-size: 12px;
+}
+
 .settings-section {
   margin-top: 32px;
 }

@@ -209,6 +209,59 @@ describe("ApplicationDetailPage", () => {
     );
   });
 
+  it("renders summary fields by default and hides provenance behind Advanced details", async () => {
+    const user = userEvent.setup();
+    getApplicationMock.mockResolvedValue({
+      ...applicationWithApprovedVersion,
+    });
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+
+    renderApp("app-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /application/i }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(getJobMock).toHaveBeenCalled());
+
+    // Summary fields live outside the disclosure.
+    expect(screen.getByText(/^Status$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Submitted$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Job$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Resume version$/).closest("details")).toBeNull();
+    expect(
+      screen
+        .getByRole("heading", { level: 3, name: /timeline/i })
+        .closest("details"),
+    ).toBeNull();
+    expect(
+      screen
+        .getByRole("heading", { level: 3, name: /record event/i })
+        .closest("details"),
+    ).toBeNull();
+
+    // The disclosure renders with the heading "Advanced details", closed by default.
+    const disclosure = screen.getByText(/^Advanced details$/);
+    const detailsEl = disclosure.closest("details");
+    expect(detailsEl).not.toBeNull();
+    expect(detailsEl).toHaveClass("advanced-details");
+    expect(detailsEl).not.toHaveAttribute("open");
+
+    // Provenance fields live inside the disclosure.
+    expect(screen.getByText(/^Application id$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText("app-1").closest("details")).toBe(detailsEl);
+    expect(screen.getByText(/^Created$/).closest("details")).toBe(detailsEl);
+    expect(screen.getByText(/^Updated$/).closest("details")).toBe(detailsEl);
+
+    // Expanding the disclosure surfaces the provenance fields to the user.
+    await user.click(disclosure);
+    expect(detailsEl).toHaveAttribute("open");
+  });
+
   it("records a manual event and refreshes the timeline", async () => {
     const user = userEvent.setup();
     getApplicationMock.mockResolvedValue({
