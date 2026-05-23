@@ -767,6 +767,49 @@ find_main_worktree() {
   printf '%s\n' "$path"
 }
 
+# prepare_node_workspaces <dir> <task-id>
+#
+# Some task worktrees do not yet have node_modules installed. If the task's
+# verification commands reference the `frontend` or `extension` workspace,
+# run `npm install` in that workspace inside <dir> before verification runs.
+#
+# Safety: only installs in workspaces the verification commands actually
+# reference, and only when the expected install marker is missing. Never
+# runs `npm install` globally, and never touches unrelated directories.
+prepare_node_workspaces() {
+  local dir="$1" task_id="$2" cmd needs_frontend=0 needs_extension=0
+  while IFS= read -r cmd; do
+    [[ -z "$cmd" ]] && continue
+    if [[ "$cmd" =~ (^|[[:space:]/])frontend($|[[:space:]/]) ]]; then
+      needs_frontend=1
+    fi
+    if [[ "$cmd" =~ (^|[[:space:]/])extension($|[[:space:]/]) ]]; then
+      needs_extension=1
+    fi
+  done < <(yaml_query field "$task_id" verification)
+
+  if [[ "$needs_frontend" -eq 1 \
+        && -d "$dir/frontend" \
+        && ! -x "$dir/frontend/node_modules/.bin/vitest" ]]; then
+    printf 'Preparing frontend workspace (npm install in %s/frontend)\n' "$dir" >&2
+    if ! (cd "$dir/frontend" && npm install); then
+      err "npm install failed in $dir/frontend"
+      return 1
+    fi
+  fi
+
+  if [[ "$needs_extension" -eq 1 \
+        && -d "$dir/extension" \
+        && ! -d "$dir/extension/node_modules" ]]; then
+    printf 'Preparing extension workspace (npm install in %s/extension)\n' "$dir" >&2
+    if ! (cd "$dir/extension" && npm install); then
+      err "npm install failed in $dir/extension"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 # run_verification_commands <dir> <task-id>
 #
 # Run every command in the task's `verification` list inside <dir>. Prints
@@ -975,6 +1018,10 @@ complete_continue() {
     fi
   fi
 
+  if ! prepare_node_workspaces "$main_wt" "$task_id"; then
+    err "workspace preparation failed; not marking $task_id done"
+    exit 1
+  fi
   printf 'Running verification in %s\n' "$main_wt" >&2
   if ! run_verification_commands "$main_wt" "$task_id"; then
     err "verification failed; not marking $task_id done"
@@ -1111,6 +1158,10 @@ cmd_complete() {
   if [[ "$dry_run" -eq 1 ]]; then
     printf 'would run verification (in %s)\n' "$task_wt"
   else
+    if ! prepare_node_workspaces "$task_wt" "$task_id"; then
+      err "workspace preparation failed; not marking $task_id done"
+      exit 1
+    fi
     printf 'Running verification in %s\n' "$task_wt" >&2
     if ! run_verification_commands "$task_wt" "$task_id"; then
       err "verification failed; not marking $task_id done"

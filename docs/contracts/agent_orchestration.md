@@ -244,28 +244,37 @@ message `Update agent task statuses`.
    below). The harness never auto-runs cleanup at this point.
 4. Confirms the task worktree exists. For tasks whose `worktree` is
    `main`, this step is a no-op (the task ran in place).
-5. Runs every command in the task's `verification` list inside the task
+5. Prepares known package workspaces if the task's verification commands
+   reference them. If any verification command references `frontend` and
+   the task worktree has no `frontend/node_modules/.bin/vitest`, the
+   harness runs `npm install` inside `frontend/`. The same rule applies
+   to `extension/` (using `extension/node_modules` as the install marker).
+   The harness only prepares workspaces the verification commands
+   actually mention, never installs globally, and never touches
+   unrelated directories. If `npm install` fails, the task is **not**
+   marked done.
+6. Runs every command in the task's `verification` list inside the task
    worktree. If any command fails, the task is **not** marked done and
    nothing is merged or committed.
-6. Determines whether the task branch (`worktree-<worktree>`) is already
+7. Determines whether the task branch (`worktree-<worktree>`) is already
    reachable from `main`. If so, the merge step is skipped. Otherwise
    the command requires the branch to have at least one commit beyond
    `main`; a branch that is identical to `main` is treated as "nothing
    to integrate" and `complete` exits with an error explaining that the
    agent has not committed any work yet.
-7. If a merge is needed, runs `git merge --no-ff --no-edit
+8. If a merge is needed, runs `git merge --no-ff --no-edit
    worktree-<worktree>` in the main worktree. On conflict, the merge is
    **not** aborted: `complete` stops, leaves the conflicted merge in
    place, and prints recovery instructions that direct the operator to
    resolve the conflicts and run `complete --continue <task-id>`.
    `queue.yaml` is not modified in this case.
-8. Rewrites the completing task's `status` line to `"done"` and, in the
+9. Rewrites the completing task's `status` line to `"done"` and, in the
    same pass, promotes every `planned` task whose dependencies are all
    `done` to `ready`. The in-place text edit preserves YAML comments and
    quoting.
-9. Stages and commits `agent_tasks/queue.yaml` with the message
-   `Update agent task statuses`.
-10. Prints the remaining list of tasks with status `ready`.
+10. Stages and commits `agent_tasks/queue.yaml` with the message
+    `Update agent task statuses`.
+11. Prints the remaining list of tasks with status `ready`.
 
 ### `--dry-run`
 
@@ -330,9 +339,11 @@ operator has resolved a merge conflict by hand:
    normal `complete` instead.
 3. If a merge is in progress, refuses to continue while any tracked
    files still have unresolved conflict markers (`git diff --diff-filter=U`).
-4. Runs the task's verification commands in the main worktree (the
-   post-merge state). If verification fails, the task is **not** marked
-   done.
+4. Prepares known package workspaces (`frontend/`, `extension/`) inside
+   the main worktree using the same rules as the normal flow, then runs
+   the task's verification commands in the main worktree (the post-merge
+   state). If preparation or verification fails, the task is **not**
+   marked done.
 5. Finalizes the merge commit with `git commit --no-edit` if one is
    still pending.
 6. Marks the task `done`, promotes newly-unblocked tasks to `ready`,
