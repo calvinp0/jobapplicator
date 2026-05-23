@@ -6,6 +6,7 @@ import { JobsPage } from "./pages/JobsPage";
 import { JobDetailPage } from "./pages/JobDetailPage";
 import { RunsPage } from "./pages/RunsPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
+import { ResumeVersionDetailPage } from "./pages/ResumeVersionDetailPage";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
@@ -20,6 +21,10 @@ export function App() {
         <Route path="/jobs/:jobId" element={<JobDetailPage />} />
         <Route path="/runs" element={<RunsPage />} />
         <Route path="/runs/:runId" element={<RunDetailPage />} />
+        <Route
+          path="/resume-versions/:versionId"
+          element={<ResumeVersionDetailPage />}
+        />
         <Route path="/applications" element={<ApplicationsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/captures" replace />} />

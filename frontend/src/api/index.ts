@@ -102,6 +102,19 @@ export function getResumeVersion(versionId: string): Promise<ResumeVersion> {
   return apiRequest(`/resume-versions/${versionId}`);
 }
 
+export function approveResumeVersion(
+  versionId: string,
+): Promise<ResumeVersion> {
+  return apiRequest(`/resume-versions/${versionId}/approve`, { method: "POST" });
+}
+
+export function openResumeVersionFile(versionId: string): Promise<void> {
+  return apiRequest(`/files/open`, {
+    method: "POST",
+    body: { resume_version_id: versionId },
+  });
+}
+
 export function listApplications(): Promise<Application[]> {
   return apiRequest("/applications");
 }

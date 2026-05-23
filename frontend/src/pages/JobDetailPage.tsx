@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
   createRun,
   getJob,
   listEvidenceBanks,
   listMasterResumes,
+  listResumeVersions,
 } from "../api";
-import type { EvidenceBank, Job, MasterResume } from "../api";
+import type {
+  EvidenceBank,
+  Job,
+  MasterResume,
+  ResumeVersion,
+} from "../api";
 
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -15,6 +21,9 @@ export function JobDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [resumes, setResumes] = useState<MasterResume[] | null>(null);
   const [evidenceBanks, setEvidenceBanks] = useState<EvidenceBank[] | null>(
+    null,
+  );
+  const [resumeVersions, setResumeVersions] = useState<ResumeVersion[] | null>(
     null,
   );
   const [selectedResumeId, setSelectedResumeId] = useState<string>("");
@@ -26,12 +35,18 @@ export function JobDetailPage() {
   useEffect(() => {
     if (!jobId) return;
     let cancelled = false;
-    Promise.all([getJob(jobId), listMasterResumes(), listEvidenceBanks()])
-      .then(([j, r, e]) => {
+    Promise.all([
+      getJob(jobId),
+      listMasterResumes(),
+      listEvidenceBanks(),
+      listResumeVersions(),
+    ])
+      .then(([j, r, e, v]) => {
         if (cancelled) return;
         setJob(j);
         setResumes(r);
         setEvidenceBanks(e);
+        setResumeVersions(v.filter((version) => version.job_id === jobId));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -80,7 +95,7 @@ export function JobDetailPage() {
     );
   }
 
-  if (!job || !resumes || !evidenceBanks) {
+  if (!job || !resumes || !evidenceBanks || !resumeVersions) {
     return (
       <section className="job-detail">
         <h2>Job</h2>
@@ -106,6 +121,24 @@ export function JobDetailPage() {
         <summary>Description</summary>
         <pre className="job-description">{job.description_text}</pre>
       </details>
+
+      <h3>Resume versions</h3>
+      {resumeVersions.length === 0 ? (
+        <p className="settings-empty">No resume versions for this job yet.</p>
+      ) : (
+        <ul className="resume-version-list">
+          {resumeVersions.map((v) => (
+            <li key={v.id} className="resume-version-list-item">
+              <Link to={`/resume-versions/${v.id}`}>
+                Version {v.version_number}
+              </Link>
+              <span className="resume-version-status">
+                {v.approved_at ? "Approved" : "Pending"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <h3>Generate tailored resume</h3>
       <form onSubmit={handleGenerate} noValidate>
