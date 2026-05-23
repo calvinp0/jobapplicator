@@ -76,6 +76,22 @@ export interface ClaudeRun {
   error_message: string | null;
 }
 
+export interface ResumeVersion {
+  id: string;
+  job_id: string;
+  master_resume_id: string;
+  claude_run_id: string | null;
+  version_number: number;
+  content_markdown: string | null;
+  docx_path: string | null;
+  pdf_path: string | null;
+  content_hash: string | null;
+  prompt_hash: string | null;
+  source: string;
+  approved_at: string | null;
+  created_at: string;
+}
+
 export interface Application {
   id: string;
   job_id: string;

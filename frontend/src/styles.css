@@ -193,6 +193,52 @@ button[type="submit"]:disabled {
   margin: 0 0 8px 0;
 }
 
+.run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.run-list-item {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.run-meta-inline {
+  color: #666;
+  font-size: 13px;
+}
+
+.run-actions {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.run-actions button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.run-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.resume-version-link {
+  margin-top: 12px;
+}
+
 .settings-section {
   margin-top: 32px;
 }
