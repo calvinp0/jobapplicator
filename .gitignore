@@ -239,3 +239,12 @@ runs/*
 # Claude Code local settings
 .claude/settings.local.json
 .claude/worktrees/
+
+# Agent planner drafts
+# scripts/agentctl.sh plan --ultraplan writes Ultraplan-ready prompt files
+# under .agent_plans/. They are local working drafts and should not be
+# committed; promote a plan by copying its scoped task files into
+# agent_tasks/ and committing those instead. The directory is anchored in
+# git via .agent_plans/.gitkeep.
+.agent_plans/*
+!.agent_plans/.gitkeep
