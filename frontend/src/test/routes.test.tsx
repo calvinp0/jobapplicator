@@ -10,6 +10,7 @@ vi.mock("../api", async () => {
     listJobs: vi.fn().mockResolvedValue([]),
     listMasterResumes: vi.fn().mockResolvedValue([]),
     listEvidenceBanks: vi.fn().mockResolvedValue([]),
+    listRuns: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -48,14 +49,11 @@ describe("route smoke tests", () => {
     expect(screen.getByText(/no confirmed jobs yet/i)).toBeInTheDocument();
   });
 
-  it.each([
-    ["/runs", "Runs"],
-    ["/applications", "Applications"],
-  ])("renders %s as a placeholder", async (path, label) => {
-    renderAt(path);
+  it("renders /applications as a placeholder", async () => {
+    renderAt("/applications");
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: label }),
+        screen.getByRole("heading", { level: 2, name: "Applications" }),
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/not yet implemented/i)).toBeInTheDocument();

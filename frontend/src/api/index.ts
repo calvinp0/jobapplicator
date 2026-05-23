@@ -8,6 +8,7 @@ import type {
   JobCapture,
   MasterResume,
   MasterResumeCreate,
+  ResumeVersion,
 } from "./types";
 
 export { API_BASE, ApiError } from "./client";
@@ -20,6 +21,7 @@ export type {
   JobCapture,
   MasterResume,
   MasterResumeCreate,
+  ResumeVersion,
 };
 
 export function getHealth(): Promise<{ status: string }> {
@@ -82,6 +84,22 @@ export function listRuns(): Promise<ClaudeRun[]> {
 
 export function getRun(runId: string): Promise<ClaudeRun> {
   return apiRequest(`/runs/${runId}`);
+}
+
+export function invokeRun(runId: string): Promise<ClaudeRun> {
+  return apiRequest(`/runs/${runId}/invoke`, { method: "POST" });
+}
+
+export function importRun(runId: string): Promise<ResumeVersion> {
+  return apiRequest(`/runs/${runId}/import`, { method: "POST" });
+}
+
+export function listResumeVersions(): Promise<ResumeVersion[]> {
+  return apiRequest("/resume-versions");
+}
+
+export function getResumeVersion(versionId: string): Promise<ResumeVersion> {
+  return apiRequest(`/resume-versions/${versionId}`);
 }
 
 export function listApplications(): Promise<Application[]> {

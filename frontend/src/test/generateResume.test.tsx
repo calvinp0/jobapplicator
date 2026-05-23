@@ -10,6 +10,9 @@ const {
   createRunMock,
   getRunMock,
   listCapturesMock,
+  listResumeVersionsMock,
+  invokeRunMock,
+  importRunMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -29,6 +32,9 @@ const {
     createRunMock: vi.fn(),
     getRunMock: vi.fn(),
     listCapturesMock: vi.fn(),
+    listResumeVersionsMock: vi.fn(),
+    invokeRunMock: vi.fn(),
+    importRunMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -40,6 +46,9 @@ vi.mock("../api", () => ({
   createRun: createRunMock,
   getRun: getRunMock,
   listCaptures: listCapturesMock,
+  listResumeVersions: listResumeVersionsMock,
+  invokeRun: invokeRunMock,
+  importRun: importRunMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -113,6 +122,7 @@ describe("JobDetailPage generate resume flow", () => {
     listEvidenceBanksMock.mockResolvedValue([evidenceBank]);
     getRunMock.mockResolvedValue(newRun);
     listCapturesMock.mockResolvedValue([]);
+    listResumeVersionsMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
