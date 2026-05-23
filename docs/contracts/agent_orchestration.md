@@ -58,10 +58,16 @@ Status values are:
 
 The user updates most statuses by hand when transitioning a task between
 states (typically from `ready` to `running` when starting, and from
-`running` to `review` after the agent commits). The one transition the
-harness can write itself is `review` → `done`, via the `complete` command
-(see below), which refuses to mark a task done until its worktree branch is
-reachable from `main`.
+`running` to `review` after the agent commits). The harness owns two
+transitions of its own, both performed by the `complete` command (see
+below):
+
+- `review` → `done` for the task being completed, after its branch has
+  been merged into `main` (or was already merged) and verification has
+  passed.
+- `planned` → `ready` for any task whose dependencies are all `done` once
+  the completing task lands. This promotion happens as part of the same
+  queue-status commit.
 
 ## Task ID Resolution
 
@@ -186,26 +192,107 @@ between `run` invocations.
 
 ```
 scripts/agentctl.sh complete <task-id> [--dry-run]
+scripts/agentctl.sh complete --continue <task-id>
 ```
 
-Marks a task `done` in `queue.yaml` after verifying its branch has landed
-on `main`:
+The `complete` command performs the full integration workflow for a
+finished task: it runs verification, merges the task's worktree branch
+into `main`, marks the task `done`, promotes any newly-unblocked tasks
+from `planned` to `ready`, and commits the queue-status update with the
+message `Update agent task statuses`.
 
-1. Looks up the task and its current status.
-2. If status is already `done`, exits successfully without changes.
-3. Otherwise, unless the task targets `main`, verifies that the branch
-   `worktree-<worktree>` is reachable from `main` (i.e. already merged).
-   If the branch exists locally but is not yet merged, the command
-   refuses and prints the manual merge command to run first. A branch
-   that does not exist locally is treated as already cleaned up
-   post-merge.
-4. Rewrites the task's `status` line in `queue.yaml` to `"done"`,
-   preserving surrounding formatting and comments.
-5. Prints the suggested follow-up commit command.
+### Normal flow
 
-With `--dry-run`, steps 1–3 still run (so the merge-reachability check is
-still enforced), but step 4 is skipped and the planned transition is
-printed instead.
+1. Resolves the task id (numeric shortcut or full id).
+2. Loads the task metadata from `queue.yaml`. If `status` is already
+   `done`, prints `Task <id> is already done.` and exits successfully
+   without committing anything.
+3. Locates the worktree whose checked-out branch is `main` (via
+   `git worktree list --porcelain`) and refuses to proceed if that
+   worktree has uncommitted changes.
+4. Confirms the task worktree exists. For tasks whose `worktree` is
+   `main`, this step is a no-op (the task ran in place).
+5. Runs every command in the task's `verification` list inside the task
+   worktree. If any command fails, the task is **not** marked done and
+   nothing is merged or committed.
+6. Determines whether the task branch (`worktree-<worktree>`) is already
+   reachable from `main`. If so, the merge step is skipped. Otherwise
+   the command requires the branch to have at least one commit beyond
+   `main`; a branch that is identical to `main` is treated as "nothing
+   to integrate" and `complete` exits with an error explaining that the
+   agent has not committed any work yet.
+7. If a merge is needed, runs `git merge --no-ff --no-edit
+   worktree-<worktree>` in the main worktree. On conflict, the merge is
+   **not** aborted: `complete` stops, leaves the conflicted merge in
+   place, and prints recovery instructions that direct the operator to
+   resolve the conflicts and run `complete --continue <task-id>`.
+   `queue.yaml` is not modified in this case.
+8. Rewrites the completing task's `status` line to `"done"` and, in the
+   same pass, promotes every `planned` task whose dependencies are all
+   `done` to `ready`. The in-place text edit preserves YAML comments and
+   quoting.
+9. Stages and commits `agent_tasks/queue.yaml` with the message
+   `Update agent task statuses`.
+10. Prints the remaining list of tasks with status `ready`.
+
+### `--dry-run`
+
+`complete <task-id> --dry-run` validates the same preconditions (main
+worktree clean, task worktree exists, branch state) and prints the
+sequence of actions it would take, without:
+
+- running verification commands
+- merging branches
+- modifying `queue.yaml`
+- creating any commits
+
+The output lines have the form:
+
+```
+would run verification (in <task-worktree>)
+would merge branch <branch> into main
+would mark <id> done
+would promote <ids>
+would commit queue update
+```
+
+For an already-done task, dry-run prints `Task <id> is already done.`
+and exits successfully. For a branch whose tip already matches `main`,
+dry-run prints `would skip merge (...)` in place of the merge line.
+
+### `--continue` after a merge conflict
+
+`complete --continue <task-id>` resumes the integration flow after the
+operator has resolved a merge conflict by hand:
+
+1. Resolves the task id.
+2. Confirms either a merge is in progress in the main worktree
+   (`MERGE_HEAD` exists) or the task branch is already merged into
+   `main`. If neither holds, the command tells the operator to run a
+   normal `complete` instead.
+3. If a merge is in progress, refuses to continue while any tracked
+   files still have unresolved conflict markers (`git diff --diff-filter=U`).
+4. Runs the task's verification commands in the main worktree (the
+   post-merge state). If verification fails, the task is **not** marked
+   done.
+5. Finalizes the merge commit with `git commit --no-edit` if one is
+   still pending.
+6. Marks the task `done`, promotes newly-unblocked tasks to `ready`,
+   and commits the queue update with `Update agent task statuses`.
+7. Prints the remaining ready tasks.
+
+`complete --continue` and `--dry-run` are mutually exclusive.
+
+### Safety rules
+
+`complete` never:
+
+- pushes anything
+- deletes a worktree
+- runs `git reset --hard` or `git clean`
+- auto-resolves merge conflicts
+- marks a task `done` when verification or the merge has failed
+- modifies `queue.yaml` when the merge has failed
 
 ## Plan Command
 
@@ -363,6 +450,7 @@ scripts/agentctl.sh status
 scripts/agentctl.sh ready
 scripts/agentctl.sh sync <task-id>
 scripts/agentctl.sh complete <task-id> --dry-run
+scripts/agentctl.sh complete --continue <task-id>
 scripts/agentctl.sh plan --help
 ```
 
@@ -371,11 +459,17 @@ status is `ready` — i.e. tasks the operator can dispatch right now.
 
 ## Merge Policy
 
-Completed task branches are **not** pushed automatically by the harness. The
-agent commits locally; the user is responsible for review, push, and merge.
+Task branches are merged into `main` locally by `complete` (see above);
+the harness never pushes anything. The builder commits inside the task
+worktree, the reviewer assesses the commit, and only when the operator
+runs `complete` does the branch land on `main` — at which point
+`complete` performs a `git merge --no-ff --no-edit` and writes the
+queue-status update commit.
 
-The user approves every merge. There is no automatic promotion of a `review`
-task to `done`.
+The operator approves every merge by choosing to run `complete`. There
+is no automatic promotion of a `review` task to `done`; the harness
+only runs the merge and queue update when the operator invokes it
+explicitly.
 
 ## Permission Strategy
 
