@@ -376,7 +376,7 @@ tasks:
     file: "agent_tasks/022-agentctl-frontend-worktree-verification.md"
     branch: "agent/022-agentctl-frontend-worktree-verification"
     worktree: "agent-022-agentctl-frontend-worktree-verification"
-    status: "ready"
+    status: "done"
     depends_on:
       - "021-agentctl-prevent-main-worktree-pollution"
     verification:
