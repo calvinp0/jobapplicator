@@ -555,3 +555,22 @@ tasks:
       - "frontend/src/test/applicationsPage.test.tsx"
       - "frontend/src/styles.css"
       - "agent_tasks/queue.yaml"
+  - id: "031-agentctl-propagate-claude-permissions"
+    title: "Propagate Claude permissions to worktrees"
+    file: "agent_tasks/031-agentctl-propagate-claude-permissions.md"
+    branch: "agent/031-agentctl-propagate-claude-permissions"
+    worktree: "agent-031-agentctl-propagate-claude-permissions"
+    status: "ready"
+    depends_on:
+      - "022-agentctl-frontend-worktree-verification"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh doctor"
+      - "scripts/agentctl.sh sync 027"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/031-agentctl-propagate-claude-permissions.md"
+      - "agent_tasks/queue.yaml"
+
