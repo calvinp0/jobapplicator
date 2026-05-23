@@ -504,6 +504,73 @@ that path, and leave the change to be implemented under review.
 not accumulate in history. Promote a plan by copying its scoped task files
 into `agent_tasks/` and committing those.
 
+## Doctor Command
+
+```
+scripts/agentctl.sh doctor
+```
+
+`doctor` runs a read-only preflight check of the local agent harness
+environment and prints a PASS / WARN / FAIL report. It exists to catch
+the common setup failures that previously only surfaced after an agent
+task had already started — missing `node_modules` in `frontend/` or
+`extension/`, a dirty main checkout, a missing `.claude/settings.local.json`
+permission that quietly blocks routine commands, or a queue.yaml with
+broken dependencies.
+
+`doctor` performs the following groups of checks:
+
+- **Git** — locates the main worktree, confirms its HEAD is on `main`,
+  reports whether it is clean (and prints `git status --short` if not),
+  reports whether a merge is in progress, and warns when a directory
+  under `.claude/worktrees/` exists without being a registered git
+  worktree.
+- **Queue** — verifies `agent_tasks/queue.yaml` exists and parses as
+  YAML, that task ids are unique, that statuses are valid, that every
+  `file` exists on disk, that `depends_on` references known task ids,
+  and warns if any `ready` task has a dependency that is not yet `done`.
+- **Tools** — checks for `git`, `python`, `python3`, `claude`, `npm`,
+  and `pytest` via `command -v`. Missing optional tools are warnings,
+  not failures.
+- **Claude permissions** — checks whether `.claude/settings.local.json`
+  exists in the main checkout, validates it as JSON, and warns about
+  any of the following well-known patterns that are absent from
+  `permissions.allow`: `Bash(git add:*)`, `Bash(git commit:*)`,
+  `Bash(npm install:*)`, `Bash(npm test:*)`, `Bash(npm run build:*)`,
+  `Bash(pytest:*)`, `Bash(bash -n:*)`. The file's contents are never
+  printed.
+- **Workspaces** — if `frontend/package.json` exists, checks for
+  `frontend/node_modules/.bin/vitest`; if `extension/package.json`
+  exists, checks for `extension/node_modules`. A missing marker is a
+  warning, and `doctor` prints the exact `cd <dir> && npm install`
+  command — but never runs it.
+- **Ready tasks** — for each task whose status is `ready`, prints the
+  task id, its verification kind (frontend / extension / backend),
+  whether its worktree exists, and the literal verification commands.
+  `doctor` never executes a task's verification commands.
+
+### Exit codes
+
+```
+0  no FAIL items (warnings only is still success)
+1  at least one FAIL item was emitted
+```
+
+### Safety boundary
+
+`doctor` is read-only. It never:
+
+- pushes
+- runs `npm install`, `pytest`, or any task verification command
+- mutates files, including `.claude/settings.local.json` or
+  `agent_tasks/queue.yaml`
+- prints the contents of `.claude/settings.local.json` or `.env` files
+
+A task-specific form, `scripts/agentctl.sh doctor <task-id>`, is
+reserved for future work; today the command accepts only the
+zero-argument global form and exits non-zero with a clear message if
+a task id is supplied.
+
 ## Verification Commands
 
 Verification commands listed under a task's `verification` field are run by the
@@ -517,6 +584,7 @@ bash -n scripts/agentctl.sh
 scripts/agentctl.sh list
 scripts/agentctl.sh status
 scripts/agentctl.sh ready
+scripts/agentctl.sh doctor
 scripts/agentctl.sh sync <task-id>
 scripts/agentctl.sh complete <task-id> --dry-run
 scripts/agentctl.sh complete --continue <task-id>
