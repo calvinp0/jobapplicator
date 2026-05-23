@@ -436,7 +436,7 @@ tasks:
     file: "agent_tasks/025-backend-local-cors.md"
     branch: "agent/025-backend-local-cors"
     worktree: "agent-025-backend-local-cors"
-    status: "ready"
+    status: "done"
     depends_on:
       - "024-demo-seed-data"
     verification:
