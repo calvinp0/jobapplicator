@@ -161,7 +161,7 @@ tasks:
     file: "agent_tasks/011-eval-harness.md"
     branch: "agent/011-eval-harness"
     worktree: "agent-011-eval-harness"
-    status: "ready"
+    status: "done"
     depends_on:
       - "006-run-directory-writer"
     verification:
@@ -188,3 +188,24 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/queue.yaml"
       - "agent_tasks/012-improve-agent-orchestration.md"
+
+  - id: "013-agent-planner"
+    title: "Add agent planner command"
+    file: "agent_tasks/013-agent-planner.md"
+    branch: "agent/013-agent-planner"
+    worktree: "agent-013-agent-planner"
+    status: "ready"
+    depends_on:
+      - "012-agent-orchestration-automation"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh list"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh plan --help"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/**"
+      - ".agent_plans/**"
+      - ".gitignore"
