@@ -184,6 +184,147 @@ With `--dry-run`, steps 1–3 still run (so the merge-reachability check is
 still enforced), but step 4 is skipped and the planned transition is
 printed instead.
 
+## Plan Command
+
+```
+scripts/agentctl.sh plan "<high-level goal>"
+scripts/agentctl.sh plan --ultraplan "<high-level goal>"
+scripts/agentctl.sh plan --help
+```
+
+The plan command generates scoped agent task packs from a high-level goal,
+so future implementation tasks do not have to be hand-written one at a time.
+
+The harness has three distinct agent roles. Each runs as a separate Claude
+Code session.
+
+- **Planner** — reads the queue, docs, ADRs, and contracts, and writes new
+  task files and queue entries. Does not implement product code.
+- **Builder** — invoked by `run`. Implements a single task within its
+  `allowed_paths`. Commits locally.
+- **Reviewer** — invoked by `review`. Reads the builder's commit and reports
+  on scope, ADRs, tests, overbuild, and unrelated changes.
+
+The planner's full role contract — including required task-file structure,
+status semantics, and anti-patterns — lives in
+`agent_tasks/planning_guidelines.md`. This section is the harness-side
+summary.
+
+### Local planner mode
+
+`scripts/agentctl.sh plan "<high-level goal>"` launches Claude Code locally
+with a planner prompt that:
+
+1. Requires reading `docs/product_requirements.md`, `docs/architecture.md`,
+   `docs/contracts/*.md`, `docs/adr/*.md`,
+   `agent_tasks/planning_guidelines.md`, and `agent_tasks/queue.yaml` first.
+2. Asks the planner to produce one or more scoped task markdown files under
+   `agent_tasks/` and matching entries in `agent_tasks/queue.yaml`.
+3. Names the next free numeric id by continuing the existing sequence in
+   `queue.yaml`.
+4. Forbids product implementation, ADR edits, and edits to
+   `docs/product_requirements.md` / `docs/architecture.md`.
+5. Forbids marking any new task `done`. Only `planned`, `ready`, or
+   `blocked` may be emitted.
+6. Asks the planner not to stage or commit — the operator reviews the diff
+   and commits.
+
+The planner runs in the main checkout (no sub-worktree), with permission
+mode `CLAUDE_PLAN_PERMISSION_MODE` (default `acceptEdits`). The harness
+refuses to start the planner when the main checkout is dirty, mirroring
+`run`'s behavior.
+
+### Ultraplan mode
+
+`scripts/agentctl.sh plan --ultraplan "<high-level goal>"` is deterministic
+and does not invoke Claude Code. It writes a self-contained prompt file
+under `.agent_plans/<YYYY-MM-DD-HHMMSS>-ultraplan.md` that includes:
+
+- the high-level goal
+- the current completed-task history from `queue.yaml`
+- the current open tasks (ready / planned / blocked / running / review)
+- references to the relevant docs, ADRs, contracts, and planning guidelines
+- the planner directives (allowed and forbidden paths, required task-file
+  sections, required queue-entry fields, status restrictions)
+- the instruction not to implement product code
+- the instruction to preserve completed task history
+- the instruction to keep tasks small and `allowed_paths` narrow
+
+After writing the file, the command prints manual handoff instructions:
+open Claude Code, run `/ultraplan` against the generated prompt, review the
+proposed plan, and then save the new task files under `agent_tasks/` and
+update `queue.yaml`. The file-based handoff is the reliable fallback even
+if a local `/ultraplan` command is not available.
+
+### Generated task file requirements
+
+Every task file the planner produces must include, in order:
+
+```
+Goal
+Background
+Scope
+Allowed files
+Forbidden files
+Out of scope
+Acceptance criteria
+Verification
+Git instructions
+```
+
+### Generated queue entry requirements
+
+Every queue entry the planner produces must include:
+
+```yaml
+- id: "<NNN>-<slug>"
+  title: "<human-readable summary>"
+  file: "agent_tasks/<NNN>-<slug>.md"
+  branch: "agent/<NNN>-<slug>"          # or "main" for in-place tasks
+  worktree: "agent-<NNN>-<slug>"        # or "main" for in-place tasks
+  status: "planned" | "ready" | "blocked"
+  depends_on: [...]
+  verification: [...]
+  allowed_paths: [...]
+```
+
+The planner must never emit `done`, `running`, `review`, or `failed` as a
+status. Those statuses are owned by the builder, reviewer, and `complete`
+flows.
+
+### Planner safety boundary
+
+The planner may edit only:
+
+```
+agent_tasks/**
+docs/contracts/agent_orchestration.md
+.agent_plans/**
+.gitignore
+```
+
+The planner must not edit:
+
+```
+backend/**
+frontend/**
+extension/**
+runtime_prompts/**
+candidate_context/**
+runs/**
+docs/adr/**
+docs/product_requirements.md
+docs/architecture.md
+```
+
+If a high-level goal seems to require changes to a forbidden path, the
+planner must instead queue a new builder task whose `allowed_paths` cover
+that path, and leave the change to be implemented under review.
+
+`.agent_plans/` is gitignored so draft prompts and intermediate plans do
+not accumulate in history. Promote a plan by copying its scoped task files
+into `agent_tasks/` and committing those.
+
 ## Verification Commands
 
 Verification commands listed under a task's `verification` field are run by the
@@ -199,6 +340,7 @@ scripts/agentctl.sh status
 scripts/agentctl.sh ready
 scripts/agentctl.sh sync <task-id>
 scripts/agentctl.sh complete <task-id> --dry-run
+scripts/agentctl.sh plan --help
 ```
 
 `ready` is a convenience query that filters `list` to only tasks whose
@@ -222,6 +364,7 @@ the operator can dial autonomy up or down without editing the script:
 | `CLAUDE_BIN`                      | `claude`       | Claude Code executable. |
 | `CLAUDE_PERMISSION_MODE`          | `acceptEdits`  | Permission mode for `run`. |
 | `CLAUDE_REVIEW_PERMISSION_MODE`   | `plan`         | Permission mode for `review`. |
+| `CLAUDE_PLAN_PERMISSION_MODE`     | `acceptEdits`  | Permission mode for `plan` (local planner). |
 | `CLAUDE_PYTHON`                   | `python3`      | Python interpreter used to parse the queue file. |
 
 `acceptEdits` lets the agent write files in the worktree without prompting per

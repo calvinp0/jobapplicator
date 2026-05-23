@@ -12,11 +12,20 @@
 #   status            Print task ids grouped by status.
 #   list              Print every task with its status and title.
 #   ready             Print tasks whose status is 'ready'.
+#   plan "<goal>"     Run a local Claude Code planning session that generates
+#                     scoped task files and queue entries from a high-level
+#                     goal. Does not implement product code.
+#   plan --ultraplan "<goal>"
+#                     Write an Ultraplan-ready prompt file under .agent_plans/
+#                     and print manual handoff instructions. Does not invoke
+#                     Claude Code itself.
+#   plan --help       Show plan-specific help.
 #
 # Configuration via environment variables:
 #   CLAUDE_BIN                       Claude Code executable. Default: claude
 #   CLAUDE_PERMISSION_MODE           Permission mode for run. Default: acceptEdits
 #   CLAUDE_REVIEW_PERMISSION_MODE    Permission mode for review. Default: plan
+#   CLAUDE_PLAN_PERMISSION_MODE      Permission mode for plan. Default: acceptEdits
 #   CLAUDE_PYTHON                    Python interpreter used to parse YAML. Default: python3
 #
 # Dependencies:
@@ -28,11 +37,14 @@ set -euo pipefail
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_REVIEW_PERMISSION_MODE="${CLAUDE_REVIEW_PERMISSION_MODE:-plan}"
+CLAUDE_PLAN_PERMISSION_MODE="${CLAUDE_PLAN_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PYTHON="${CLAUDE_PYTHON:-python3}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 QUEUE_FILE="$REPO_ROOT/agent_tasks/queue.yaml"
+PLANS_DIR="$REPO_ROOT/.agent_plans"
+PLANNING_GUIDELINES="$REPO_ROOT/agent_tasks/planning_guidelines.md"
 
 err() { printf 'error: %s\n' "$*" >&2; }
 die() { err "$*"; exit 1; }
@@ -610,9 +622,365 @@ Usage:
   scripts/agentctl.sh status
   scripts/agentctl.sh list
   scripts/agentctl.sh ready
+  scripts/agentctl.sh plan "<high-level goal>"
+  scripts/agentctl.sh plan --ultraplan "<high-level goal>"
+  scripts/agentctl.sh plan --help
 
 See docs/contracts/agent_orchestration.md for the full contract.
 EOF
+}
+
+plan_help() {
+  cat <<'EOF'
+agentctl.sh plan - generate scoped agent task packs from a high-level goal
+
+Usage:
+  scripts/agentctl.sh plan "<high-level goal>"
+       Launch a local Claude Code planning session. The planner reads the
+       current queue, architecture docs, ADRs, and contracts, then produces
+       one or more scoped task markdown files under agent_tasks/ and matching
+       entries in agent_tasks/queue.yaml. The planner does not implement
+       product code and does not mark new tasks as done.
+
+  scripts/agentctl.sh plan --ultraplan "<high-level goal>"
+       Do not invoke Claude Code. Instead, write a self-contained
+       Ultraplan-ready prompt file under .agent_plans/<timestamp>-ultraplan.md
+       that includes current queue context, references to docs/ADRs/contracts,
+       and task-generation instructions. Then print manual handoff steps.
+
+  scripts/agentctl.sh plan --help
+       Show this help text.
+
+Planner safety boundaries (enforced via prompt; the operator should
+double-check the diff):
+  May edit:    agent_tasks/**, docs/contracts/agent_orchestration.md,
+               .agent_plans/**, .gitignore
+  Must not edit: backend/**, frontend/**, extension/**, runtime_prompts/**,
+                 candidate_context/**, runs/**, docs/adr/**,
+                 docs/product_requirements.md, docs/architecture.md
+
+See docs/contracts/agent_orchestration.md and agent_tasks/planning_guidelines.md
+for the full planner contract.
+EOF
+}
+
+# build_planner_directives
+#
+# Print the shared list of instructions both the local planner prompt and the
+# Ultraplan prompt embed verbatim. Keeping it in one place keeps the two
+# planner surfaces in sync.
+build_planner_directives() {
+  cat <<'EOF'
+You are a planning agent, not an implementation agent.
+
+Create scoped implementation task files and queue entries only.
+
+Do not implement product code.
+
+Prefer several small tasks over one large task.
+
+Respect ADRs and contracts.
+
+Preserve completed queue history.
+
+Do not change product direction.
+
+Do not mark new tasks as done.
+
+Keep allowed_paths narrow and non-overlapping where possible.
+
+You may edit only:
+  agent_tasks/**
+  docs/contracts/agent_orchestration.md
+  .agent_plans/**
+  .gitignore
+
+You must not edit:
+  backend/**
+  frontend/**
+  extension/**
+  runtime_prompts/**
+  candidate_context/**
+  runs/**
+  docs/adr/**
+  docs/product_requirements.md
+  docs/architecture.md
+
+Each generated task markdown file must include these sections:
+  Goal
+  Background
+  Scope
+  Allowed files
+  Forbidden files
+  Out of scope
+  Acceptance criteria
+  Verification
+  Git instructions
+
+Each generated queue entry in agent_tasks/queue.yaml must include:
+  id
+  title
+  file
+  branch
+  worktree
+  status        (one of: planned, ready, blocked)
+  depends_on
+  verification
+  allowed_paths
+EOF
+}
+
+# write_ultraplan_prompt <goal> <output_path>
+#
+# Build the Ultraplan-ready markdown prompt file. Uses Python with PyYAML so
+# the current queue can be parsed and split by status; mirrors yaml_query's
+# strategy for keeping the bash side dependency-light.
+write_ultraplan_prompt() {
+  local goal="$1" out_path="$2"
+  require_queue
+  require_python_yaml
+  local directives
+  directives="$(build_planner_directives)"
+  CLAUDE_QUEUE_FILE="$QUEUE_FILE" \
+  CLAUDE_PLAN_GOAL="$goal" \
+  CLAUDE_PLAN_OUT="$out_path" \
+  CLAUDE_PLAN_DIRECTIVES="$directives" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os, sys, yaml, datetime
+
+queue_path = os.environ["CLAUDE_QUEUE_FILE"]
+out_path   = os.environ["CLAUDE_PLAN_OUT"]
+goal       = os.environ["CLAUDE_PLAN_GOAL"]
+directives = os.environ["CLAUDE_PLAN_DIRECTIVES"]
+
+with open(queue_path, "r", encoding="utf-8") as fh:
+    data = yaml.safe_load(fh) or {}
+tasks = data.get("tasks") or []
+
+done    = [t for t in tasks if t.get("status") == "done"]
+open_   = [t for t in tasks if t.get("status") in ("ready", "planned", "blocked", "running", "review")]
+other   = [t for t in tasks if t not in done and t not in open_]
+
+def fmt_task(t):
+    return f"- {t.get('id','?')} [{t.get('status','?')}] — {t.get('title','')} ({t.get('file','')})"
+
+now = datetime.datetime.now().isoformat(timespec="seconds")
+
+body = []
+body.append(f"# Ultraplan Prompt: {goal}")
+body.append("")
+body.append(f"_Generated by scripts/agentctl.sh plan --ultraplan on {now}._")
+body.append("")
+body.append("## High-level goal")
+body.append("")
+body.append(goal)
+body.append("")
+body.append("## What to produce")
+body.append("")
+body.append("Generate a small, ordered pack of scoped implementation tasks that move the")
+body.append("project toward the high-level goal above. For each task, produce:")
+body.append("")
+body.append("1. A markdown task file under `agent_tasks/<NNN>-<slug>.md` following the")
+body.append("   section structure listed in the planner directives below.")
+body.append("2. A matching entry in `agent_tasks/queue.yaml` using the keys listed in the")
+body.append("   planner directives below.")
+body.append("")
+body.append("Pick the next free numeric id by continuing the existing sequence in")
+body.append("`agent_tasks/queue.yaml` (see 'Current queue' below).")
+body.append("")
+body.append("## Planner directives")
+body.append("")
+body.append("```text")
+body.append(directives)
+body.append("```")
+body.append("")
+body.append("## Current queue (completed history — do not rewrite)")
+body.append("")
+if done:
+    for t in done:
+        body.append(fmt_task(t))
+else:
+    body.append("_(no completed tasks)_")
+body.append("")
+body.append("## Current queue (open tasks — ready / planned / blocked / running / review)")
+body.append("")
+if open_:
+    for t in open_:
+        body.append(fmt_task(t))
+else:
+    body.append("_(no open tasks)_")
+if other:
+    body.append("")
+    body.append("## Other queue entries")
+    body.append("")
+    for t in other:
+        body.append(fmt_task(t))
+body.append("")
+body.append("## Reference documents the planner should read first")
+body.append("")
+body.append("- docs/product_requirements.md  (product scope and non-goals)")
+body.append("- docs/architecture.md          (component boundaries)")
+body.append("- docs/contracts/agent_orchestration.md  (task / queue / planner contract)")
+body.append("- docs/contracts/*.md           (other contracts, e.g. capture payload, run dir)")
+body.append("- docs/adr/*.md                 (architectural decisions — respect, do not override)")
+body.append("- agent_tasks/planning_guidelines.md  (planner-specific guidance)")
+body.append("- agent_tasks/queue.yaml        (current queue — preserve completed history)")
+body.append("")
+body.append("## Output requirements summary")
+body.append("")
+body.append("- Do not implement product code as part of planning.")
+body.append("- Preserve every existing completed task entry in queue.yaml verbatim.")
+body.append("- Do not mark any new task `done`. Use `planned`, `ready`, or `blocked`.")
+body.append("- Keep `allowed_paths` narrow and non-overlapping between sibling tasks.")
+body.append("- Prefer several small tasks over one large task.")
+body.append("- Each new task must specify its own verification commands and commit message.")
+body.append("")
+
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(body))
+print(out_path)
+PYEOF
+}
+
+plan_ultraplan() {
+  local goal="$1"
+  [[ -n "$goal" ]] || die "usage: agentctl.sh plan --ultraplan \"<high-level goal>\""
+  mkdir -p "$PLANS_DIR"
+  local ts out_path
+  ts="$(date +%Y-%m-%d-%H%M%S)"
+  out_path="$PLANS_DIR/${ts}-ultraplan.md"
+  write_ultraplan_prompt "$goal" "$out_path" >/dev/null
+
+  local rel_path="${out_path#$REPO_ROOT/}"
+  printf 'Wrote Ultraplan prompt: %s\n' "$rel_path"
+  printf '\n'
+  printf 'Next steps (manual handoff):\n'
+  printf '  1. Open Claude Code in this repo.\n'
+  printf '  2. Run /ultraplan and supply the prompt above, e.g.:\n'
+  printf '       /ultraplan %s\n' "$rel_path"
+  printf '     (If your Claude Code build does not support /ultraplan, paste the\n'
+  printf '     contents of %s into a planning session.)\n' "$rel_path"
+  printf '  3. Review the generated plan. When ready, save the new task files under\n'
+  printf '     agent_tasks/ and add matching entries to agent_tasks/queue.yaml.\n'
+  printf '  4. Do not implement product code as part of planning.\n'
+  printf '\n'
+  printf 'Files under .agent_plans/ are gitignored by default; promote a plan by\n'
+  printf 'copying its scoped task files into agent_tasks/ and committing those.\n'
+}
+
+build_local_plan_prompt() {
+  local goal="$1"
+  local directives
+  directives="$(build_planner_directives)"
+  cat <<EOF
+You are running scripts/agentctl.sh plan in local planning mode.
+
+High-level goal:
+
+${goal}
+
+You are a planning agent. Generate a small, ordered pack of scoped
+implementation tasks that move the project toward the high-level goal.
+
+Read first (do not skip):
+- docs/product_requirements.md
+- docs/architecture.md
+- docs/contracts/agent_orchestration.md
+- docs/contracts/*.md
+- docs/adr/*.md
+- agent_tasks/planning_guidelines.md
+- agent_tasks/queue.yaml
+
+Then, for each task you propose:
+
+1. Create a markdown task file at agent_tasks/<NNN>-<slug>.md using the next
+   available numeric id (continue the sequence already in queue.yaml).
+2. Add a matching entry to agent_tasks/queue.yaml.
+
+Planner directives (follow exactly):
+
+----- BEGIN PLANNER DIRECTIVES -----
+${directives}
+----- END PLANNER DIRECTIVES -----
+
+After writing the new task files and queue entries:
+- Do not stage or commit. The operator will review the diff and commit.
+- Print a short summary listing each new task id, title, status, and file path.
+EOF
+}
+
+plan_local() {
+  local goal="$1"
+  [[ -n "$goal" ]] || die "usage: agentctl.sh plan \"<high-level goal>\""
+  require_queue
+  require_python_yaml
+  ensure_clean_worktree
+
+  local prompt
+  prompt="$(build_local_plan_prompt "$goal")"
+
+  printf 'Starting local Claude Code planning session\n'
+  printf '  goal: %s\n' "$goal"
+  printf '  permission-mode: %s\n' "$CLAUDE_PLAN_PERMISSION_MODE"
+  printf '  (planner may edit only agent_tasks/**, docs/contracts/agent_orchestration.md,\n'
+  printf '   .agent_plans/**, and .gitignore. See plan --help for the full boundary.)\n\n'
+
+  if ! "$CLAUDE_BIN" \
+      --permission-mode "$CLAUDE_PLAN_PERMISSION_MODE" \
+      -p "$prompt"; then
+    die "Claude Code exited with a non-zero status"
+  fi
+
+  printf '\nPlanner finished. Review the diff before committing:\n'
+  git -C "$REPO_ROOT" status --short
+}
+
+cmd_plan() {
+  local mode="local" goal=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        plan_help
+        return 0
+        ;;
+      --ultraplan)
+        mode="ultraplan"
+        shift
+        ;;
+      --)
+        shift
+        [[ $# -gt 0 ]] || die "usage: agentctl.sh plan [--ultraplan] \"<high-level goal>\""
+        if [[ -n "$goal" ]]; then
+          die "plan: multiple goals supplied; pass a single quoted string"
+        fi
+        goal="$1"
+        shift
+        ;;
+      -*)
+        err "unknown plan flag: $1"
+        plan_help
+        exit 2
+        ;;
+      *)
+        if [[ -n "$goal" ]]; then
+          die "plan: multiple goals supplied; pass a single quoted string"
+        fi
+        goal="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$goal" ]]; then
+    err "plan: missing high-level goal"
+    plan_help
+    exit 2
+  fi
+
+  case "$mode" in
+    ultraplan) plan_ultraplan "$goal" ;;
+    local)     plan_local "$goal" ;;
+  esac
 }
 
 main() {
@@ -627,6 +995,7 @@ main() {
     status) cmd_status "$@" ;;
     list)   cmd_list "$@" ;;
     ready)  cmd_ready "$@" ;;
+    plan)   cmd_plan "$@" ;;
     ""|help|-h|--help) cmd_help ;;
     *) err "unknown command: $cmd"; cmd_help; exit 2 ;;
   esac
