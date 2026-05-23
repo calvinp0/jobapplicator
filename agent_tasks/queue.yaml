@@ -470,3 +470,88 @@ tasks:
       - "agent_tasks/026-local-mvp-smoke-proof.md"
       - "agent_tasks/queue.yaml"
       - "agent_tasks/planning_guidelines.md"
+
+  - id: "027-frontend-dashboard-home"
+    title: "Add frontend dashboard home page"
+    file: "agent_tasks/027-frontend-dashboard-home.md"
+    branch: "agent/027-frontend-dashboard-home"
+    worktree: "agent-027-frontend-dashboard-home"
+    status: "ready"
+    depends_on:
+      - "026-local-mvp-smoke-proof"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/DashboardPage.tsx"
+      - "frontend/src/App.tsx"
+      - "frontend/src/layout/Layout.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/dashboardPage.test.tsx"
+      - "frontend/src/test/routes.test.tsx"
+      - "agent_tasks/queue.yaml"
+
+  - id: "028-frontend-job-detail-hub"
+    title: "Make JobDetailPage the central workflow hub"
+    file: "agent_tasks/028-frontend-job-detail-hub.md"
+    branch: "agent/028-frontend-job-detail-hub"
+    worktree: "agent-028-frontend-job-detail-hub"
+    status: "planned"
+    depends_on:
+      - "027-frontend-dashboard-home"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/test/jobDetailApply.test.tsx"
+      - "frontend/src/test/jobDetailResumeVersions.test.tsx"
+      - "frontend/src/styles.css"
+      - "agent_tasks/queue.yaml"
+
+  - id: "029-frontend-advanced-details-disclosure"
+    title: "Hide provenance behind Advanced details disclosure"
+    file: "agent_tasks/029-frontend-advanced-details-disclosure.md"
+    branch: "agent/029-frontend-advanced-details-disclosure"
+    worktree: "agent-029-frontend-advanced-details-disclosure"
+    status: "planned"
+    depends_on:
+      - "028-frontend-job-detail-hub"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/pages/ResumeVersionDetailPage.tsx"
+      - "frontend/src/pages/ApplicationDetailPage.tsx"
+      - "frontend/src/test/runDetailPage.test.tsx"
+      - "frontend/src/test/resumeVersionDetailPage.test.tsx"
+      - "frontend/src/test/applicationDetailPage.test.tsx"
+      - "frontend/src/styles.css"
+      - "agent_tasks/queue.yaml"
+
+  - id: "030-frontend-user-facing-headings-and-status"
+    title: "Add user-facing headings and status badges"
+    file: "agent_tasks/030-frontend-user-facing-headings-and-status.md"
+    branch: "agent/030-frontend-user-facing-headings-and-status"
+    worktree: "agent-030-frontend-user-facing-headings-and-status"
+    status: "planned"
+    depends_on:
+      - "029-frontend-advanced-details-disclosure"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/pages/ResumeVersionDetailPage.tsx"
+      - "frontend/src/pages/ApplicationDetailPage.tsx"
+      - "frontend/src/pages/RunsPage.tsx"
+      - "frontend/src/pages/ApplicationsPage.tsx"
+      - "frontend/src/pages/JobsPage.tsx"
+      - "frontend/src/test/runDetailPage.test.tsx"
+      - "frontend/src/test/resumeVersionDetailPage.test.tsx"
+      - "frontend/src/test/applicationDetailPage.test.tsx"
+      - "frontend/src/test/runsPage.test.tsx"
+      - "frontend/src/test/applicationsPage.test.tsx"
+      - "frontend/src/styles.css"
+      - "agent_tasks/queue.yaml"
