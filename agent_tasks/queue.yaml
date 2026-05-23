@@ -309,3 +309,24 @@ tasks:
       - "frontend/src/styles.css"
       - "frontend/src/test/**"
       - "agent_tasks/queue.yaml"
+
+  - id: "019-agentctl-task-id-shortcuts"
+    title: "Add numeric task ID shortcuts"
+    file: "agent_tasks/019-agentctl-task-id-shortcuts.md"
+    branch: "agent/019-agentctl-task-id-shortcuts"
+    worktree: "agent-019-agentctl-task-id-shortcuts"
+    status: "ready"
+    depends_on:
+      - "013-agent-planner"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh sync 014"
+      - "scripts/agentctl.sh complete 014 --dry-run"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/019-agentctl-task-id-shortcuts.md"
+      - "agent_tasks/queue.yaml"
