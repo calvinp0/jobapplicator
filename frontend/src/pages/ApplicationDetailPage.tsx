@@ -164,20 +164,18 @@ export function ApplicationDetailPage() {
               {job.title} — {job.company}
             </Link>
           ) : (
-            <Link to={`/jobs/${application.job_id}`}>{application.job_id}</Link>
+            "—"
           )}
         </dd>
         <dt>Resume version</dt>
         <dd>
-          {application.resume_version_id ? (
+          {application.resume_version_id && version ? (
             <Link
               to={`/resume-versions/${application.resume_version_id}`}
             >
-              {version
-                ? `Version ${version.version_number}${
-                    version.approved_at ? " (approved)" : " (pending)"
-                  }`
-                : application.resume_version_id}
+              {`Version ${version.version_number}${
+                version.approved_at ? " (approved)" : " (pending)"
+              }`}
             </Link>
           ) : (
             "—"
@@ -256,6 +254,36 @@ export function ApplicationDetailPage() {
           {isAddingEvent ? "Adding…" : "Add event"}
         </button>
       </form>
+
+      <details className="advanced-details">
+        <summary>Advanced details</summary>
+        <dl className="run-meta">
+          <dt>Application id</dt>
+          <dd>
+            <code>{application.id}</code>
+          </dd>
+          {!job ? (
+            <>
+              <dt>Job id</dt>
+              <dd>
+                <code>{application.job_id}</code>
+              </dd>
+            </>
+          ) : null}
+          {application.resume_version_id && !version ? (
+            <>
+              <dt>Resume version id</dt>
+              <dd>
+                <code>{application.resume_version_id}</code>
+              </dd>
+            </>
+          ) : null}
+          <dt>Created</dt>
+          <dd>{formatTimestamp(application.created_at)}</dd>
+          <dt>Updated</dt>
+          <dd>{formatTimestamp(application.updated_at)}</dd>
+        </dl>
+      </details>
     </section>
   );
 }

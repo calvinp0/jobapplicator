@@ -206,4 +206,49 @@ describe("RunDetailPage actions", () => {
       "/resume-versions/version-1",
     );
   });
+
+  it("renders summary fields by default and hides provenance behind Advanced details", async () => {
+    const user = userEvent.setup();
+    getRunMock.mockResolvedValue({ ...completedRun });
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+    );
+
+    // Summary fields are visible outside the disclosure.
+    expect(screen.getByText(/^Status$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Created$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Started$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Completed$/).closest("details")).toBeNull();
+
+    // The disclosure renders with the heading "Advanced details", closed by default.
+    const disclosure = screen.getByText(/^Advanced details$/);
+    const detailsEl = disclosure.closest("details");
+    expect(detailsEl).not.toBeNull();
+    expect(detailsEl).toHaveClass("advanced-details");
+    expect(detailsEl).not.toHaveAttribute("open");
+
+    // Provenance fields live inside the disclosure.
+    expect(screen.getByText(/^Run id$/).closest("details")).toBe(detailsEl);
+    expect(screen.getByText(/^Run directory$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText("runs/run-1").closest("details")).toBe(detailsEl);
+    expect(screen.getByText(/^Prompt hash$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText(/^Input hash$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText(/^Output hash$/).closest("details")).toBe(
+      detailsEl,
+    );
+
+    // Expanding the disclosure surfaces the provenance fields to the user.
+    await user.click(disclosure);
+    expect(detailsEl).toHaveAttribute("open");
+  });
 });

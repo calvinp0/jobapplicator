@@ -112,26 +112,12 @@ export function RunDetailPage() {
       <dl className="run-meta">
         <dt>Status</dt>
         <dd>{run.status}</dd>
-        <dt>Run directory</dt>
-        <dd>{run.run_dir}</dd>
         <dt>Created</dt>
         <dd>{formatTimestamp(run.created_at)}</dd>
         <dt>Started</dt>
         <dd>{formatTimestamp(run.started_at)}</dd>
         <dt>Completed</dt>
         <dd>{formatTimestamp(run.completed_at)}</dd>
-        <dt>Prompt hash</dt>
-        <dd>
-          <code>{truncateHash(run.prompt_hash)}</code>
-        </dd>
-        <dt>Input hash</dt>
-        <dd>
-          <code>{truncateHash(run.input_hash)}</code>
-        </dd>
-        <dt>Output hash</dt>
-        <dd>
-          <code>{truncateHash(run.output_hash)}</code>
-        </dd>
         {run.error_message ? (
           <>
             <dt>Error</dt>
@@ -171,6 +157,32 @@ export function RunDetailPage() {
           </Link>
         </p>
       ) : null}
+
+      <details className="advanced-details">
+        <summary>Advanced details</summary>
+        <dl className="run-meta">
+          <dt>Run id</dt>
+          <dd>
+            <code>{run.id}</code>
+          </dd>
+          <dt>Run directory</dt>
+          <dd>
+            <code>{run.run_dir}</code>
+          </dd>
+          <dt>Prompt hash</dt>
+          <dd>
+            <code>{truncateHash(run.prompt_hash)}</code>
+          </dd>
+          <dt>Input hash</dt>
+          <dd>
+            <code>{truncateHash(run.input_hash)}</code>
+          </dd>
+          <dt>Output hash</dt>
+          <dd>
+            <code>{truncateHash(run.output_hash)}</code>
+          </dd>
+        </dl>
+      </details>
     </section>
   );
 }

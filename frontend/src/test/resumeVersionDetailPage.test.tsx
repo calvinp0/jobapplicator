@@ -117,11 +117,59 @@ describe("ResumeVersionDetailPage", () => {
     expect(screen.getByText("claude_run")).toBeInTheDocument();
     expect(screen.getByText("Not approved")).toBeInTheDocument();
     expect(
-      screen.getByText("runs/run-1/output/resume.docx"),
-    ).toBeInTheDocument();
-    expect(
       screen.getByRole("link", { name: /senior engineer — acme corp/i }),
     ).toHaveAttribute("href", "/jobs/job-1");
+
+    // DOCX path lives behind the Advanced details disclosure.
+    const docxPath = screen.getByText("runs/run-1/output/resume.docx");
+    expect(docxPath.closest("details")).toHaveClass("advanced-details");
+  });
+
+  it("renders summary fields by default and hides provenance behind Advanced details", async () => {
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+
+    renderVersion("version-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /resume version 2/i }),
+      ).toBeInTheDocument(),
+    );
+
+    // Summary fields live outside the disclosure.
+    expect(screen.getByText(/^Version$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Job$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Source$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Created$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Approved$/).closest("details")).toBeNull();
+
+    // The disclosure renders with the heading "Advanced details", closed by default.
+    const disclosure = screen.getByText(/^Advanced details$/);
+    const detailsEl = disclosure.closest("details");
+    expect(detailsEl).not.toBeNull();
+    expect(detailsEl).toHaveClass("advanced-details");
+    expect(detailsEl).not.toHaveAttribute("open");
+
+    // Provenance fields live inside the disclosure.
+    expect(screen.getByText(/^Resume version id$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText(/^Claude run id$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText(/^Content hash$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText(/^Prompt hash$/).closest("details")).toBe(
+      detailsEl,
+    );
+    expect(screen.getByText(/^DOCX path$/).closest("details")).toBe(detailsEl);
+    expect(screen.getByText(/^PDF path$/).closest("details")).toBe(detailsEl);
+
+    // Expanding the disclosure surfaces the provenance fields to the user.
+    await user.click(disclosure);
+    expect(detailsEl).toHaveAttribute("open");
   });
 
   it("approves a pending version and reflects the approved state", async () => {
