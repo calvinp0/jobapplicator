@@ -350,4 +350,23 @@ tasks:
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/020-agentctl-complete-merges-branches.md"
       - "agent_tasks/queue.yaml"
-
+  - id: "021-agentctl-prevent-main-worktree-pollution"
+    title: "Prevent main worktree pollution"
+    file: "agent_tasks/021-agentctl-prevent-main-worktree-pollution.md"
+    branch: "agent/021-agentctl-prevent-main-worktree-pollution"
+    worktree: "agent-021-agentctl-prevent-main-worktree-pollution"
+    status: "ready"
+    depends_on:
+      - "020-agentctl-complete-merges-branches"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh plan --help"
+      - "scripts/agentctl.sh complete 021 --dry-run"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/021-agentctl-prevent-main-worktree-pollution.md"
+      - "agent_tasks/queue.yaml"
