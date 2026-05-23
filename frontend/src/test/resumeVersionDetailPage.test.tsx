@@ -109,7 +109,7 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume version 2/i }),
+        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
       ).toBeInTheDocument(),
     );
 
@@ -119,6 +119,19 @@ describe("ResumeVersionDetailPage", () => {
     expect(
       screen.getByRole("link", { name: /senior engineer — acme corp/i }),
     ).toHaveAttribute("href", "/jobs/job-1");
+
+    // Draft badge renders while approved_at is null.
+    expect(screen.getByText("Draft")).toHaveClass("status-badge-draft");
+
+    // Once the job loads, the heading includes "Senior Engineer — Acme Corp".
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume draft 2 for senior engineer — acme corp/i,
+        }),
+      ).toBeInTheDocument(),
+    );
 
     // DOCX path lives behind the Advanced details disclosure.
     const docxPath = screen.getByText("runs/run-1/output/resume.docx");
@@ -133,7 +146,7 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume version 2/i }),
+        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
       ).toBeInTheDocument(),
     );
 
@@ -181,7 +194,7 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume version 2/i }),
+        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
       ).toBeInTheDocument(),
     );
 
@@ -197,6 +210,13 @@ describe("ResumeVersionDetailPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/Approved on /i)).toBeInTheDocument(),
     );
+
+    // Badge flips from Draft to Approved.
+    const approvedBadge = screen
+      .getAllByText("Approved")
+      .find((el) => el.classList.contains("status-badge"));
+    expect(approvedBadge).toBeDefined();
+    expect(approvedBadge).toHaveClass("status-badge-approved");
 
     expect(
       screen.getByRole("button", { name: /^approve$/i }),
@@ -230,7 +250,7 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume version 2/i }),
+        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
       ).toBeInTheDocument(),
     );
 
@@ -253,7 +273,7 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume version 2/i }),
+        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
       ).toBeInTheDocument(),
     );
 

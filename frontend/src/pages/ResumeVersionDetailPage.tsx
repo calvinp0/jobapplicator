@@ -86,7 +86,7 @@ export function ResumeVersionDetailPage() {
   if (loadError) {
     return (
       <section className="resume-version-detail">
-        <h2>Resume version</h2>
+        <h2>Resume draft</h2>
         <p role="alert" className="error">
           {loadError}
         </p>
@@ -97,15 +97,29 @@ export function ResumeVersionDetailPage() {
   if (!version) {
     return (
       <section className="resume-version-detail">
-        <h2>Resume version</h2>
+        <h2>Resume draft</h2>
         <p>Loading…</p>
       </section>
     );
   }
 
+  const approved = version.approved_at !== null;
+  const badge = {
+    label: approved ? "Approved" : "Draft",
+    variant: approved ? "approved" : "draft",
+  };
+  const heading = job
+    ? `Resume draft ${version.version_number} for ${job.title} — ${job.company}`
+    : `Resume draft ${version.version_number}`;
+
   return (
     <section className="resume-version-detail">
-      <h2>Resume version {version.version_number}</h2>
+      <h2>
+        {heading}
+        <span className={`status-badge status-badge-${badge.variant}`}>
+          {badge.label}
+        </span>
+      </h2>
       <dl className="run-meta">
         <dt>Version</dt>
         <dd>{version.version_number}</dd>

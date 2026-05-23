@@ -149,9 +149,26 @@ export function ApplicationDetailPage() {
   const reason = gatingReason(application, version);
   const submitDisabled = reason !== null || isSubmitting;
 
+  const heading = job
+    ? `Application — ${job.title} — ${job.company}`
+    : "Application";
+  const submitted = application.status === "submitted";
+  const badge = {
+    label: submitted
+      ? "Submitted"
+      : application.status.charAt(0).toUpperCase() +
+        application.status.slice(1),
+    variant: submitted ? "submitted" : "default",
+  };
+
   return (
     <section className="application-detail">
-      <h2>Application</h2>
+      <h2>
+        {heading}
+        <span className={`status-badge status-badge-${badge.variant}`}>
+          {badge.label}
+        </span>
+      </h2>
       <dl className="run-meta">
         <dt>Status</dt>
         <dd>{application.status}</dd>

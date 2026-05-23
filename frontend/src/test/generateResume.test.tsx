@@ -168,7 +168,12 @@ describe("JobDetailPage generate resume flow", () => {
       }),
     );
     await waitFor(() =>
-      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
     );
   });
 
