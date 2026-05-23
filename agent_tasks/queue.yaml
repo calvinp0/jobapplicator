@@ -75,8 +75,8 @@ tasks:
       - "002-backend-models"
       - "003-agent-orchestration"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd extension && npm test"
+      - "cd extension && npm run build"
     allowed_paths:
       - "extension/**"
       - "docs/contracts/browser_extension_capture.md"
@@ -134,8 +134,8 @@ tasks:
     depends_on:
       - "003-agent-orchestration"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
     allowed_paths:
       - "frontend/**"
       - "agent_tasks/queue.yaml"
@@ -150,8 +150,8 @@ tasks:
       - "005-extension-capture"
       - "009-frontend-shell"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
     allowed_paths:
       - "frontend/**"
       - "agent_tasks/queue.yaml"
@@ -254,8 +254,8 @@ tasks:
     depends_on:
       - "015-frontend-settings-master-resume-and-evidence-bank"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
     allowed_paths:
       - "frontend/src/pages/RunsPage.tsx"
       - "frontend/src/pages/RunDetailPage.tsx"
@@ -275,8 +275,8 @@ tasks:
       - "014-backend-application-submit-and-open-file"
       - "016-frontend-runs-list-and-detail"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
     allowed_paths:
       - "frontend/src/pages/ResumeVersionDetailPage.tsx"
       - "frontend/src/pages/JobDetailPage.tsx"
@@ -297,8 +297,8 @@ tasks:
     depends_on:
       - "017-frontend-resume-version-approval-and-open-file"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
     allowed_paths:
       - "frontend/src/pages/ApplicationsPage.tsx"
       - "frontend/src/pages/ApplicationDetailPage.tsx"
