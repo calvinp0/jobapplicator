@@ -448,4 +448,25 @@ tasks:
       - "docs/smoke_tests/**"
       - "agent_tasks/025-backend-local-cors.md"
       - "agent_tasks/queue.yaml"
-
+  - id: "026-local-mvp-smoke-proof"
+    title: "Add local MVP smoke proof"
+    file: "agent_tasks/026-local-mvp-smoke-proof.md"
+    branch: "agent/026-local-mvp-smoke-proof"
+    worktree: "agent-026-local-mvp-smoke-proof"
+    status: "ready"
+    depends_on:
+      - "025-backend-local-cors"
+    verification:
+      - "bash -n scripts/smoke_local_mvp.sh"
+      - "scripts/smoke_local_mvp.sh --reset"
+      - "pytest"
+    allowed_paths:
+      - "scripts/seed_demo_data.py"
+      - "scripts/smoke_local_mvp.sh"
+      - "docs/smoke_tests/**"
+      - "README.md"
+      - "backend/app/main.py"
+      - "backend/tests/test_cors.py"
+      - "agent_tasks/026-local-mvp-smoke-proof.md"
+      - "agent_tasks/queue.yaml"
+      - "agent_tasks/planning_guidelines.md"
