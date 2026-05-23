@@ -370,3 +370,23 @@ tasks:
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/021-agentctl-prevent-main-worktree-pollution.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "022-agentctl-frontend-worktree-verification"
+    title: "Make frontend worktree verification reliable"
+    file: "agent_tasks/022-agentctl-frontend-worktree-verification.md"
+    branch: "agent/022-agentctl-frontend-worktree-verification"
+    worktree: "agent-022-agentctl-frontend-worktree-verification"
+    status: "ready"
+    depends_on:
+      - "021-agentctl-prevent-main-worktree-pollution"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh complete 018 --dry-run"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/022-agentctl-frontend-worktree-verification.md"
+      - "agent_tasks/queue.yaml"
