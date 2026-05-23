@@ -13,6 +13,7 @@ Claude, does not contact LinkedIn or Gmail, and does not submit anything.
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -153,6 +154,26 @@ def _existing_demo_job(db) -> Job | None:
     return db.query(Job).filter(Job.external_url == DEMO_JOB_URL).first()
 
 
+def remove_stale_demo_run_dir(repo_root: Path) -> None:
+    """Remove runs/demo-run-0001 if it exists.
+
+    The seed script owns the fixed demo run id, so it's allowed to clear
+    its own namespace before recreating it. Refuses to delete anything
+    that isn't exactly runs/demo-run-0001 under repo_root.
+    """
+    demo_run_dir = (repo_root / "runs" / DEMO_RUN_ID).resolve()
+    allowed_parent = (repo_root / "runs").resolve()
+
+    if not demo_run_dir.exists():
+        return
+
+    if demo_run_dir.parent != allowed_parent or demo_run_dir.name != DEMO_RUN_ID:
+        raise RuntimeError(f"Refusing to remove unexpected path: {demo_run_dir}")
+
+    print(f"Removing stale demo run directory: {demo_run_dir}")
+    shutil.rmtree(demo_run_dir)
+
+
 def _print_summary(
     job_id: str,
     resume_version_id: str,
@@ -175,6 +196,7 @@ def _print_summary(
 
 def seed() -> int:
     Base.metadata.create_all(bind=engine)
+    remove_stale_demo_run_dir(REPO_ROOT)
 
     db = SessionLocal()
     try:
