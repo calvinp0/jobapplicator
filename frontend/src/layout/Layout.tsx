@@ -2,13 +2,21 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { listCaptures } from "../api";
 
-const NAV_ITEMS: { to: string; label: string }[] = [
+interface NavItem {
+  to: string;
+  label: string;
+}
+
+const PRIMARY_NAV: NavItem[] = [
   { to: "/", label: "Home" },
-  { to: "/captures", label: "Captures" },
   { to: "/jobs", label: "Jobs" },
-  { to: "/runs", label: "Runs" },
   { to: "/applications", label: "Applications" },
   { to: "/settings", label: "Settings" },
+];
+
+const ADVANCED_NAV: NavItem[] = [
+  { to: "/captures", label: "Captures" },
+  { to: "/runs", label: "Runs" },
 ];
 
 export function Layout() {
@@ -30,44 +38,61 @@ export function Layout() {
     };
   }, [location.pathname]);
 
+  function renderItem(item: NavItem) {
+    const showBadge =
+      item.to === "/captures" &&
+      pendingCount !== null &&
+      pendingCount > 0;
+    return (
+      <li key={item.to}>
+        <NavLink
+          to={item.to}
+          end={item.to === "/"}
+          className={({ isActive }) =>
+            isActive ? "nav-link nav-link-active" : "nav-link"
+          }
+        >
+          <span>{item.label}</span>
+          {showBadge ? (
+            <span
+              className="nav-badge"
+              aria-label={`${pendingCount} pending captures`}
+            >
+              {pendingCount}
+            </span>
+          ) : null}
+        </NavLink>
+      </li>
+    );
+  }
+
   return (
     <div className="layout">
       <aside className="sidebar">
-        <h1 className="sidebar-title">jobapply</h1>
-        <nav>
-          <ul className="nav-list">
-            {NAV_ITEMS.map((item) => {
-              const showBadge =
-                item.to === "/captures" &&
-                pendingCount !== null &&
-                pendingCount > 0;
-              return (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    end={item.to === "/"}
-                    className={({ isActive }) =>
-                      isActive ? "nav-link nav-link-active" : "nav-link"
-                    }
-                  >
-                    <span>{item.label}</span>
-                    {showBadge ? (
-                      <span
-                        className="nav-badge"
-                        aria-label={`${pendingCount} pending captures`}
-                      >
-                        {pendingCount}
-                      </span>
-                    ) : null}
-                  </NavLink>
-                </li>
-              );
-            })}
+        <div className="sidebar-brand">
+          <span className="sidebar-mark" aria-hidden="true">
+            jp
+          </span>
+          <div>
+            <h1 className="sidebar-title">jobapply</h1>
+            <p className="sidebar-subtitle">Application cockpit</p>
+          </div>
+        </div>
+        <nav aria-label="Primary">
+          <ul className="nav-list">{PRIMARY_NAV.map(renderItem)}</ul>
+        </nav>
+        <div className="sidebar-divider" role="presentation" />
+        <nav aria-label="Advanced">
+          <p className="nav-group-label">Advanced</p>
+          <ul className="nav-list nav-list-advanced">
+            {ADVANCED_NAV.map(renderItem)}
           </ul>
         </nav>
       </aside>
       <main className="content">
-        <Outlet />
+        <div className="content-inner">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

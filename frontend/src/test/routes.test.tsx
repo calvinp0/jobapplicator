@@ -35,7 +35,7 @@ describe("route smoke tests", () => {
     renderAt("/");
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /^home$/i }),
+        screen.getByRole("heading", { level: 2, name: /application cockpit/i }),
       ).toBeInTheDocument(),
     );
     expect(
