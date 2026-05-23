@@ -12,6 +12,7 @@ vi.mock("../api", async () => {
     listEvidenceBanks: vi.fn().mockResolvedValue([]),
     listRuns: vi.fn().mockResolvedValue([]),
     listApplications: vi.fn().mockResolvedValue([]),
+    listResumeVersions: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -28,6 +29,18 @@ function renderAt(path: string) {
 describe("route smoke tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("renders / with the dashboard home page", async () => {
+    renderAt("/");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /^home$/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", { level: 3, name: /active jobs/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders /captures with empty pending list", async () => {

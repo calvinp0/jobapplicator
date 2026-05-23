@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { listCaptures } from "../api";
 
 const NAV_ITEMS: { to: string; label: string }[] = [
+  { to: "/", label: "Home" },
   { to: "/captures", label: "Captures" },
   { to: "/jobs", label: "Jobs" },
   { to: "/runs", label: "Runs" },
