@@ -573,4 +573,23 @@ tasks:
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/031-agentctl-propagate-claude-permissions.md"
       - "agent_tasks/queue.yaml"
-
+  - id: "032-frontend-visual-cockpit-redesign"
+    title: "Redesign frontend as application cockpit"
+    file: "agent_tasks/032-frontend-visual-cockpit-redesign.md"
+    branch: "agent/032-frontend-visual-cockpit-redesign"
+    worktree: "agent-032-frontend-visual-cockpit-redesign"
+    status: "ready"
+    depends_on:
+      - "030-frontend-user-facing-headings-and-status"
+    verification:
+      - "cd frontend && npm install"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/App.tsx"
+      - "frontend/src/layout/**"
+      - "frontend/src/pages/**"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/032-frontend-visual-cockpit-redesign.md"
+      - "agent_tasks/queue.yaml"
