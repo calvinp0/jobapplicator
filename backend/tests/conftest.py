@@ -32,6 +32,7 @@ def client() -> Iterator:
         "app.routers.applications",
         "app.routers.captures",
         "app.routers.evidence_banks",
+        "app.routers.files",
         "app.routers.jobs",
         "app.routers.master_resumes",
         "app.routers.resume_versions",

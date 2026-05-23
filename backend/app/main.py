@@ -7,6 +7,7 @@ from .routers import (
     applications,
     captures,
     evidence_banks,
+    files,
     jobs,
     master_resumes,
     resume_versions,
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(applications.router)
     app.include_router(runs.router)
     app.include_router(resume_versions.router)
+    app.include_router(files.router)
 
     return app
 

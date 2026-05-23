@@ -236,3 +236,12 @@ def default_runtime_prompts_root() -> Path:
             str(_project_root() / "runtime_prompts"),
         )
     )
+
+
+def default_resume_versions_root() -> Path:
+    return Path(
+        os.environ.get(
+            "JOBAPPLY_RESUME_VERSIONS_ROOT",
+            str(_project_root() / "resume_versions"),
+        )
+    )

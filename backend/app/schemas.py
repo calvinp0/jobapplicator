@@ -129,6 +129,31 @@ class ApplicationRead(_ORMModel):
 APPLICATION_STATUS_SET = set(APPLICATION_STATUSES)
 
 
+# ---- ApplicationEvent ----
+
+class ApplicationEventCreate(BaseModel):
+    event_type: str
+    notes: Optional[str] = None
+    source: Optional[str] = None
+
+
+class ApplicationEventRead(_ORMModel):
+    id: str
+    application_id: str
+    event_type: str
+    event_time: datetime
+    notes: Optional[str]
+    source: Optional[str]
+    created_at: datetime
+
+
+# ---- File open ----
+
+class FileOpenRequest(BaseModel):
+    path: Optional[str] = None
+    resume_version_id: Optional[str] = None
+
+
 # ---- ClaudeRun ----
 
 class ClaudeRunCreate(BaseModel):
