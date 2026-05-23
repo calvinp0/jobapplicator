@@ -431,4 +431,21 @@ tasks:
       - "README.md"
       - "agent_tasks/024-demo-seed-data.md"
       - "agent_tasks/queue.yaml"
+  - id: "025-backend-local-cors"
+    title: "Add backend local CORS support"
+    file: "agent_tasks/025-backend-local-cors.md"
+    branch: "agent/025-backend-local-cors"
+    worktree: "agent-025-backend-local-cors"
+    status: "ready"
+    depends_on:
+      - "024-demo-seed-data"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/main.py"
+      - "backend/tests/**"
+      - "README.md"
+      - "docs/smoke_tests/**"
+      - "agent_tasks/025-backend-local-cors.md"
+      - "agent_tasks/queue.yaml"
 
