@@ -120,6 +120,13 @@ describe("ApplicationsPage", () => {
 
     expect(screen.getByText(/approved/i)).toBeInTheDocument();
     expect(screen.getByText(/5\/22\/2026|May 22, 2026|2026/)).toBeInTheDocument();
+
+    // Each row carries a status badge: Approved (default variant) and
+    // Submitted (submitted variant).
+    expect(screen.getByText("Approved")).toHaveClass("status-badge");
+    expect(screen.getByText("Submitted")).toHaveClass(
+      "status-badge-submitted",
+    );
   });
 
   it("renders the empty state when there are no applications", async () => {

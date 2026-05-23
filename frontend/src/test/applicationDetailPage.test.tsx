@@ -202,11 +202,29 @@ describe("ApplicationDetailPage", () => {
       expect(statusTerms.length).toBeGreaterThan(0);
     });
 
+    // Badge updates to Submitted with the submitted variant once the
+    // status transitions.
+    await waitFor(() => {
+      const badge = screen
+        .getAllByText("Submitted")
+        .find((el) => el.classList.contains("status-badge"));
+      expect(badge).toBeDefined();
+      expect(badge).toHaveClass("status-badge-submitted");
+    });
+
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: /mark submitted/i }),
       ).toBeDisabled(),
     );
+
+    // Heading now includes the job context.
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: /application — senior engineer — acme corp/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("renders summary fields by default and hides provenance behind Advanced details", async () => {

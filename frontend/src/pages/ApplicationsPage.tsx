@@ -8,6 +8,19 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function applicationStatusBadge(status: string): {
+  label: string;
+  variant: string;
+} {
+  if (status === "submitted") {
+    return { label: "Submitted", variant: "submitted" };
+  }
+  return {
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+    variant: "default",
+  };
+}
+
 export function ApplicationsPage() {
   const [applications, setApplications] = useState<Application[] | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -66,14 +79,20 @@ export function ApplicationsPage() {
             const label = job
               ? `${job.title} — ${job.company}`
               : `Job ${app.job_id}`;
+            const badge = applicationStatusBadge(app.status);
             return (
               <li key={app.id} className="application-list-item">
                 <Link to={`/applications/${app.id}`}>
                   <strong>{label}</strong>
                 </Link>
+                <span
+                  className={`status-badge status-badge-${badge.variant}`}
+                >
+                  {badge.label}
+                </span>
                 <span className="application-meta">
                   {" "}
-                  · {app.status} · submitted {formatTimestamp(app.submitted_at)}
+                  · submitted {formatTimestamp(app.submitted_at)}
                 </span>
               </li>
             );

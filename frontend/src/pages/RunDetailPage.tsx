@@ -2,12 +2,34 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
+  getJob,
   getRun,
   importRun,
   invokeRun,
   listResumeVersions,
 } from "../api";
-import type { ClaudeRun, ResumeVersion } from "../api";
+import type { ClaudeRun, Job, ResumeVersion } from "../api";
+
+export function runStatusBadge(status: string): {
+  label: string;
+  variant: string;
+} {
+  switch (status) {
+    case "created":
+      return { label: "Pending", variant: "pending" };
+    case "running":
+      return { label: "Running", variant: "running" };
+    case "completed":
+      return { label: "Completed", variant: "completed" };
+    case "failed":
+      return { label: "Failed", variant: "failed" };
+    default:
+      return {
+        label: status.charAt(0).toUpperCase() + status.slice(1),
+        variant: "default",
+      };
+  }
+}
 
 function truncateHash(hash: string | null): string {
   if (!hash) return "—";
@@ -22,6 +44,7 @@ function formatTimestamp(value: string | null): string {
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [run, setRun] = useState<ClaudeRun | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
   const [resumeVersion, setResumeVersion] = useState<ResumeVersion | null>(
     null,
   );
@@ -34,12 +57,15 @@ export function RunDetailPage() {
     if (!runId) return;
     let cancelled = false;
     Promise.all([getRun(runId), listResumeVersions()])
-      .then(([r, versions]) => {
+      .then(async ([r, versions]) => {
         if (cancelled) return;
         setRun(r);
         const existing =
           versions.find((v) => v.claude_run_id === runId) ?? null;
         setResumeVersion(existing);
+        const j = await getJob(r.job_id).catch(() => null);
+        if (cancelled || !j) return;
+        setJob(j);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -89,7 +115,7 @@ export function RunDetailPage() {
   if (loadError) {
     return (
       <section className="run-detail">
-        <h2>Run</h2>
+        <h2>Resume tailoring run</h2>
         <p role="alert" className="error">
           {loadError}
         </p>
@@ -100,15 +126,25 @@ export function RunDetailPage() {
   if (!run) {
     return (
       <section className="run-detail">
-        <h2>Run</h2>
+        <h2>Resume tailoring run</h2>
         <p>Loading…</p>
       </section>
     );
   }
 
+  const badge = runStatusBadge(run.status);
+  const heading = job
+    ? `Resume tailoring run — ${job.title} — ${job.company}`
+    : "Resume tailoring run";
+
   return (
     <section className="run-detail">
-      <h2>Run {run.id}</h2>
+      <h2>
+        {heading}
+        <span className={`status-badge status-badge-${badge.variant}`}>
+          {badge.label}
+        </span>
+      </h2>
       <dl className="run-meta">
         <dt>Status</dt>
         <dd>{run.status}</dd>

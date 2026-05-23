@@ -436,3 +436,50 @@ button[type="submit"]:disabled {
 .job-status-step-active::after {
   color: #bbb;
 }
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e6e6ed;
+  color: #333;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.status-badge-pending {
+  background: #f0e6d2;
+  color: #6b4f00;
+}
+
+.status-badge-running {
+  background: #d6e4ff;
+  color: #1a3e8c;
+}
+
+.status-badge-completed {
+  background: #d8efd8;
+  color: #1f6a2a;
+}
+
+.status-badge-failed {
+  background: #f4d4d8;
+  color: #8a1f2c;
+}
+
+.status-badge-draft {
+  background: #ececf2;
+  color: #555;
+}
+
+.status-badge-approved {
+  background: #d8efd8;
+  color: #1f6a2a;
+}
+
+.status-badge-submitted {
+  background: #d6e4ff;
+  color: #1a3e8c;
+}

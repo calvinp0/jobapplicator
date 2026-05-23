@@ -8,6 +8,7 @@ const {
   invokeRunMock,
   importRunMock,
   listResumeVersionsMock,
+  getJobMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -25,6 +26,7 @@ const {
     invokeRunMock: vi.fn(),
     importRunMock: vi.fn(),
     listResumeVersionsMock: vi.fn(),
+    getJobMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -34,6 +36,7 @@ vi.mock("../api", () => ({
   invokeRun: invokeRunMock,
   importRun: importRunMock,
   listResumeVersions: listResumeVersionsMock,
+  getJob: getJobMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -78,6 +81,21 @@ const importedRun = {
   status: "imported",
 };
 
+const job = {
+  id: "job-1",
+  source_platform: "linkedin",
+  external_url: null,
+  external_job_id: null,
+  company: "Acme Corp",
+  title: "Senior Engineer",
+  location: null,
+  description_text: "",
+  application_method: null,
+  created_from_capture_id: null,
+  created_at: "2026-05-22T10:00:00Z",
+  updated_at: "2026-05-22T10:00:00Z",
+};
+
 const resumeVersion = {
   id: "version-1",
   job_id: "job-1",
@@ -97,6 +115,7 @@ const resumeVersion = {
 describe("RunDetailPage actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getJobMock.mockResolvedValue(job);
   });
 
   afterEach(() => {
@@ -112,8 +131,15 @@ describe("RunDetailPage actions", () => {
     renderRunDetail("run-1");
 
     await waitFor(() =>
-      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
     );
+    // Pending badge renders for status="created".
+    expect(screen.getByText("Pending")).toHaveClass("status-badge-pending");
 
     const invokeBtn = screen.getByRole("button", { name: /^invoke$/i });
     expect(invokeBtn).toBeEnabled();
@@ -145,7 +171,12 @@ describe("RunDetailPage actions", () => {
     renderRunDetail("run-1");
 
     await waitFor(() =>
-      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
     );
 
     const importBtn = screen.getByRole("button", {
@@ -177,7 +208,12 @@ describe("RunDetailPage actions", () => {
     renderRunDetail("run-1");
 
     await waitFor(() =>
-      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
     );
 
     const importBtn = screen.getByRole("button", {
@@ -215,14 +251,25 @@ describe("RunDetailPage actions", () => {
     renderRunDetail("run-1");
 
     await waitFor(() =>
-      expect(screen.getByText(/Run run-1/i)).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
     );
 
-    // Summary fields are visible outside the disclosure.
+    // Summary fields are visible outside the disclosure. "Completed"
+    // appears both as a dt label and as the status badge label, so
+    // scope to the DT element.
     expect(screen.getByText(/^Status$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Created$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Started$/).closest("details")).toBeNull();
-    expect(screen.getByText(/^Completed$/).closest("details")).toBeNull();
+    const completedDt = screen
+      .getAllByText(/^Completed$/)
+      .find((el) => el.tagName === "DT");
+    expect(completedDt).toBeDefined();
+    expect(completedDt!.closest("details")).toBeNull();
 
     // The disclosure renders with the heading "Advanced details", closed by default.
     const disclosure = screen.getByText(/^Advanced details$/);
