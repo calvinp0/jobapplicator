@@ -6,11 +6,15 @@
 #   run <task-id>     Start Claude Code on a task in an isolated worktree.
 #   review <task-id>  Start a review-only Claude session for a task.
 #   sync <task-id>    Ensure task worktree exists and is up to date with main.
-#   complete <task-id> [--dry-run]
+#   complete <task-id> [--dry-run] [--clean-shadow-files]
 #                     Run verification, merge the task's worktree branch into
 #                     main, mark the task done, promote unblocked tasks, and
 #                     commit the queue update. --dry-run prints what would
 #                     happen without changing files or branches.
+#                     --clean-shadow-files removes untracked files in main
+#                     whose paths are tracked in the task branch (likely
+#                     leaked from the task worktree). It never runs a broad
+#                     git clean and never touches modified tracked files.
 #   complete --continue <task-id>
 #                     Resume `complete` after the operator resolved a merge
 #                     conflict by hand. Finishes the merge commit, runs
@@ -232,26 +236,37 @@ cmd_run_interactive() {
   check_dependencies "$task_id"
   ensure_clean_worktree
 
+  local wt_path=""
+  if [[ "$worktree" != "main" ]]; then
+    wt_path="$(ensure_worktree "$worktree")"
+    merge_main_if_behind "$wt_path"
+  fi
+
+  local launch_dir="$REPO_ROOT"
+  [[ -n "$wt_path" ]] && launch_dir="$wt_path"
+
   local prompt
-  prompt="$(build_run_interactive_prompt "$task_id" "$abs_task_file")"
+  prompt="$(build_run_interactive_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT")"
 
   printf 'Starting interactive Claude Code for task %s\n' "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
+  [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
+  printf '  launch dir: %s\n' "$launch_dir"
   printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
   printf '\nInteractive supervised mode: Claude will stop before committing and wait for you to type "commit".\n\n'
 
-  if ! "$CLAUDE_BIN" \
+  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
       --worktree "$worktree" \
       --permission-mode "$CLAUDE_PERMISSION_MODE" \
-      "$prompt"; then
+      "$prompt" ); then
     die "Claude Code exited with a non-zero status"
   fi
 
   printf '\nSession ended. Recent commits:\n'
-  git -C "$REPO_ROOT" log --oneline -5
+  git -C "$launch_dir" log --oneline -5
   printf '\nGit status:\n'
-  git -C "$REPO_ROOT" status --short
+  git -C "$launch_dir" status --short
 }
 
 cmd_status() {
@@ -342,10 +357,39 @@ merge_main_if_behind() {
   fi
 }
 
+build_worktree_header() {
+  local worktree_path="$1" main_path="$2"
+  if [[ -n "$worktree_path" && "$worktree_path" != "$main_path" ]]; then
+    cat <<EOH
+You are operating in this task worktree:
+${worktree_path}
+
+Do not edit the main checkout:
+${main_path}
+
+All file edits, file creation, test runs, and verification commands must
+happen inside the task worktree path above. If you find yourself writing
+files into the main checkout, stop and recheck your current working
+directory.
+EOH
+  else
+    cat <<EOH
+You are operating directly in the main checkout:
+${main_path}
+
+This task targets main; there is no separate worktree.
+EOH
+  fi
+}
+
 build_run_prompt() {
-  local task_id="$1" task_file="$2"
+  local task_id="$1" task_file="$2" worktree_path="${3:-}" main_path="${4:-$REPO_ROOT}"
+  local header
+  header="$(build_worktree_header "$worktree_path" "$main_path")"
   cat <<EOF
 You are executing agent task ${task_id}.
+
+${header}
 
 Read the task file below and execute it exactly. Do not exceed scope.
 
@@ -368,9 +412,13 @@ EOF
 }
 
 build_run_interactive_prompt() {
-  local task_id="$1" task_file="$2"
+  local task_id="$1" task_file="$2" worktree_path="${3:-}" main_path="${4:-$REPO_ROOT}"
+  local header
+  header="$(build_worktree_header "$worktree_path" "$main_path")"
   cat <<EOF
 You are executing agent task ${task_id}.
+
+${header}
 
 You are running in interactive supervised mode.
 
@@ -397,9 +445,13 @@ EOF
 }
 
 build_review_prompt() {
-  local task_id="$1" task_file="$2"
+  local task_id="$1" task_file="$2" worktree_path="${3:-}" main_path="${4:-$REPO_ROOT}"
+  local header
+  header="$(build_worktree_header "$worktree_path" "$main_path")"
   cat <<EOF
 You are reviewing agent task ${task_id}. Do not modify files.
+
+${header}
 
 Check the most recent commit(s) on this worktree and assess:
 - Did the implementation stay within the task's scope?
@@ -454,28 +506,34 @@ cmd_run() {
     merge_main_if_behind "$wt_path"
   fi
 
+  local launch_dir="$REPO_ROOT"
+  [[ -n "$wt_path" ]] && launch_dir="$wt_path"
+
   local prompt
-  prompt="$(build_run_prompt "$task_id" "$abs_task_file")"
+  prompt="$(build_run_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT")"
 
   printf 'Starting Claude Code for task %s\n' "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
   [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
+  printf '  launch dir: %s\n' "$launch_dir"
   printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
 
-  # If the local Claude build does not support --worktree, run this instead:
-  #   (cd "$wt_path" && "$CLAUDE_BIN" --permission-mode "$CLAUDE_PERMISSION_MODE" -p "$prompt")
-  if ! "$CLAUDE_BIN" \
+  # Launch Claude from inside the task worktree path. The explicit cd is the
+  # authoritative isolation mechanism; --worktree is passed too for builds
+  # that honor it, but we do not rely on it alone (see
+  # docs/contracts/agent_orchestration.md - "Worktree Isolation").
+  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
       --worktree "$worktree" \
       --permission-mode "$CLAUDE_PERMISSION_MODE" \
-      -p "$prompt"; then
+      -p "$prompt" ); then
     die "Claude Code exited with a non-zero status"
   fi
 
   printf '\nAgent finished. Recent commits:\n'
-  git -C "$REPO_ROOT" log --oneline -5
+  git -C "$launch_dir" log --oneline -5
   printf '\nGit status:\n'
-  git -C "$REPO_ROOT" status --short
+  git -C "$launch_dir" status --short
   printf '\nNext: scripts/agentctl.sh review %s\n' "$task_id"
 }
 
@@ -496,18 +554,34 @@ cmd_review() {
   local abs_task_file="$REPO_ROOT/$task_file"
   [[ -f "$abs_task_file" ]] || die "task file not found: $abs_task_file"
 
+  local wt_path=""
+  if [[ "$worktree" != "main" ]]; then
+    wt_path="$(worktree_path "$worktree")"
+    if [[ -z "$wt_path" ]]; then
+      err "task worktree '$worktree' does not exist; cannot review."
+      err "Create or restore it with: scripts/agentctl.sh sync $task_id"
+      exit 1
+    fi
+  fi
+
+  local launch_dir="$REPO_ROOT"
+  [[ -n "$wt_path" ]] && launch_dir="$wt_path"
+
   local prompt
-  prompt="$(build_review_prompt "$task_id" "$abs_task_file")"
+  prompt="$(build_review_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT")"
 
   printf 'Starting Claude Code review for task %s\n' "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
+  [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
+  printf '  launch dir: %s\n' "$launch_dir"
   printf '  permission-mode: %s\n' "$CLAUDE_REVIEW_PERMISSION_MODE"
 
-  if ! "$CLAUDE_BIN" \
+  # Launch from inside the task worktree path (see cmd_run for rationale).
+  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
       --worktree "$worktree" \
       --permission-mode "$CLAUDE_REVIEW_PERMISSION_MODE" \
-      -p "$prompt"; then
+      -p "$prompt" ); then
     die "Claude Code exited with a non-zero status"
   fi
 }
@@ -568,6 +642,111 @@ branch_has_commits_beyond_main() {
   fi
   count="$(git -C "$REPO_ROOT" rev-list --count "main..refs/heads/$branch" 2>/dev/null || echo 0)"
   [[ "${count:-0}" -gt 0 ]]
+}
+
+# detect_shadow_files <main_wt> <branch>
+#
+# Print, one per line, the paths of files in <main_wt> that are currently
+# untracked there but already tracked in <branch>. These are the files most
+# likely to have leaked out of the task worktree into the main checkout.
+#
+# Prints nothing (and exits 0) when <branch> is empty, does not exist, or
+# the intersection is empty. Never modifies any files.
+detect_shadow_files() {
+  local main_wt="$1" branch="$2"
+  [[ -n "$branch" ]] || return 0
+  if ! git -C "$main_wt" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    return 0
+  fi
+  local untracked
+  untracked="$(git -C "$main_wt" ls-files --others --exclude-standard)"
+  [[ -n "$untracked" ]] || return 0
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    if git -C "$main_wt" cat-file -e "refs/heads/$branch:$f" 2>/dev/null; then
+      printf '%s\n' "$f"
+    fi
+  done <<< "$untracked"
+}
+
+# print_indented_list <heading> <input>
+#
+# Helper: print a heading on stderr followed by each non-empty line of
+# <input> indented by two spaces. No-op if <input> is empty.
+print_indented_list() {
+  local heading="$1" input="$2"
+  [[ -n "$input" ]] || return 0
+  printf '\n%s\n' "$heading" >&2
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '  %s\n' "$line" >&2
+  done <<< "$input"
+}
+
+# report_dirty_main <main_wt> <branch>
+#
+# Print a grouped diagnostic when the main worktree is dirty. Splits the
+# output into tracked changes, untracked files, and likely shadow files
+# from the task branch. Suggests targeted cleanup commands.
+report_dirty_main() {
+  local main_wt="$1" branch="$2"
+  local tracked untracked shadow
+
+  tracked="$(git -C "$main_wt" status --porcelain \
+              | awk '$1 !~ /^\?\?$/ { sub(/^...[[:space:]]*/, ""); print }')"
+  untracked="$(git -C "$main_wt" ls-files --others --exclude-standard)"
+  shadow="$(detect_shadow_files "$main_wt" "$branch")"
+
+  err "main worktree is not clean ($main_wt); commit or stash before completing."
+
+  print_indented_list "Tracked changes:" "$tracked"
+  print_indented_list "Untracked files:" "$untracked"
+
+  if [[ -n "$shadow" ]]; then
+    print_indented_list "Possible shadow files from task branch ($branch):" "$shadow"
+    printf '\n' >&2
+    printf 'Main contains untracked files that are already present in the task branch.\n' >&2
+    printf 'These are likely leaked task-worktree files.\n' >&2
+    printf '\nSuggested cleanup:\n\n' >&2
+    printf '  git -C %s clean -f --' "$main_wt" >&2
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      printf ' %q' "$line" >&2
+    done <<< "$shadow"
+    printf '\n\n' >&2
+    printf 'Or re-run complete with the optional flag:\n\n' >&2
+    printf '  scripts/agentctl.sh complete <task-id> --clean-shadow-files\n\n' >&2
+    printf 'The flag only removes the exact untracked files listed above.\n' >&2
+    printf 'It does not run a broad git clean.\n' >&2
+  fi
+}
+
+# clean_shadow_files <main_wt> <branch>
+#
+# Remove the exact files reported by detect_shadow_files using
+# `git clean -f -- <path>` per file. Never runs a broad clean; never
+# touches modified tracked files; never recurses into directories.
+# Returns 0 if there were no shadow files or every removal succeeded.
+clean_shadow_files() {
+  local main_wt="$1" branch="$2" shadow
+  shadow="$(detect_shadow_files "$main_wt" "$branch")"
+  if [[ -z "$shadow" ]]; then
+    printf 'No shadow files to clean in %s.\n' "$main_wt" >&2
+    return 0
+  fi
+  printf 'Removing shadow files in %s (untracked here, tracked in %s):\n' \
+    "$main_wt" "$branch" >&2
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    printf '  %s\n' "$f" >&2
+  done <<< "$shadow"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    if ! git -C "$main_wt" clean -f -- "$f" >&2; then
+      err "failed to remove shadow file: $f"
+      return 1
+    fi
+  done <<< "$shadow"
 }
 
 # find_main_worktree
@@ -825,23 +1004,27 @@ complete_continue() {
 }
 
 cmd_complete() {
-  local task_id="" dry_run=0 continue_mode=0
+  local task_id="" dry_run=0 continue_mode=0 clean_shadow=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) dry_run=1; shift ;;
       --continue) continue_mode=1; shift ;;
-      -*) die "usage: agentctl.sh complete <task-id> [--dry-run]
+      --clean-shadow-files) clean_shadow=1; shift ;;
+      -*) die "usage: agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
        agentctl.sh complete --continue <task-id>" ;;
       *)
         [[ -z "$task_id" ]] || die "complete: only one task id may be given"
         task_id="$1"; shift ;;
     esac
   done
-  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
        agentctl.sh complete --continue <task-id>"
 
   if [[ "$continue_mode" -eq 1 && "$dry_run" -eq 1 ]]; then
     die "complete: --continue and --dry-run are mutually exclusive"
+  fi
+  if [[ "$continue_mode" -eq 1 && "$clean_shadow" -eq 1 ]]; then
+    die "complete: --continue and --clean-shadow-files are mutually exclusive"
   fi
 
   require_queue
@@ -866,15 +1049,38 @@ cmd_complete() {
   local main_wt
   main_wt="$(find_main_worktree)" || exit 1
 
+  local branch=""
+  if [[ "$worktree" != "main" ]]; then
+    branch="worktree-$worktree"
+  fi
+
+  # Optional targeted shadow-file cleanup BEFORE the dirty-main check. Only
+  # removes untracked files in main that are tracked in the task branch.
+  if [[ "$clean_shadow" -eq 1 && -n "$branch" ]]; then
+    if [[ "$dry_run" -eq 1 ]]; then
+      local shadow_preview
+      shadow_preview="$(detect_shadow_files "$main_wt" "$branch")"
+      if [[ -n "$shadow_preview" ]]; then
+        printf 'would remove shadow files (untracked in main, tracked in %s):\n' "$branch"
+        while IFS= read -r f; do
+          [[ -z "$f" ]] && continue
+          printf '  %s\n' "$f"
+        done <<< "$shadow_preview"
+      else
+        printf 'would skip shadow-file cleanup (none detected)\n'
+      fi
+    else
+      clean_shadow_files "$main_wt" "$branch" || exit 1
+    fi
+  fi
+
   if [[ -n "$(git -C "$main_wt" status --porcelain)" ]]; then
-    err "main worktree is not clean ($main_wt); commit or stash before completing:"
-    git -C "$main_wt" status --short >&2
+    report_dirty_main "$main_wt" "$branch"
     exit 1
   fi
 
-  local branch="" task_wt="$main_wt"
-  if [[ "$worktree" != "main" ]]; then
-    branch="worktree-$worktree"
+  local task_wt="$main_wt"
+  if [[ -n "$branch" ]]; then
     task_wt="$(worktree_path "$worktree")"
     if [[ -z "$task_wt" ]]; then
       err "task worktree '$worktree' does not exist."
@@ -973,7 +1179,7 @@ Usage:
   scripts/agentctl.sh run-interactive <task-id>
   scripts/agentctl.sh review <task-id>
   scripts/agentctl.sh sync <task-id>
-  scripts/agentctl.sh complete <task-id> [--dry-run]
+  scripts/agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
   scripts/agentctl.sh complete --continue <task-id>
   scripts/agentctl.sh status
   scripts/agentctl.sh list
