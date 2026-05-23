@@ -335,7 +335,7 @@ tasks:
     file: "agent_tasks/020-agentctl-complete-merges-branches.md"
     branch: "agent/020-agentctl-complete-merges-branches"
     worktree: "agent-020-agentctl-complete-merges-branches"
-    status: "ready"
+    status: "done"
     depends_on:
       - "019-agentctl-task-id-shortcuts"
     verification:
