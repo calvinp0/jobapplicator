@@ -515,7 +515,7 @@ tasks:
     file: "agent_tasks/029-frontend-advanced-details-disclosure.md"
     branch: "agent/029-frontend-advanced-details-disclosure"
     worktree: "agent-029-frontend-advanced-details-disclosure"
-    status: "ready"
+    status: "done"
     depends_on:
       - "028-frontend-job-detail-hub"
     verification:
@@ -536,7 +536,7 @@ tasks:
     file: "agent_tasks/030-frontend-user-facing-headings-and-status.md"
     branch: "agent/030-frontend-user-facing-headings-and-status"
     worktree: "agent-030-frontend-user-facing-headings-and-status"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "029-frontend-advanced-details-disclosure"
     verification:
