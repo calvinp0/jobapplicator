@@ -245,6 +245,7 @@ cmd_run_interactive() {
   if [[ "$worktree" != "main" ]]; then
     wt_path="$(ensure_worktree "$worktree")"
     merge_main_if_behind "$wt_path"
+    propagate_claude_permissions "$wt_path"
   fi
 
   local launch_dir="$REPO_ROOT"
@@ -338,6 +339,50 @@ ensure_worktree() {
   printf 'Creating worktree %s at %s\n' "$name" "$wt" >&2
   git -C "$REPO_ROOT" worktree add -b "worktree-$name" "$wt" main >&2
   printf '%s\n' "$wt"
+}
+
+# propagate_claude_permissions <worktree_path>
+#
+# Symlink the main checkout's .claude/settings.local.json into the task
+# worktree at <worktree_path> so non-interactive Claude Code sessions
+# launched there see the operator's permission allowlist. Without this,
+# Claude prompts for routine commands (npm install, git add, etc.) on
+# every run because the gitignored settings file does not propagate to
+# worktrees on its own.
+#
+# Safe to call repeatedly: returns 0 silently when there is nothing to do
+# (no main settings file, target is main itself, or the correct symlink
+# already exists). Never reads or prints the settings contents. Never
+# overwrites a non-symlink file at the target path — that case warns and
+# returns 0 so the caller is not blocked.
+propagate_claude_permissions() {
+  local wt="$1"
+  [[ -n "$wt" ]] || return 0
+
+  local main_wt
+  main_wt="$(find_main_worktree 2>/dev/null)" || return 0
+  [[ -n "$main_wt" ]] || return 0
+
+  local src="$main_wt/.claude/settings.local.json"
+  [[ -f "$src" ]] || return 0
+
+  if [[ "$wt" == "$main_wt" ]]; then
+    return 0
+  fi
+
+  local dst="$wt/.claude/settings.local.json"
+
+  if [[ -L "$dst" ]]; then
+    local existing
+    existing="$(readlink "$dst")"
+    [[ "$existing" == "$src" ]] && return 0
+  elif [[ -e "$dst" ]]; then
+    err "worktree already has $dst (not a symlink); leaving in place."
+    return 0
+  fi
+
+  mkdir -p "$wt/.claude"
+  ln -sfn "$src" "$dst"
 }
 
 # merge_main_if_behind <worktree_path>
@@ -509,6 +554,7 @@ cmd_run() {
   if [[ "$worktree" != "main" ]]; then
     wt_path="$(ensure_worktree "$worktree")"
     merge_main_if_behind "$wt_path"
+    propagate_claude_permissions "$wt_path"
   fi
 
   local launch_dir="$REPO_ROOT"
@@ -567,6 +613,7 @@ cmd_review() {
       err "Create or restore it with: scripts/agentctl.sh sync $task_id"
       exit 1
     fi
+    propagate_claude_permissions "$wt_path"
   fi
 
   local launch_dir="$REPO_ROOT"
@@ -617,6 +664,7 @@ cmd_sync() {
   fi
 
   merge_main_if_behind "$wt_path"
+  propagate_claude_permissions "$wt_path"
 
   printf 'Worktree for %s is in sync with main.\n' "$task_id"
   printf '  worktree-path: %s\n' "$wt_path"
@@ -1513,6 +1561,26 @@ PYEOF
       doctor_warn "missing useful permission pattern: $pat"
     done <<< "$missing"
   fi
+
+  # Report whether each registered task worktree can see the settings.
+  # Claude reads .claude/settings.local.json relative to its working
+  # directory, so a missing file inside a worktree means routine commands
+  # will surface permission prompts despite main being configured.
+  local main_wt_for_iter="${main_wt:-$REPO_ROOT}"
+  local wt_path wt_name dst
+  while IFS= read -r line; do
+    [[ "$line" =~ ^worktree[[:space:]](.+)$ ]] || continue
+    wt_path="${BASH_REMATCH[1]}"
+    [[ "$wt_path" == "$main_wt_for_iter" ]] && continue
+    wt_name="${wt_path##*/}"
+    dst="$wt_path/.claude/settings.local.json"
+    if [[ -e "$dst" ]]; then
+      doctor_pass "worktree $wt_name has Claude settings visible"
+    else
+      doctor_warn "worktree $wt_name missing .claude/settings.local.json"
+    fi
+  done < <(git -C "$main_wt_for_iter" worktree list --porcelain 2>/dev/null || true)
+
   printf '\n'
 }
 

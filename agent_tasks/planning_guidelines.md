@@ -199,6 +199,20 @@ the commands, prepares the `frontend/` or `extension/` workspace if it
 is referenced and `node_modules` has not yet been installed there.
 Planners do not need to add an explicit `npm install` step.
 
+## Claude permission propagation
+
+`scripts/agentctl.sh` symlinks the main checkout's
+`.claude/settings.local.json` into each task worktree (under
+`<worktree>/.claude/settings.local.json`) before launching Claude for
+`run`, `run-interactive`, `review`, or `sync`. This is what lets a
+non-interactive task agent run routine commands (`npm install`,
+`npm test`, `git add`, `git commit`) without surfacing a permission
+prompt for each one.
+
+Planners do not need to mention permission propagation in generated task
+files; it is harness infrastructure. The symlinked settings file remains
+gitignored at every worktree level, so it never lands in a commit.
+
 ## Preflight check before dispatch
 
 `scripts/agentctl.sh doctor` performs a read-only preflight check of the
