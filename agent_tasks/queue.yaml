@@ -233,8 +233,8 @@ tasks:
     depends_on:
       - "010-frontend-job-capture-flow"
     verification:
-      - "npm test"
-      - "npm run build"
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
     allowed_paths:
       - "frontend/src/pages/SettingsPage.tsx"
       - "frontend/src/api/index.ts"
