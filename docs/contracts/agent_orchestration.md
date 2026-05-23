@@ -63,6 +63,29 @@ harness can write itself is `review` → `done`, via the `complete` command
 (see below), which refuses to mark a task done until its worktree branch is
 reachable from `main`.
 
+## Task ID Resolution
+
+Commands that take a `<task-id>` argument (`run`, `run-interactive`,
+`review`, `sync`, `complete`) accept either the full id or a numeric
+shortcut:
+
+- `014-backend-application-submit-and-open-file` — full id, always works.
+- `014` — three-digit numeric prefix.
+- `14` — any all-digit reference; zero-padded to three digits before
+  matching (so `14` becomes `014` and `8` becomes `008`).
+
+The shortcut is resolved against existing task ids of the form `<NNN>-...`:
+
+1. If the input exactly matches an existing task id, it is used as-is.
+2. Otherwise, if the input is all digits, it is zero-padded to three
+   digits and matched against the `NNN-` prefix of every task id.
+3. Exactly one match is required. Zero or multiple matches cause the
+   command to fail with a clear error listing the candidates.
+
+When a shortcut is resolved, the harness prints
+`Resolved task <ref> -> <full-id>` to stderr before running the command,
+so logs and error messages always show the full id.
+
 ## Worktree Isolation
 
 Tasks whose `worktree` is `main` run on the current checkout in place. They are

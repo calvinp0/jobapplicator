@@ -74,6 +74,9 @@ require_python_yaml() {
 #                  each entry on its own line.
 #   status_of <id> Print the status string for a single task id.
 #   deps <id>      Print "<dep_id>\t<dep_status>" for each dependency.
+#   resolve <ref>  Resolve a task reference to its full id. <ref> may be the
+#                  full id, or an all-digit numeric shortcut (e.g. "14" or
+#                  "014") that matches the NNN- prefix of exactly one task.
 yaml_query() {
   require_queue
   require_python_yaml
@@ -123,10 +126,49 @@ elif mode == "deps":
         d = by_id.get(dep)
         st = d.get("status","") if d else "missing"
         print(f"{dep}\t{st}")
+elif mode == "resolve":
+    ref = sys.argv[2]
+    ids = [t.get("id","") for t in tasks if t.get("id")]
+    if ref in ids:
+        print(ref)
+    elif ref.isdigit():
+        prefix = ref.zfill(3) + "-"
+        matches = [tid for tid in ids if tid.startswith(prefix)]
+        if len(matches) == 1:
+            print(matches[0])
+        elif not matches:
+            sys.stderr.write(
+                f"error: no task matches numeric prefix '{ref.zfill(3)}'\n")
+            sys.exit(2)
+        else:
+            sys.stderr.write(
+                f"error: numeric prefix '{ref.zfill(3)}' matches multiple tasks:\n")
+            for m in matches:
+                sys.stderr.write(f"  {m}\n")
+            sys.exit(2)
+    else:
+        sys.stderr.write(f"error: unknown task id: {ref}\n")
+        sys.exit(2)
 else:
     sys.stderr.write(f"error: unknown yaml_query mode: {mode}\n")
     sys.exit(2)
 PYEOF
+}
+
+# resolve_task_id <ref>
+#
+# Resolve a task reference (full id, "014", or "14") to its full task id by
+# querying queue.yaml. Prints the resolved id to stdout. If the reference
+# was a shortcut, also prints a "Resolved task <ref> -> <id>" notice to
+# stderr so it does not pollute the captured output. Exits non-zero if the
+# reference matches zero or multiple tasks (yaml_query writes the error).
+resolve_task_id() {
+  local input="$1" resolved
+  resolved="$(yaml_query resolve "$input")" || exit $?
+  if [[ "$resolved" != "$input" ]]; then
+    printf 'Resolved task %s -> %s\n' "$input" "$resolved" >&2
+  fi
+  printf '%s\n' "$resolved"
 }
 
 cmd_list() {
@@ -159,6 +201,7 @@ cmd_run_interactive() {
   [[ -n "$task_id" ]] || die "usage: agentctl.sh run-interactive <task-id>"
   require_queue
   require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
 
   local status task_file worktree
   status="$(yaml_query status_of "$task_id")"
@@ -373,6 +416,7 @@ cmd_run() {
   [[ -n "$task_id" ]] || die "usage: agentctl.sh run <task-id>"
   require_queue
   require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
 
   # Validate task exists and gather metadata.
   local status task_file worktree
@@ -430,6 +474,7 @@ cmd_review() {
   [[ -n "$task_id" ]] || die "usage: agentctl.sh review <task-id>"
   require_queue
   require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
 
   local task_file worktree
   task_file="$(yaml_query field "$task_id" file)"
@@ -462,6 +507,7 @@ cmd_sync() {
   [[ -n "$task_id" ]] || die "usage: agentctl.sh sync <task-id>"
   require_queue
   require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
 
   local worktree
   worktree="$(yaml_query field "$task_id" worktree)"
@@ -578,6 +624,7 @@ cmd_complete() {
   [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]"
   require_queue
   require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
 
   local status worktree
   status="$(yaml_query status_of "$task_id")"
