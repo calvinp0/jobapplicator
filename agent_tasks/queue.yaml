@@ -315,7 +315,7 @@ tasks:
     file: "agent_tasks/019-agentctl-task-id-shortcuts.md"
     branch: "agent/019-agentctl-task-id-shortcuts"
     worktree: "agent-019-agentctl-task-id-shortcuts"
-    status: "ready"
+    status: "done"
     depends_on:
       - "013-agent-planner"
     verification:
@@ -330,3 +330,24 @@ tasks:
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/019-agentctl-task-id-shortcuts.md"
       - "agent_tasks/queue.yaml"
+  - id: "020-agentctl-complete-merges-branches"
+    title: "Make complete merge task branches"
+    file: "agent_tasks/020-agentctl-complete-merges-branches.md"
+    branch: "agent/020-agentctl-complete-merges-branches"
+    worktree: "agent-020-agentctl-complete-merges-branches"
+    status: "ready"
+    depends_on:
+      - "019-agentctl-task-id-shortcuts"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh complete 020 --dry-run"
+      - "scripts/agentctl.sh complete 019 --dry-run"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/020-agentctl-complete-merges-branches.md"
+      - "agent_tasks/queue.yaml"
+
