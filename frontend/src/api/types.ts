@@ -39,6 +39,12 @@ export interface MasterResume {
   updated_at: string;
 }
 
+export interface MasterResumeCreate {
+  name: string;
+  source_path?: string | null;
+  content_markdown: string;
+}
+
 export interface EvidenceBank {
   id: string;
   name: string;
@@ -46,6 +52,12 @@ export interface EvidenceBank {
   content_markdown: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface EvidenceBankCreate {
+  name: string;
+  source_path?: string | null;
+  content_markdown: string;
 }
 
 export interface ClaudeRun {

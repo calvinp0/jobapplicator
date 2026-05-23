@@ -3,9 +3,11 @@ import type {
   Application,
   ClaudeRun,
   EvidenceBank,
+  EvidenceBankCreate,
   Job,
   JobCapture,
   MasterResume,
+  MasterResumeCreate,
 } from "./types";
 
 export { API_BASE, ApiError } from "./client";
@@ -13,9 +15,11 @@ export type {
   Application,
   ClaudeRun,
   EvidenceBank,
+  EvidenceBankCreate,
   Job,
   JobCapture,
   MasterResume,
+  MasterResumeCreate,
 };
 
 export function getHealth(): Promise<{ status: string }> {
@@ -46,8 +50,20 @@ export function listMasterResumes(): Promise<MasterResume[]> {
   return apiRequest("/master-resumes");
 }
 
+export function createMasterResume(
+  payload: MasterResumeCreate,
+): Promise<MasterResume> {
+  return apiRequest("/master-resumes", { method: "POST", body: payload });
+}
+
 export function listEvidenceBanks(): Promise<EvidenceBank[]> {
   return apiRequest("/evidence-banks");
+}
+
+export function createEvidenceBank(
+  payload: EvidenceBankCreate,
+): Promise<EvidenceBank> {
+  return apiRequest("/evidence-banks", { method: "POST", body: payload });
 }
 
 export interface CreateRunPayload {
