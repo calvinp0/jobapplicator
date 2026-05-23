@@ -453,7 +453,7 @@ tasks:
     file: "agent_tasks/026-local-mvp-smoke-proof.md"
     branch: "agent/026-local-mvp-smoke-proof"
     worktree: "agent-026-local-mvp-smoke-proof"
-    status: "ready"
+    status: "done"
     depends_on:
       - "025-backend-local-cors"
     verification:
