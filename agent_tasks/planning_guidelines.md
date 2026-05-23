@@ -199,4 +199,18 @@ the commands, prepares the `frontend/` or `extension/` workspace if it
 is referenced and `node_modules` has not yet been installed there.
 Planners do not need to add an explicit `npm install` step.
 
+## Preflight check before dispatch
+
+`scripts/agentctl.sh doctor` performs a read-only preflight check of the
+local harness environment (git state, queue.yaml, tool availability,
+Claude permission settings, and node workspace readiness). Operators
+should run it before dispatching a fresh batch of tasks, especially
+after pulling new work — the report surfaces a missing
+`frontend/node_modules`, a missing common Claude permission pattern, a
+dirty main checkout, or a broken dependency in `queue.yaml` before the
+first `run`. Planners do not need to reference `doctor` from generated
+task files; it is purely an operator-facing diagnostic. See the Doctor
+Command section in `docs/contracts/agent_orchestration.md` for the
+exact checks performed.
+
 

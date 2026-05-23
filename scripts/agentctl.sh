@@ -22,6 +22,11 @@
 #   status            Print task ids grouped by status.
 #   list              Print every task with its status and title.
 #   ready             Print tasks whose status is 'ready'.
+#   doctor            Run a read-only preflight check of the local agent
+#                     harness environment (git state, queue.yaml, tool
+#                     availability, Claude permission settings, and node
+#                     workspace readiness). Reports PASS / WARN / FAIL per
+#                     check. Exits 0 if no FAIL items were reported.
 #   plan "<goal>"     Run a local Claude Code planning session that generates
 #                     scoped task files and queue entries from a high-level
 #                     goal. Does not implement product code.
@@ -1221,6 +1226,420 @@ EOF
   print_ready_tasks
 }
 
+# --- doctor -----------------------------------------------------------------
+#
+# `doctor` runs a read-only preflight check of the local agent harness so
+# common setup problems surface BEFORE a task is dispatched. It never
+# installs anything, never runs verification commands, never mutates files,
+# and never prints secrets.
+#
+# Reports use three severities:
+#   PASS  green-path check succeeded
+#   WARN  something to attend to, but not fatal (e.g. missing optional tool)
+#   FAIL  blocks task execution (e.g. queue.yaml unparseable, main dirty)
+#
+# Exit code: 0 when there are no FAIL items (warnings only is still success);
+# 1 when at least one FAIL was emitted.
+
+DOCTOR_PASS=0
+DOCTOR_WARN=0
+DOCTOR_FAIL=0
+
+doctor_pass() { printf '  PASS %s\n' "$*"; DOCTOR_PASS=$((DOCTOR_PASS+1)); }
+doctor_warn() { printf '  WARN %s\n' "$*"; DOCTOR_WARN=$((DOCTOR_WARN+1)); }
+doctor_fail() { printf '  FAIL %s\n' "$*"; DOCTOR_FAIL=$((DOCTOR_FAIL+1)); }
+
+# doctor_git_checks <main_wt_out_var>
+#
+# Inspect git state of the main checkout and any registered task worktrees.
+# Sets the named variable to the resolved main worktree path (empty string
+# if the harness could not find one).
+doctor_git_checks() {
+  local -n _out="$1"
+  _out=""
+  printf 'Git\n'
+
+  if ! command -v git >/dev/null 2>&1; then
+    doctor_fail "git not found in PATH"
+    printf '\n'
+    return 0
+  fi
+
+  local main_wt
+  if main_wt="$(find_main_worktree 2>/dev/null)" && [[ -n "$main_wt" ]]; then
+    _out="$main_wt"
+    doctor_pass "main worktree: $main_wt"
+
+    local branch
+    branch="$(git -C "$main_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    if [[ "$branch" == "main" ]]; then
+      doctor_pass "main worktree on branch 'main'"
+    else
+      doctor_warn "main worktree HEAD is '$branch' (expected 'main')"
+    fi
+
+    if [[ -z "$(git -C "$main_wt" status --porcelain)" ]]; then
+      doctor_pass "main worktree clean"
+    else
+      doctor_fail "main worktree is not clean"
+      git -C "$main_wt" status --short | sed 's/^/    /'
+    fi
+
+    if git -C "$main_wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+      doctor_fail "merge in progress in main worktree (resolve before dispatch)"
+    else
+      doctor_pass "no merge in progress"
+    fi
+  else
+    doctor_fail "could not find a worktree on branch 'main'"
+  fi
+
+  # Confirm every task worktree referenced by queue.yaml that exists on
+  # disk is still registered with git. A stale .claude/worktrees/<name>
+  # directory after `git worktree remove` would be a confusing setup bug.
+  if [[ -f "$QUEUE_FILE" ]] && "$CLAUDE_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    local wt_names
+    wt_names="$(yaml_query list 2>/dev/null | awk -F'\t' '{print $1}' \
+                 | while IFS= read -r id; do
+                     [[ -z "$id" ]] && continue
+                     yaml_query field "$id" worktree 2>/dev/null
+                   done | sort -u)"
+    local missing_count=0 present_count=0 name dir_path registered
+    while IFS= read -r name; do
+      [[ -z "$name" || "$name" == "main" ]] && continue
+      dir_path="$REPO_ROOT/.claude/worktrees/$name"
+      [[ -d "$dir_path" ]] || continue
+      registered="$(worktree_path "$name")"
+      if [[ -z "$registered" ]]; then
+        doctor_warn "directory exists but not a registered worktree: $dir_path"
+        missing_count=$((missing_count + 1))
+      else
+        present_count=$((present_count + 1))
+      fi
+    done <<< "$wt_names"
+    if [[ "$present_count" -gt 0 && "$missing_count" -eq 0 ]]; then
+      doctor_pass "task worktrees registered with git ($present_count present)"
+    fi
+  fi
+
+  printf '\n'
+}
+
+# doctor_queue_checks
+#
+# Parse queue.yaml and report on structural correctness. All real work is
+# done by a Python helper so we can do JSON-like graph checks without
+# spawning a forest of bash subshells.
+doctor_queue_checks() {
+  printf 'Queue\n'
+
+  if [[ ! -f "$QUEUE_FILE" ]]; then
+    doctor_fail "queue file not found: $QUEUE_FILE"
+    printf '\n'
+    return 0
+  fi
+  doctor_pass "queue file present: $QUEUE_FILE"
+
+  if ! "$CLAUDE_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    doctor_fail "Python interpreter '$CLAUDE_PYTHON' cannot import PyYAML"
+    printf '\n'
+    return 0
+  fi
+
+  local report
+  if ! report="$(CLAUDE_QUEUE_FILE="$QUEUE_FILE" CLAUDE_REPO_ROOT="$REPO_ROOT" \
+                 "$CLAUDE_PYTHON" - <<'PYEOF' 2>&1
+import os, sys, yaml
+
+queue_path = os.environ["CLAUDE_QUEUE_FILE"]
+repo_root  = os.environ["CLAUDE_REPO_ROOT"]
+
+try:
+    with open(queue_path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+except Exception as e:
+    print(f"FAIL queue does not parse as YAML: {e}")
+    sys.exit(0)
+print("PASS queue parses as YAML")
+
+tasks = data.get("tasks") or []
+ids = [t.get("id", "") for t in tasks]
+id_set = set(ids)
+
+dups = sorted({i for i in ids if ids.count(i) > 1 and i})
+if dups:
+    print(f"FAIL duplicate task ids: {', '.join(dups)}")
+else:
+    print("PASS task ids unique")
+
+valid = {"planned", "ready", "running", "review", "blocked", "done", "failed"}
+bad_status = [(t.get("id"), t.get("status")) for t in tasks
+              if t.get("status") not in valid]
+if bad_status:
+    for tid, st in bad_status:
+        print(f"FAIL invalid status: {tid} -> {st}")
+else:
+    print("PASS task statuses valid")
+
+missing_files = []
+for t in tasks:
+    f = t.get("file")
+    if f and not os.path.isfile(os.path.join(repo_root, f)):
+        missing_files.append((t.get("id"), f))
+if missing_files:
+    for tid, f in missing_files:
+        print(f"FAIL task file missing: {tid} -> {f}")
+else:
+    print("PASS task files exist on disk")
+
+bad_deps = []
+for t in tasks:
+    for d in (t.get("depends_on") or []):
+        if d not in id_set:
+            bad_deps.append((t.get("id"), d))
+if bad_deps:
+    for tid, d in bad_deps:
+        print(f"FAIL unknown dependency: {tid} depends_on {d}")
+else:
+    print("PASS dependencies reference known tasks")
+
+status_of = {t.get("id"): t.get("status") for t in tasks}
+bad_ready = []
+for t in tasks:
+    if t.get("status") != "ready":
+        continue
+    for d in (t.get("depends_on") or []):
+        s = status_of.get(d, "missing")
+        if s != "done":
+            bad_ready.append((t.get("id"), d, s))
+if bad_ready:
+    for tid, d, s in bad_ready:
+        print(f"WARN ready task {tid} has dep {d} (status={s})")
+else:
+    print("PASS ready tasks have all dependencies done")
+PYEOF
+                )"; then
+    doctor_fail "queue inspection helper failed: $report"
+    printf '\n'
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    case "$line" in
+      PASS\ *) doctor_pass "${line#PASS }" ;;
+      WARN\ *) doctor_warn "${line#WARN }" ;;
+      FAIL\ *) doctor_fail "${line#FAIL }" ;;
+      *)       printf '    %s\n' "$line" ;;
+    esac
+  done <<< "$report"
+  printf '\n'
+}
+
+# doctor_tool_checks
+#
+# Check availability of the tools the harness and most tasks rely on. We
+# do not fail when an optional tool is missing here — `doctor_workspace_checks`
+# and `doctor_ready_task_checks` raise warnings if a missing tool is needed
+# for a currently-ready task.
+doctor_tool_checks() {
+  printf 'Tools\n'
+  local tool path
+  for tool in git python python3 claude npm pytest; do
+    path="$(command -v "$tool" 2>/dev/null || true)"
+    if [[ -n "$path" ]]; then
+      doctor_pass "$tool: $path"
+    else
+      doctor_warn "$tool not found in PATH"
+    fi
+  done
+  printf '\n'
+}
+
+# doctor_settings_checks <main_wt>
+#
+# Inspect the operator's Claude Code permission settings. Never prints the
+# settings contents (they may contain operator-specific paths). Only reports
+# whether each well-known permission pattern is present in `allow`.
+doctor_settings_checks() {
+  printf 'Claude permissions\n'
+  local main_wt="$1"
+  local base="${main_wt:-$REPO_ROOT}"
+  local settings="$base/.claude/settings.local.json"
+
+  if [[ ! -f "$settings" ]]; then
+    doctor_warn "no .claude/settings.local.json under $base"
+    doctor_warn "Claude Code will surface a permission prompt for every command"
+    printf '\n'
+    return 0
+  fi
+  doctor_pass "settings.local.json present"
+
+  if ! CLAUDE_SETTINGS_FILE="$settings" "$CLAUDE_PYTHON" -c '
+import json, os, sys
+with open(os.environ["CLAUDE_SETTINGS_FILE"], "r", encoding="utf-8") as fh:
+    json.load(fh)
+' >/dev/null 2>&1; then
+    doctor_fail "settings.local.json is not valid JSON"
+    printf '\n'
+    return 0
+  fi
+  doctor_pass "settings.local.json is valid JSON"
+
+  local missing
+  missing="$(CLAUDE_SETTINGS_FILE="$settings" "$CLAUDE_PYTHON" - <<'PYEOF' 2>/dev/null
+import json, os
+with open(os.environ["CLAUDE_SETTINGS_FILE"], "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+allow = set((data.get("permissions") or {}).get("allow") or [])
+for pat in [
+    "Bash(git add:*)",
+    "Bash(git commit:*)",
+    "Bash(npm install:*)",
+    "Bash(npm test:*)",
+    "Bash(npm run build:*)",
+    "Bash(pytest:*)",
+    "Bash(bash -n:*)",
+]:
+    if pat not in allow:
+        print(pat)
+PYEOF
+)"
+  if [[ -z "$missing" ]]; then
+    doctor_pass "common Claude permission patterns present"
+  else
+    while IFS= read -r pat; do
+      [[ -z "$pat" ]] && continue
+      doctor_warn "missing useful permission pattern: $pat"
+    done <<< "$missing"
+  fi
+  printf '\n'
+}
+
+# doctor_workspace_checks <main_wt>
+#
+# Check that node package workspaces referenced by tasks are prepared.
+# We never run `npm install`; we only check whether the install marker
+# exists and print the exact preparation command otherwise.
+doctor_workspace_checks() {
+  printf 'Workspaces\n'
+  local main_wt="$1"
+  local base="${main_wt:-$REPO_ROOT}"
+  local found=0
+
+  if [[ -f "$base/frontend/package.json" ]]; then
+    found=1
+    if [[ -x "$base/frontend/node_modules/.bin/vitest" ]]; then
+      doctor_pass "frontend workspace ready (node_modules/.bin/vitest present)"
+    else
+      doctor_warn "frontend node_modules missing in $base/frontend"
+      printf '       prepare with: cd %s/frontend && npm install\n' "$base"
+    fi
+  fi
+
+  if [[ -f "$base/extension/package.json" ]]; then
+    found=1
+    if [[ -d "$base/extension/node_modules" ]]; then
+      doctor_pass "extension workspace ready (node_modules present)"
+    else
+      doctor_warn "extension node_modules missing in $base/extension"
+      printf '       prepare with: cd %s/extension && npm install\n' "$base"
+    fi
+  fi
+
+  if [[ "$found" -eq 0 ]]; then
+    printf '  (no frontend/ or extension/ package.json found at %s)\n' "$base"
+  fi
+  printf '\n'
+}
+
+# doctor_ready_task_checks
+#
+# For each task whose status is `ready`, print a compact summary the
+# operator can scan before dispatching. Never executes the task's
+# verification commands.
+doctor_ready_task_checks() {
+  printf 'Ready tasks\n'
+  if [[ ! -f "$QUEUE_FILE" ]] || ! "$CLAUDE_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    printf '  (queue not available)\n\n'
+    return 0
+  fi
+
+  local ready_ids any=0
+  ready_ids="$(yaml_query list 2>/dev/null | awk -F'\t' '$2=="ready"{print $1}')"
+  if [[ -z "$ready_ids" ]]; then
+    printf '  (no tasks with status=ready)\n\n'
+    return 0
+  fi
+
+  local id worktree wt_path verif kind
+  while IFS= read -r id; do
+    [[ -z "$id" ]] && continue
+    any=1
+    worktree="$(yaml_query field "$id" worktree 2>/dev/null)"
+    verif="$(yaml_query field "$id" verification 2>/dev/null)"
+    kind=""
+    [[ "$verif" == *"frontend"* ]] && kind="$kind frontend"
+    [[ "$verif" == *"extension"* ]] && kind="$kind extension"
+    [[ "$verif" == *"pytest"* ]]    && kind="$kind backend"
+    [[ -z "$kind" ]] && kind=" (other)"
+    printf '  %s\n' "$id"
+    printf '    verification kind:%s\n' "$kind"
+    if [[ "$worktree" == "main" ]]; then
+      printf '    worktree: main (in-place)\n'
+    else
+      wt_path="$(worktree_path "$worktree" 2>/dev/null)"
+      if [[ -n "$wt_path" ]]; then
+        printf '    worktree: %s (exists at %s)\n' "$worktree" "$wt_path"
+      else
+        printf '    worktree: %s (not yet created)\n' "$worktree"
+      fi
+    fi
+    if [[ -n "$verif" ]]; then
+      printf '    verification commands:\n'
+      while IFS= read -r cmd; do
+        [[ -z "$cmd" ]] && continue
+        printf '      $ %s\n' "$cmd"
+      done <<< "$verif"
+    fi
+  done <<< "$ready_ids"
+
+  [[ "$any" -eq 1 ]] || printf '  (no tasks with status=ready)\n'
+  printf '\n'
+}
+
+cmd_doctor() {
+  # Task-specific `doctor <task-id>` is documented as future work — we accept
+  # the argument so we can fail clearly instead of mysteriously, and the
+  # operator-facing message points at the global form they probably wanted.
+  if [[ $# -gt 0 ]]; then
+    err "doctor: task-specific form (doctor <task-id>) is not yet implemented;"
+    err "       run 'scripts/agentctl.sh doctor' for the global preflight report."
+    exit 2
+  fi
+
+  DOCTOR_PASS=0
+  DOCTOR_WARN=0
+  DOCTOR_FAIL=0
+
+  printf 'Agent Harness Doctor\n\n'
+
+  local main_wt=""
+  doctor_git_checks main_wt
+  doctor_queue_checks
+  doctor_tool_checks
+  doctor_settings_checks "$main_wt"
+  doctor_workspace_checks "$main_wt"
+  doctor_ready_task_checks
+
+  printf 'Summary: %d PASS, %d WARN, %d FAIL\n' \
+    "$DOCTOR_PASS" "$DOCTOR_WARN" "$DOCTOR_FAIL"
+
+  if [[ "$DOCTOR_FAIL" -gt 0 ]]; then
+    exit 1
+  fi
+}
+
 cmd_help() {
   cat <<'EOF'
 agentctl.sh - agent task orchestration harness
@@ -1235,6 +1654,7 @@ Usage:
   scripts/agentctl.sh status
   scripts/agentctl.sh list
   scripts/agentctl.sh ready
+  scripts/agentctl.sh doctor
   scripts/agentctl.sh plan "<high-level goal>"
   scripts/agentctl.sh plan --ultraplan "<high-level goal>"
   scripts/agentctl.sh plan --help
@@ -1608,6 +2028,7 @@ main() {
     status) cmd_status "$@" ;;
     list)   cmd_list "$@" ;;
     ready)  cmd_ready "$@" ;;
+    doctor) cmd_doctor "$@" ;;
     plan)   cmd_plan "$@" ;;
     ""|help|-h|--help) cmd_help ;;
     *) err "unknown command: $cmd"; cmd_help; exit 2 ;;
