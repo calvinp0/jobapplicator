@@ -413,3 +413,22 @@ tasks:
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/023-agentctl-doctor.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "024-demo-seed-data"
+    title: "Add demo seed data script"
+    file: "agent_tasks/024-demo-seed-data.md"
+    branch: "agent/024-demo-seed-data"
+    worktree: "agent-024-demo-seed-data"
+    status: "ready"
+    depends_on:
+      - "018-frontend-applications-and-submit-flow"
+    verification:
+      - "python scripts/seed_demo_data.py"
+      - "pytest"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/smoke_tests/**"
+      - "README.md"
+      - "agent_tasks/024-demo-seed-data.md"
+      - "agent_tasks/queue.yaml"
+
