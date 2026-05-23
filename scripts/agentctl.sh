@@ -7,8 +7,14 @@
 #   review <task-id>  Start a review-only Claude session for a task.
 #   sync <task-id>    Ensure task worktree exists and is up to date with main.
 #   complete <task-id> [--dry-run]
-#                     Mark a task done in queue.yaml after verifying its
-#                     worktree branch has been merged into main.
+#                     Run verification, merge the task's worktree branch into
+#                     main, mark the task done, promote unblocked tasks, and
+#                     commit the queue update. --dry-run prints what would
+#                     happen without changing files or branches.
+#   complete --continue <task-id>
+#                     Resume `complete` after the operator resolved a merge
+#                     conflict by hand. Finishes the merge commit, runs
+#                     verification, then updates queue statuses.
 #   status            Print task ids grouped by status.
 #   list              Print every task with its status and title.
 #   ready             Print tasks whose status is 'ready'.
@@ -551,81 +557,293 @@ branch_merged_into_main() {
   git -C "$REPO_ROOT" merge-base --is-ancestor "$branch" main
 }
 
-# write_status <task-id> <new-status> <dry-run-flag>
+# branch_has_commits_beyond_main <branch>
 #
-# Update the status field of the named task in queue.yaml. Performs an
-# in-place text edit so YAML comments and formatting are preserved. When
-# <dry-run-flag> is "1", prints the planned transition without writing.
-write_status() {
-  local task_id="$1" new_status="$2" dry_run="$3"
+# Exit 0 if <branch> exists and has at least one commit not reachable from
+# main. Exit 1 otherwise (branch missing, or branch tip is on/behind main).
+branch_has_commits_beyond_main() {
+  local branch="$1" count
+  if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    return 1
+  fi
+  count="$(git -C "$REPO_ROOT" rev-list --count "main..refs/heads/$branch" 2>/dev/null || echo 0)"
+  [[ "${count:-0}" -gt 0 ]]
+}
+
+# find_main_worktree
+#
+# Print the absolute path of the worktree whose checked-out branch is `main`.
+# Exits non-zero with a clear error if no such worktree is registered.
+find_main_worktree() {
+  local path
+  path="$(git -C "$REPO_ROOT" worktree list --porcelain \
+    | awk '
+        /^worktree / { wt=$2; next }
+        /^branch refs\/heads\/main$/ { print wt; exit }
+      ')"
+  if [[ -z "$path" ]]; then
+    err "could not find a worktree on branch main; complete needs the main checkout."
+    return 1
+  fi
+  printf '%s\n' "$path"
+}
+
+# run_verification_commands <dir> <task-id>
+#
+# Run every command in the task's `verification` list inside <dir>. Prints
+# each command to stderr before running it. Returns the first non-zero exit
+# status; returns 0 if all commands succeed.
+run_verification_commands() {
+  local dir="$1" task_id="$2" cmd ran=0
+  while IFS= read -r cmd; do
+    [[ -z "$cmd" ]] && continue
+    ran=1
+    printf '  $ %s\n' "$cmd" >&2
+    if ! (cd "$dir" && bash -c "$cmd"); then
+      err "verification command failed in $dir: $cmd"
+      return 1
+    fi
+  done < <(yaml_query field "$task_id" verification)
+  if [[ "$ran" -eq 0 ]]; then
+    printf '  (task %s has no verification commands)\n' "$task_id" >&2
+  fi
+  return 0
+}
+
+# update_queue_statuses <task-id> <dry-run-flag>
+#
+# In a single pass over queue.yaml:
+#   - Mark <task-id> as "done".
+#   - Promote any task whose status is "planned" and whose dependencies are
+#     all "done" (after applying the change above) to "ready".
+#
+# Performs an in-place text edit so YAML comments and quoting are preserved.
+# When <dry-run-flag> is "1" the edits are computed but the file is left
+# untouched.
+#
+# Prints the newly-promoted task ids on stdout (one per line) so callers can
+# capture them with `mapfile`. Human-readable transitions are written to
+# stderr.
+update_queue_statuses() {
+  local task_id="$1" dry_run="$2"
   require_queue
   require_python_yaml
   CLAUDE_QUEUE_FILE="$QUEUE_FILE" \
   CLAUDE_TASK_ID="$task_id" \
-  CLAUDE_NEW_STATUS="$new_status" \
   CLAUDE_DRY_RUN="$dry_run" \
     "$CLAUDE_PYTHON" - <<'PYEOF'
-import os, sys, re
+import os, re, sys, yaml
 
-path = os.environ["CLAUDE_QUEUE_FILE"]
+path    = os.environ["CLAUDE_QUEUE_FILE"]
 task_id = os.environ["CLAUDE_TASK_ID"]
-new_status = os.environ["CLAUDE_NEW_STATUS"]
 dry_run = os.environ["CLAUDE_DRY_RUN"] == "1"
 
 with open(path, "r", encoding="utf-8") as fh:
+    data = yaml.safe_load(fh) or {}
+tasks = data.get("tasks") or []
+by_id = {t.get("id"): t for t in tasks}
+
+if task_id not in by_id:
+    sys.stderr.write(f"error: unknown task id: {task_id}\n")
+    sys.exit(2)
+
+# Compute target statuses. Start by marking the completing task done, then
+# walk planned tasks to see which become eligible for promotion.
+new_status = {task_id: "done"}
+
+def status_after(tid):
+    if tid in new_status:
+        return new_status[tid]
+    t = by_id.get(tid)
+    return t.get("status", "") if t else ""
+
+promoted = []
+for t in tasks:
+    if t.get("status") != "planned":
+        continue
+    deps = t.get("depends_on") or []
+    if all(status_after(d) == "done" for d in deps):
+        pid = t.get("id")
+        promoted.append(pid)
+        new_status[pid] = "ready"
+
+# Apply text edits.
+with open(path, "r", encoding="utf-8") as fh:
     lines = fh.readlines()
 
-id_pat = re.compile(r'^(\s*)-\s*id:\s*["\']?' + re.escape(task_id) + r'["\']?\s*$')
+id_pat     = re.compile(r'^\s*-\s*id:\s*["\']?([^"\'#\s]+)["\']?\s*$')
 status_pat = re.compile(r'^(\s*)status:\s*["\']?([^"\'#\s]+)["\']?\s*(#.*)?$')
-new_block_pat = re.compile(r'^\s*-\s*id:\s*')
 
-in_block = False
-found = False
-old_status = None
+pending = dict(new_status)
+current_id = None
 out = []
 for line in lines:
-    if not in_block and id_pat.match(line):
-        in_block = True
+    m_id = id_pat.match(line)
+    if m_id:
+        current_id = m_id.group(1)
         out.append(line)
         continue
-    if in_block and new_block_pat.match(line):
-        in_block = False
-    if in_block:
-        m = status_pat.match(line)
-        if m:
-            indent, old_status = m.group(1), m.group(2)
-            found = True
-            out.append(f'{indent}status: "{new_status}"\n')
-            in_block = False
+    if current_id and current_id in pending:
+        m_st = status_pat.match(line)
+        if m_st:
+            indent, old = m_st.group(1), m_st.group(2)
+            new = pending.pop(current_id)
+            out.append(f'{indent}status: "{new}"\n')
+            sys.stderr.write(f"  {current_id}: {old} -> {new}\n")
             continue
     out.append(line)
 
-if not found:
-    sys.stderr.write(f"error: could not find status line for task '{task_id}' in {path}\n")
+if pending:
+    for k in pending:
+        sys.stderr.write(
+            f"error: could not find status line for task '{k}' in {path}\n")
     sys.exit(2)
 
-print(f"task '{task_id}' status: {old_status} -> {new_status}")
-if dry_run:
-    print("(dry-run; queue.yaml not modified)")
-else:
+if not dry_run:
     with open(path, "w", encoding="utf-8") as fh:
         fh.writelines(out)
-    print(f"updated {path}")
+
+for pid in promoted:
+    print(pid)
 PYEOF
 }
 
+# print_ready_tasks
+#
+# Print the (possibly empty) list of tasks with status=ready, formatted for
+# operator-facing output.
+print_ready_tasks() {
+  printf '\nReady tasks:\n'
+  local found=0 id status title
+  while IFS=$'\t' read -r id status title; do
+    [[ -z "$id" ]] && continue
+    [[ "$status" == "ready" ]] || continue
+    printf '  %-30s %s\n' "$id" "$title"
+    found=1
+  done < <(yaml_query list)
+  if [[ "$found" -eq 0 ]]; then
+    printf '  (no tasks with status=ready)\n'
+  fi
+}
+
+# commit_queue_update <main_worktree>
+#
+# Stage agent_tasks/queue.yaml in the given main worktree and commit it with
+# the canonical status-update commit message. No-op if there is nothing to
+# commit (e.g. the file was already in the desired state).
+commit_queue_update() {
+  local main_wt="$1"
+  git -C "$main_wt" add agent_tasks/queue.yaml
+  if git -C "$main_wt" diff --cached --quiet; then
+    printf 'No queue.yaml changes to commit.\n' >&2
+    return 0
+  fi
+  git -C "$main_wt" commit -m "Update agent task statuses" >&2
+}
+
+# print_dry_run_promotions <promoted...>
+#
+# Emit the "would promote" line for dry-run mode.
+print_dry_run_promotions() {
+  if [[ "$#" -eq 0 ]]; then
+    printf 'would promote (no tasks)\n'
+  else
+    printf 'would promote %s\n' "$*"
+  fi
+}
+
+# complete_continue <task-id> <status> <worktree>
+#
+# Resume `complete` after the operator hand-resolved a merge conflict. If no
+# merge is in progress and the branch is already merged into main, behaves
+# like a normal `complete` from the post-merge point: runs verification,
+# updates statuses, and commits the queue update.
+complete_continue() {
+  local task_id="$1" status="$2" worktree="$3"
+
+  local main_wt
+  main_wt="$(find_main_worktree)" || exit 1
+
+  local branch=""
+  if [[ "$worktree" != "main" ]]; then
+    branch="worktree-$worktree"
+  fi
+
+  local in_merge=0
+  if git -C "$main_wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    in_merge=1
+  fi
+
+  local already_merged=0
+  if [[ -z "$branch" ]] || branch_merged_into_main "$branch"; then
+    already_merged=1
+  fi
+
+  if [[ "$in_merge" -eq 0 && "$already_merged" -eq 0 ]]; then
+    err "no merge in progress and branch '$branch' is not merged into main."
+    err "Run 'scripts/agentctl.sh complete $task_id' instead."
+    exit 1
+  fi
+
+  if [[ "$in_merge" -eq 1 ]]; then
+    local conflicted
+    conflicted="$(git -C "$main_wt" diff --name-only --diff-filter=U)"
+    if [[ -n "$conflicted" ]]; then
+      err "unresolved conflicts remain in the merge:"
+      printf '%s\n' "$conflicted" >&2
+      err "Resolve them, 'git add' the fixed files, then re-run complete --continue."
+      exit 1
+    fi
+  fi
+
+  printf 'Running verification in %s\n' "$main_wt" >&2
+  if ! run_verification_commands "$main_wt" "$task_id"; then
+    err "verification failed; not marking $task_id done"
+    exit 1
+  fi
+
+  if [[ "$in_merge" -eq 1 ]]; then
+    printf 'Finalizing merge commit...\n' >&2
+    if ! git -C "$main_wt" commit --no-edit >&2; then
+      die "failed to finalize the merge commit; resolve in $main_wt and retry."
+    fi
+  fi
+
+  if [[ "$status" == "done" ]]; then
+    printf 'Task %s is already done.\n' "$task_id"
+    print_ready_tasks
+    return 0
+  fi
+
+  printf 'Updating queue statuses...\n' >&2
+  local promoted=()
+  mapfile -t promoted < <(update_queue_statuses "$task_id" 0)
+
+  commit_queue_update "$main_wt"
+
+  print_ready_tasks
+}
+
 cmd_complete() {
-  local task_id="" dry_run=0
+  local task_id="" dry_run=0 continue_mode=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) dry_run=1; shift ;;
-      -*) die "usage: agentctl.sh complete <task-id> [--dry-run]" ;;
+      --continue) continue_mode=1; shift ;;
+      -*) die "usage: agentctl.sh complete <task-id> [--dry-run]
+       agentctl.sh complete --continue <task-id>" ;;
       *)
-        [[ -z "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]"
+        [[ -z "$task_id" ]] || die "complete: only one task id may be given"
         task_id="$1"; shift ;;
     esac
   done
-  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]"
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run]
+       agentctl.sh complete --continue <task-id>"
+
+  if [[ "$continue_mode" -eq 1 && "$dry_run" -eq 1 ]]; then
+    die "complete: --continue and --dry-run are mutually exclusive"
+  fi
+
   require_queue
   require_python_yaml
   task_id="$(resolve_task_id "$task_id")"
@@ -635,29 +853,115 @@ cmd_complete() {
   worktree="$(yaml_query field "$task_id" worktree)"
   [[ -n "$worktree" ]] || die "task '$task_id' has no 'worktree' field"
 
+  if [[ "$continue_mode" -eq 1 ]]; then
+    complete_continue "$task_id" "$status" "$worktree"
+    return $?
+  fi
+
   if [[ "$status" == "done" ]]; then
-    printf 'task %s is already done; no change.\n' "$task_id"
-    if [[ "$dry_run" -eq 1 ]]; then
-      printf '(dry-run; queue.yaml not modified)\n'
-    fi
+    printf 'Task %s is already done.\n' "$task_id"
     return 0
   fi
 
+  local main_wt
+  main_wt="$(find_main_worktree)" || exit 1
+
+  if [[ -n "$(git -C "$main_wt" status --porcelain)" ]]; then
+    err "main worktree is not clean ($main_wt); commit or stash before completing:"
+    git -C "$main_wt" status --short >&2
+    exit 1
+  fi
+
+  local branch="" task_wt="$main_wt"
   if [[ "$worktree" != "main" ]]; then
-    local branch="worktree-$worktree"
-    if ! branch_merged_into_main "$branch"; then
-      err "branch '$branch' is not yet merged into main."
-      err "Merge it manually (e.g. 'git merge --no-ff $branch') then re-run:"
-      err "  scripts/agentctl.sh complete $task_id"
+    branch="worktree-$worktree"
+    task_wt="$(worktree_path "$worktree")"
+    if [[ -z "$task_wt" ]]; then
+      err "task worktree '$worktree' does not exist."
+      err "Create or restore it with: scripts/agentctl.sh sync $task_id"
       exit 1
     fi
   fi
 
-  write_status "$task_id" "done" "$dry_run"
-  if [[ "$dry_run" -eq 0 ]]; then
-    printf '\nNext: commit the queue update, e.g.\n'
-    printf '  git add agent_tasks/queue.yaml && git commit -m "Mark %s done"\n' "$task_id"
+  # Determine whether the branch is already merged. A branch whose tip is
+  # reachable from main (including the case where the branch tip equals main)
+  # is treated as already merged — we skip the merge step.
+  local already_merged=0
+  if [[ -z "$branch" ]] || branch_merged_into_main "$branch"; then
+    already_merged=1
   fi
+
+  # If the branch is not already merged, it must have at least one commit
+  # beyond main; otherwise there is nothing to integrate.
+  if [[ "$already_merged" -eq 0 ]]; then
+    if ! branch_has_commits_beyond_main "$branch"; then
+      err "branch '$branch' has no commits beyond main and is not merged."
+      err "Verify the agent committed its work before running complete."
+      exit 1
+    fi
+  fi
+
+  # Verification.
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf 'would run verification (in %s)\n' "$task_wt"
+  else
+    printf 'Running verification in %s\n' "$task_wt" >&2
+    if ! run_verification_commands "$task_wt" "$task_id"; then
+      err "verification failed; not marking $task_id done"
+      exit 1
+    fi
+  fi
+
+  # Merge.
+  if [[ -n "$branch" && "$already_merged" -eq 0 ]]; then
+    if [[ "$dry_run" -eq 1 ]]; then
+      printf 'would merge branch %s into main\n' "$branch"
+    else
+      printf 'Merging %s into main (in %s)...\n' "$branch" "$main_wt" >&2
+      if ! git -C "$main_wt" merge --no-ff --no-edit "$branch" >&2; then
+        cat >&2 <<EOF
+
+Merge conflict while completing $task_id.
+
+Resolve conflicts in main, then run:
+
+  git status
+  bash -n scripts/agentctl.sh
+  scripts/agentctl.sh complete --continue $task_id
+EOF
+        exit 1
+      fi
+    fi
+  else
+    if [[ "$dry_run" -eq 1 ]]; then
+      if [[ -n "$branch" ]]; then
+        printf 'would skip merge (branch %s already merged into main)\n' "$branch"
+      else
+        printf 'would skip merge (task targets main; no separate branch)\n'
+      fi
+    else
+      if [[ -n "$branch" ]]; then
+        printf 'Branch %s already merged into main; skipping merge.\n' "$branch" >&2
+      fi
+    fi
+  fi
+
+  # Status updates.
+  local promoted=()
+  if [[ "$dry_run" -eq 1 ]]; then
+    printf 'would mark %s done\n' "$task_id"
+    mapfile -t promoted < <(update_queue_statuses "$task_id" 1 2>/dev/null)
+    print_dry_run_promotions "${promoted[@]}"
+    printf 'would commit queue update\n'
+    return 0
+  fi
+
+  printf 'Updating queue statuses...\n' >&2
+  mapfile -t promoted < <(update_queue_statuses "$task_id" 0)
+
+  commit_queue_update "$main_wt"
+
+  print_ready_tasks
 }
 
 cmd_help() {
@@ -670,6 +974,7 @@ Usage:
   scripts/agentctl.sh review <task-id>
   scripts/agentctl.sh sync <task-id>
   scripts/agentctl.sh complete <task-id> [--dry-run]
+  scripts/agentctl.sh complete --continue <task-id>
   scripts/agentctl.sh status
   scripts/agentctl.sh list
   scripts/agentctl.sh ready
