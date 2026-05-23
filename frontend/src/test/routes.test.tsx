@@ -11,6 +11,7 @@ vi.mock("../api", async () => {
     listMasterResumes: vi.fn().mockResolvedValue([]),
     listEvidenceBanks: vi.fn().mockResolvedValue([]),
     listRuns: vi.fn().mockResolvedValue([]),
+    listApplications: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -49,14 +50,14 @@ describe("route smoke tests", () => {
     expect(screen.getByText(/no confirmed jobs yet/i)).toBeInTheDocument();
   });
 
-  it("renders /applications as a placeholder", async () => {
+  it("renders /applications with empty list", async () => {
     renderAt("/applications");
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { level: 2, name: "Applications" }),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText(/not yet implemented/i)).toBeInTheDocument();
+    expect(screen.getByText(/no applications yet/i)).toBeInTheDocument();
   });
 
   it("renders /settings with the master resume and evidence bank sections", async () => {

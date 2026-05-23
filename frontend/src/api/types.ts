@@ -101,3 +101,25 @@ export interface Application {
   created_at: string;
   updated_at: string;
 }
+
+export interface ApplicationCreate {
+  job_id: string;
+  resume_version_id?: string | null;
+  status?: string;
+}
+
+export interface ApplicationEvent {
+  id: string;
+  application_id: string;
+  event_type: string;
+  event_time: string;
+  notes: string | null;
+  source: string | null;
+  created_at: string;
+}
+
+export interface ApplicationEventCreate {
+  event_type: string;
+  notes?: string | null;
+  source?: string | null;
+}

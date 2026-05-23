@@ -308,3 +308,63 @@ button[type="submit"]:disabled {
   font-style: italic;
   margin: 0 0 16px;
 }
+
+.application-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.application-list-item {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.application-meta {
+  color: #666;
+  font-size: 13px;
+}
+
+.application-gating {
+  color: #666;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.application-event-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.application-event-item {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.application-event-time {
+  color: #666;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+.application-event-source {
+  color: #666;
+  font-size: 12px;
+}
+
+.application-event-notes {
+  margin: 4px 0 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}

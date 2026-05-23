@@ -8,6 +8,7 @@ import { RunsPage } from "./pages/RunsPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { ResumeVersionDetailPage } from "./pages/ResumeVersionDetailPage";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
+import { ApplicationDetailPage } from "./pages/ApplicationDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
@@ -26,6 +27,10 @@ export function App() {
           element={<ResumeVersionDetailPage />}
         />
         <Route path="/applications" element={<ApplicationsPage />} />
+        <Route
+          path="/applications/:applicationId"
+          element={<ApplicationDetailPage />}
+        />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/captures" replace />} />
       </Route>

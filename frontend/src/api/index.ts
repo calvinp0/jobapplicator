@@ -1,6 +1,9 @@
 import { apiRequest } from "./client";
 import type {
   Application,
+  ApplicationCreate,
+  ApplicationEvent,
+  ApplicationEventCreate,
   ClaudeRun,
   EvidenceBank,
   EvidenceBankCreate,
@@ -14,6 +17,9 @@ import type {
 export { API_BASE, ApiError } from "./client";
 export type {
   Application,
+  ApplicationCreate,
+  ApplicationEvent,
+  ApplicationEventCreate,
   ClaudeRun,
   EvidenceBank,
   EvidenceBankCreate,
@@ -121,4 +127,34 @@ export function listApplications(): Promise<Application[]> {
 
 export function getApplication(applicationId: string): Promise<Application> {
   return apiRequest(`/applications/${applicationId}`);
+}
+
+export function createApplication(
+  payload: ApplicationCreate,
+): Promise<Application> {
+  return apiRequest("/applications", { method: "POST", body: payload });
+}
+
+export function submitApplication(
+  applicationId: string,
+): Promise<Application> {
+  return apiRequest(`/applications/${applicationId}/submit`, {
+    method: "POST",
+  });
+}
+
+export function listApplicationEvents(
+  applicationId: string,
+): Promise<ApplicationEvent[]> {
+  return apiRequest(`/applications/${applicationId}/events`);
+}
+
+export function createApplicationEvent(
+  applicationId: string,
+  payload: ApplicationEventCreate,
+): Promise<ApplicationEvent> {
+  return apiRequest(`/applications/${applicationId}/events`, {
+    method: "POST",
+    body: payload,
+  });
 }
