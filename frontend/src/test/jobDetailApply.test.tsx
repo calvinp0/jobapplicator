@@ -8,6 +8,8 @@ const {
   listMasterResumesMock,
   listEvidenceBanksMock,
   listResumeVersionsMock,
+  listRunsMock,
+  listApplicationsMock,
   createRunMock,
   createApplicationMock,
   ApiErrorMock,
@@ -27,6 +29,8 @@ const {
     listMasterResumesMock: vi.fn(),
     listEvidenceBanksMock: vi.fn(),
     listResumeVersionsMock: vi.fn(),
+    listRunsMock: vi.fn(),
+    listApplicationsMock: vi.fn(),
     createRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
     ApiErrorMock,
@@ -38,6 +42,8 @@ vi.mock("../api", () => ({
   listMasterResumes: listMasterResumesMock,
   listEvidenceBanks: listEvidenceBanksMock,
   listResumeVersions: listResumeVersionsMock,
+  listRuns: listRunsMock,
+  listApplications: listApplicationsMock,
   createRun: createRunMock,
   createApplication: createApplicationMock,
   ApiError: ApiErrorMock,
@@ -97,11 +103,13 @@ const pendingVersion = {
   version_number: 2,
 };
 
-describe("JobDetailPage Apply section", () => {
+describe("JobDetailPage Submit this job section", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
     listMasterResumesMock.mockResolvedValue([]);
     listEvidenceBanksMock.mockResolvedValue([]);
+    listRunsMock.mockResolvedValue([]);
+    listApplicationsMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -115,7 +123,7 @@ describe("JobDetailPage Apply section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /^apply$/i }),
+        screen.getByRole("heading", { level: 3, name: /^submit this job$/i }),
       ).toBeInTheDocument(),
     );
 
@@ -144,7 +152,7 @@ describe("JobDetailPage Apply section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /^apply$/i }),
+        screen.getByRole("heading", { level: 3, name: /^submit this job$/i }),
       ).toBeInTheDocument(),
     );
 
@@ -166,5 +174,78 @@ describe("JobDetailPage Apply section", () => {
     await waitFor(() =>
       expect(screen.getByText(/application detail stub/i)).toBeInTheDocument(),
     );
+  });
+
+  it("lists applications for this job and links to /applications/:id", async () => {
+    listResumeVersionsMock.mockResolvedValue([approvedVersion]);
+    listApplicationsMock.mockResolvedValue([
+      {
+        id: "app-1",
+        job_id: "job-1",
+        resume_version_id: "version-approved",
+        status: "approved",
+        submitted_at: null,
+        created_at: "2026-05-22T15:00:00Z",
+        updated_at: "2026-05-22T15:00:00Z",
+      },
+      {
+        id: "app-other",
+        job_id: "other-job",
+        resume_version_id: null,
+        status: "approved",
+        submitted_at: null,
+        created_at: "2026-05-22T15:00:00Z",
+        updated_at: "2026-05-22T15:00:00Z",
+      },
+    ]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 4, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const link = screen.getByRole("link", { name: /app-1/i });
+    expect(link).toHaveAttribute("href", "/applications/app-1");
+
+    expect(
+      screen.queryByRole("link", { name: /app-other/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides Create application buttons when a submitted application exists", async () => {
+    listResumeVersionsMock.mockResolvedValue([approvedVersion]);
+    listApplicationsMock.mockResolvedValue([
+      {
+        id: "app-1",
+        job_id: "job-1",
+        resume_version_id: "version-approved",
+        status: "submitted",
+        submitted_at: "2026-05-22T16:00:00Z",
+        created_at: "2026-05-22T15:00:00Z",
+        updated_at: "2026-05-22T16:00:00Z",
+      },
+    ]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 3, name: /^submit this job$/i }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /create application/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/already has a submitted application/i),
+    ).toBeInTheDocument();
+
+    const track = screen.getByTestId("job-status-track");
+    const active = track.querySelector(".job-status-step-active");
+    expect(active?.textContent).toMatch(/submitted/i);
   });
 });

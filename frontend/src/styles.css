@@ -368,3 +368,40 @@ button[type="submit"]:disabled {
   font-size: 13px;
   white-space: pre-wrap;
 }
+
+.job-status-track {
+  list-style: none;
+  margin: 12px 0 20px;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  max-width: 720px;
+}
+
+.job-status-step {
+  font-size: 13px;
+  color: #888;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.job-status-step:not(:last-child)::after {
+  content: " →";
+  color: #bbb;
+  margin-left: 4px;
+}
+
+.job-status-step-active {
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+}
+
+.job-status-step-active::after {
+  color: #bbb;
+}
