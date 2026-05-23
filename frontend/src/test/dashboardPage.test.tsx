@@ -143,7 +143,7 @@ describe("DashboardPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /home/i }),
+        screen.getByRole("heading", { level: 2, name: /application cockpit/i }),
       ).toBeInTheDocument(),
     );
 
@@ -151,13 +151,15 @@ describe("DashboardPage", () => {
       screen.getByText(/1 active jobs · 1 in-flight runs · 1 applications submitted/i),
     ).toBeInTheDocument();
 
-    const jobLink = screen.getByRole("link", {
-      name: /platform lead — beta inc/i,
-    });
-    expect(jobLink).toHaveAttribute("href", "/jobs/job-2");
+    const links = screen.getAllByRole("link");
+    const jobLink = links.find(
+      (l) => l.getAttribute("href") === "/jobs/job-2",
+    );
+    expect(jobLink).toBeDefined();
+    expect(screen.getAllByText(/platform lead/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/beta inc/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/awaiting tailoring/i)).toBeInTheDocument();
 
-    const links = screen.getAllByRole("link");
     const runLink = links.find(
       (l) => l.getAttribute("href") === "/runs/run-1",
     );
@@ -178,7 +180,7 @@ describe("DashboardPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /home/i }),
+        screen.getByRole("heading", { level: 2, name: /application cockpit/i }),
       ).toBeInTheDocument(),
     );
 
