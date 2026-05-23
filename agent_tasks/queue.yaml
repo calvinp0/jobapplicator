@@ -398,7 +398,7 @@ tasks:
     file: "agent_tasks/023-agentctl-doctor.md"
     branch: "agent/023-agentctl-doctor"
     worktree: "agent-023-agentctl-doctor"
-    status: "ready"
+    status: "done"
     depends_on:
       - "022-agentctl-frontend-worktree-verification"
     verification:
