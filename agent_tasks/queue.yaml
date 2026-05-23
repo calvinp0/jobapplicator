@@ -250,7 +250,7 @@ tasks:
     file: "agent_tasks/016-frontend-runs-list-and-detail.md"
     branch: "agent/016-frontend-runs-list-and-detail"
     worktree: "agent-016-frontend-runs-list-and-detail"
-    status: "ready"
+    status: "done"
     depends_on:
       - "015-frontend-settings-master-resume-and-evidence-bank"
     verification:
@@ -270,7 +270,7 @@ tasks:
     file: "agent_tasks/017-frontend-resume-version-approval-and-open-file.md"
     branch: "agent/017-frontend-resume-version-approval-and-open-file"
     worktree: "agent-017-frontend-resume-version-approval-and-open-file"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "014-backend-application-submit-and-open-file"
       - "016-frontend-runs-list-and-detail"
