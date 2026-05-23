@@ -8,6 +8,8 @@ vi.mock("../api", async () => {
     ...actual,
     listCaptures: vi.fn().mockResolvedValue([]),
     listJobs: vi.fn().mockResolvedValue([]),
+    listMasterResumes: vi.fn().mockResolvedValue([]),
+    listEvidenceBanks: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -49,7 +51,6 @@ describe("route smoke tests", () => {
   it.each([
     ["/runs", "Runs"],
     ["/applications", "Applications"],
-    ["/settings", "Settings"],
   ])("renders %s as a placeholder", async (path, label) => {
     renderAt(path);
     await waitFor(() =>
@@ -58,5 +59,20 @@ describe("route smoke tests", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/not yet implemented/i)).toBeInTheDocument();
+  });
+
+  it("renders /settings with the master resume and evidence bank sections", async () => {
+    renderAt("/settings");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /^settings$/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", { level: 3, name: /master resumes/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 3, name: /evidence banks/i }),
+    ).toBeInTheDocument();
   });
 });
