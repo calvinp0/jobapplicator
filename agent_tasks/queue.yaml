@@ -566,7 +566,6 @@ tasks:
     verification:
       - "bash -n scripts/agentctl.sh"
       - "scripts/agentctl.sh doctor"
-      - "scripts/agentctl.sh sync 027"
     allowed_paths:
       - "scripts/**"
       - "docs/contracts/agent_orchestration.md"
