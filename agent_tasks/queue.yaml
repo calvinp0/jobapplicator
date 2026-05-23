@@ -209,3 +209,103 @@ tasks:
       - "agent_tasks/**"
       - ".agent_plans/**"
       - ".gitignore"
+
+  - id: "014-backend-application-submit-and-open-file"
+    title: "Add application submit, events, and open-file endpoint"
+    file: "agent_tasks/014-backend-application-submit-and-open-file.md"
+    branch: "agent/014-backend-application-submit-and-open-file"
+    worktree: "agent-014-backend-application-submit-and-open-file"
+    status: "ready"
+    depends_on:
+      - "008-resume-version-import"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "015-frontend-settings-master-resume-and-evidence-bank"
+    title: "Add settings page for master resumes and evidence banks"
+    file: "agent_tasks/015-frontend-settings-master-resume-and-evidence-bank.md"
+    branch: "agent/015-frontend-settings-master-resume-and-evidence-bank"
+    worktree: "agent-015-frontend-settings-master-resume-and-evidence-bank"
+    status: "ready"
+    depends_on:
+      - "010-frontend-job-capture-flow"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "agent_tasks/queue.yaml"
+
+  - id: "016-frontend-runs-list-and-detail"
+    title: "Add frontend runs list and run detail actions"
+    file: "agent_tasks/016-frontend-runs-list-and-detail.md"
+    branch: "agent/016-frontend-runs-list-and-detail"
+    worktree: "agent-016-frontend-runs-list-and-detail"
+    status: "planned"
+    depends_on:
+      - "015-frontend-settings-master-resume-and-evidence-bank"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "frontend/src/pages/RunsPage.tsx"
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "017-frontend-resume-version-approval-and-open-file"
+    title: "Add resume version approval and open-file flow"
+    file: "agent_tasks/017-frontend-resume-version-approval-and-open-file.md"
+    branch: "agent/017-frontend-resume-version-approval-and-open-file"
+    worktree: "agent-017-frontend-resume-version-approval-and-open-file"
+    status: "planned"
+    depends_on:
+      - "014-backend-application-submit-and-open-file"
+      - "016-frontend-runs-list-and-detail"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ResumeVersionDetailPage.tsx"
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/App.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/queue.yaml"
+
+  - id: "018-frontend-applications-and-submit-flow"
+    title: "Add applications page and mark-submitted flow"
+    file: "agent_tasks/018-frontend-applications-and-submit-flow.md"
+    branch: "agent/018-frontend-applications-and-submit-flow"
+    worktree: "agent-018-frontend-applications-and-submit-flow"
+    status: "planned"
+    depends_on:
+      - "017-frontend-resume-version-approval-and-open-file"
+    verification:
+      - "npm test"
+      - "npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ApplicationsPage.tsx"
+      - "frontend/src/pages/ApplicationDetailPage.tsx"
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/App.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/queue.yaml"
