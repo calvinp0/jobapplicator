@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./layout/Layout";
+import { DashboardPage } from "./pages/DashboardPage";
 import { CapturesPage } from "./pages/CapturesPage";
 import { CaptureDetailPage } from "./pages/CaptureDetailPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -15,7 +16,7 @@ export function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<Navigate to="/captures" replace />} />
+        <Route index element={<DashboardPage />} />
         <Route path="/captures" element={<CapturesPage />} />
         <Route path="/captures/:captureId" element={<CaptureDetailPage />} />
         <Route path="/jobs" element={<JobsPage />} />
@@ -32,7 +33,7 @@ export function App() {
           element={<ApplicationDetailPage />}
         />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/captures" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   );

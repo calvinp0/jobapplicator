@@ -400,6 +400,7 @@ button[type="submit"]:disabled {
   white-space: pre-wrap;
 }
 
+
 .job-status-track {
   list-style: none;
   margin: 12px 0 20px;
@@ -483,3 +484,38 @@ button[type="submit"]:disabled {
   background: #d6e4ff;
   color: #1a3e8c;
 }
+
+.dashboard h2 {
+  margin-top: 0;
+}
+
+.dashboard-summary {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0 0 24px;
+  color: #444;
+  font-size: 14px;
+}
+
+.dashboard-section {
+  margin-bottom: 28px;
+}
+
+.dashboard-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.dashboard-empty {
+  color: #666;
+  font-style: italic;
+  margin: 0;
+}
+
+.dashboard-job-state {
+  color: #666;
+  font-size: 13px;
+}
+
