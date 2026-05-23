@@ -11,6 +11,8 @@ const {
   getRunMock,
   listCapturesMock,
   listResumeVersionsMock,
+  listRunsMock,
+  listApplicationsMock,
   invokeRunMock,
   importRunMock,
   ApiErrorMock,
@@ -33,6 +35,8 @@ const {
     getRunMock: vi.fn(),
     listCapturesMock: vi.fn(),
     listResumeVersionsMock: vi.fn(),
+    listRunsMock: vi.fn(),
+    listApplicationsMock: vi.fn(),
     invokeRunMock: vi.fn(),
     importRunMock: vi.fn(),
     ApiErrorMock,
@@ -47,6 +51,8 @@ vi.mock("../api", () => ({
   getRun: getRunMock,
   listCaptures: listCapturesMock,
   listResumeVersions: listResumeVersionsMock,
+  listRuns: listRunsMock,
+  listApplications: listApplicationsMock,
   invokeRun: invokeRunMock,
   importRun: importRunMock,
   ApiError: ApiErrorMock,
@@ -123,6 +129,8 @@ describe("JobDetailPage generate resume flow", () => {
     getRunMock.mockResolvedValue(newRun);
     listCapturesMock.mockResolvedValue([]);
     listResumeVersionsMock.mockResolvedValue([]);
+    listRunsMock.mockResolvedValue([]);
+    listApplicationsMock.mockResolvedValue([]);
   });
 
   afterEach(() => {

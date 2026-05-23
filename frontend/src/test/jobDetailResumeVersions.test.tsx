@@ -7,6 +7,8 @@ const {
   listMasterResumesMock,
   listEvidenceBanksMock,
   listResumeVersionsMock,
+  listRunsMock,
+  listApplicationsMock,
   createRunMock,
   createApplicationMock,
   ApiErrorMock,
@@ -26,6 +28,8 @@ const {
     listMasterResumesMock: vi.fn(),
     listEvidenceBanksMock: vi.fn(),
     listResumeVersionsMock: vi.fn(),
+    listRunsMock: vi.fn(),
+    listApplicationsMock: vi.fn(),
     createRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
     ApiErrorMock,
@@ -37,6 +41,8 @@ vi.mock("../api", () => ({
   listMasterResumes: listMasterResumesMock,
   listEvidenceBanks: listEvidenceBanksMock,
   listResumeVersions: listResumeVersionsMock,
+  listRuns: listRunsMock,
+  listApplications: listApplicationsMock,
   createRun: createRunMock,
   createApplication: createApplicationMock,
   ApiError: ApiErrorMock,
@@ -117,12 +123,43 @@ const versions = [
   },
 ];
 
-describe("JobDetailPage resume versions section", () => {
+const inFlightRun = {
+  id: "run-in-flight",
+  job_id: "job-1",
+  master_resume_id: "resume-1",
+  evidence_bank_id: null,
+  run_dir: "/tmp/run",
+  status: "running",
+  prompt_hash: null,
+  input_hash: null,
+  output_hash: null,
+  created_at: "2026-05-22T14:00:00Z",
+  started_at: "2026-05-22T14:00:01Z",
+  completed_at: null,
+  error_message: null,
+};
+
+const finishedRun = {
+  ...inFlightRun,
+  id: "run-finished",
+  status: "completed-imported",
+};
+
+const otherJobRun = {
+  ...inFlightRun,
+  id: "run-other",
+  job_id: "other-job",
+  status: "running",
+};
+
+describe("JobDetailPage tailored resumes section", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
     listMasterResumesMock.mockResolvedValue([]);
     listEvidenceBanksMock.mockResolvedValue([]);
     listResumeVersionsMock.mockResolvedValue(versions);
+    listRunsMock.mockResolvedValue([inFlightRun, finishedRun, otherJobRun]);
+    listApplicationsMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -134,7 +171,7 @@ describe("JobDetailPage resume versions section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /resume versions/i }),
+        screen.getByRole("heading", { level: 3, name: /tailored resumes/i }),
       ).toBeInTheDocument(),
     );
 
@@ -148,8 +185,13 @@ describe("JobDetailPage resume versions section", () => {
       screen.queryByRole("link", { name: /version 3/i }),
     ).not.toBeInTheDocument();
 
-    expect(screen.getByText("Approved")).toBeInTheDocument();
-    expect(screen.getByText("Pending")).toBeInTheDocument();
+    const statuses = screen.getAllByText(
+      (_text, el) =>
+        el?.classList.contains("resume-version-status") ?? false,
+    );
+    const statusTexts = statuses.map((el) => el.textContent);
+    expect(statusTexts).toContain("Approved");
+    expect(statusTexts).toContain("Pending");
   });
 
   it("renders the empty state when no versions exist for the job", async () => {
@@ -159,12 +201,95 @@ describe("JobDetailPage resume versions section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /resume versions/i }),
+        screen.getByRole("heading", { level: 3, name: /tailored resumes/i }),
       ).toBeInTheDocument(),
     );
 
     expect(
       screen.getByText(/no resume versions for this job yet/i),
     ).toBeInTheDocument();
+  });
+
+  it("lists in-flight runs for this job and links to /runs/:id", async () => {
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 4, name: /in-flight runs/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const runLink = screen.getByRole("link", { name: /run-in-flight/i });
+    expect(runLink).toHaveAttribute("href", "/runs/run-in-flight");
+
+    expect(
+      screen.queryByRole("link", { name: /run-finished/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /run-other/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the empty state for in-flight runs when none qualify", async () => {
+    listRunsMock.mockResolvedValue([finishedRun]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 4, name: /in-flight runs/i }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.getByText(/no runs in flight for this job/i),
+    ).toBeInTheDocument();
+  });
+
+  it("highlights the Approved stage when only an approved version exists", async () => {
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 3, name: /tailored resumes/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const track = screen.getByTestId("job-status-track");
+    const active = track.querySelector(".job-status-step-active");
+    expect(active?.textContent).toMatch(/approved/i);
+  });
+
+  it("highlights the Captured stage when no runs exist", async () => {
+    listResumeVersionsMock.mockResolvedValue([]);
+    listRunsMock.mockResolvedValue([]);
+    listApplicationsMock.mockResolvedValue([]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("job-status-track")).toBeInTheDocument(),
+    );
+
+    const track = screen.getByTestId("job-status-track");
+    const active = track.querySelector(".job-status-step-active");
+    expect(active?.textContent).toMatch(/captured/i);
+  });
+
+  it("highlights the Tailoring stage when runs exist but nothing is approved", async () => {
+    listResumeVersionsMock.mockResolvedValue([
+      { ...versions[1] },
+    ]);
+    listRunsMock.mockResolvedValue([inFlightRun]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("job-status-track")).toBeInTheDocument(),
+    );
+
+    const track = screen.getByTestId("job-status-track");
+    const active = track.querySelector(".job-status-step-active");
+    expect(active?.textContent).toMatch(/tailoring/i);
   });
 });

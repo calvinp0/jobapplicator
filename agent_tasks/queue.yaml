@@ -506,6 +506,7 @@ tasks:
       - "frontend/src/pages/JobDetailPage.tsx"
       - "frontend/src/test/jobDetailApply.test.tsx"
       - "frontend/src/test/jobDetailResumeVersions.test.tsx"
+      - "frontend/src/test/generateResume.test.tsx"
       - "frontend/src/styles.css"
       - "agent_tasks/queue.yaml"
 
