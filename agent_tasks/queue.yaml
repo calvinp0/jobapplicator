@@ -1062,7 +1062,7 @@ tasks:
     file: "agent_tasks/055-job-page-live-tailoring-refresh.md"
     branch: "agent/055-job-page-live-tailoring-refresh"
     worktree: "agent-055-job-page-live-tailoring-refresh"
-    status: "ready"
+    status: "done"
     depends_on:
       - "052-tailoring-progress-events"
     verification:
