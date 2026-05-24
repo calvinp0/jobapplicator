@@ -1,0 +1,239 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
+const {
+  getJobMock,
+  listMasterResumesMock,
+  listEvidenceBanksMock,
+  listResumeVersionsMock,
+  listRunsMock,
+  listApplicationsMock,
+  createRunMock,
+  invokeRunMock,
+  createApplicationMock,
+  ApiErrorMock,
+} = vi.hoisted(() => {
+  class ApiErrorMock extends Error {
+    status: number;
+    body: unknown;
+    constructor(message: string, status: number, body: unknown) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+      this.body = body;
+    }
+  }
+  return {
+    getJobMock: vi.fn(),
+    listMasterResumesMock: vi.fn(),
+    listEvidenceBanksMock: vi.fn(),
+    listResumeVersionsMock: vi.fn(),
+    listRunsMock: vi.fn(),
+    listApplicationsMock: vi.fn(),
+    createRunMock: vi.fn(),
+    invokeRunMock: vi.fn(),
+    createApplicationMock: vi.fn(),
+    ApiErrorMock,
+  };
+});
+
+vi.mock("../api", () => ({
+  getJob: getJobMock,
+  listMasterResumes: listMasterResumesMock,
+  listEvidenceBanks: listEvidenceBanksMock,
+  listResumeVersions: listResumeVersionsMock,
+  listRuns: listRunsMock,
+  listApplications: listApplicationsMock,
+  createRun: createRunMock,
+  invokeRun: invokeRunMock,
+  createApplication: createApplicationMock,
+  ApiError: ApiErrorMock,
+}));
+
+import { JobDetailPage } from "../pages/JobDetailPage";
+
+function renderJob(jobId: string) {
+  return render(
+    <MemoryRouter initialEntries={[`/jobs/${jobId}`]}>
+      <Routes>
+        <Route path="/jobs/:jobId" element={<JobDetailPage />} />
+        <Route path="/runs/:runId" element={<div>run detail stub</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+const job = {
+  id: "job-1",
+  source_platform: "linkedin",
+  external_url: null,
+  external_job_id: null,
+  company: "Acme Corp",
+  title: "Senior Engineer",
+  location: null,
+  description_text: "We are hiring. Build great things.",
+  application_method: null,
+  created_from_capture_id: null,
+  created_at: "2026-05-22T10:00:00Z",
+  updated_at: "2026-05-22T10:00:00Z",
+};
+
+const resume = {
+  id: "resume-1",
+  name: "Generalist",
+  source_path: null,
+  content_markdown: "# Calvin",
+  created_at: "2026-05-22T10:00:00Z",
+  updated_at: "2026-05-22T10:00:00Z",
+};
+
+describe("JobDetailPage five-step workspace", () => {
+  beforeEach(() => {
+    getJobMock.mockResolvedValue(job);
+    listMasterResumesMock.mockResolvedValue([resume]);
+    listEvidenceBanksMock.mockResolvedValue([]);
+    listResumeVersionsMock.mockResolvedValue([]);
+    listRunsMock.mockResolvedValue([]);
+    listApplicationsMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders all five step headings in workflow order", async () => {
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const headings = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+
+    expect(headings).toEqual([
+      "Read the job description",
+      "Choose resume source",
+      "Generate a draft",
+      "Review and approve drafts",
+      "Send your application",
+    ]);
+  });
+
+  it("exposes the job description as a clickable toggle button", async () => {
+    const user = userEvent.setup();
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: /read job description/i,
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByText(/build great things/i),
+    ).not.toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/build great things/i)).toBeInTheDocument();
+  });
+
+  it("creates and invokes a run as one user action when clicking Generate draft", async () => {
+    const user = userEvent.setup();
+    createRunMock.mockResolvedValue({
+      id: "run-new",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      evidence_bank_id: null,
+      run_dir: "runs/run-new",
+      status: "created",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T12:00:00Z",
+      started_at: null,
+      completed_at: null,
+      error_message: null,
+    });
+    invokeRunMock.mockResolvedValue({
+      id: "run-new",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      evidence_bank_id: null,
+      run_dir: "runs/run-new",
+      status: "running",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T12:00:00Z",
+      started_at: "2026-05-22T12:00:01Z",
+      completed_at: null,
+      error_message: null,
+    });
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^generate draft$/i }),
+    );
+
+    await waitFor(() =>
+      expect(createRunMock).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(invokeRunMock).toHaveBeenCalledWith("run-new"));
+    expect(invokeRunMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the needs-import state when a completed run has no matching ResumeVersion", async () => {
+    listRunsMock.mockResolvedValue([
+      {
+        id: "run-completed",
+        job_id: "job-1",
+        master_resume_id: "resume-1",
+        evidence_bank_id: null,
+        run_dir: "runs/run-completed",
+        status: "completed",
+        prompt_hash: null,
+        input_hash: null,
+        output_hash: null,
+        created_at: "2026-05-22T13:00:00Z",
+        started_at: "2026-05-22T13:00:01Z",
+        completed_at: "2026-05-22T13:05:00Z",
+        error_message: null,
+      },
+    ]);
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderJob("job-1");
+
+    const generateStep = await screen.findByRole("region", {
+      name: /step 3: generate a draft/i,
+    });
+
+    const runLink = within(generateStep).getByRole("link", {
+      name: /draft ready to review/i,
+    });
+    expect(runLink).toHaveAttribute("href", "/runs/run-completed");
+  });
+});

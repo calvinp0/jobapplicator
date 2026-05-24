@@ -783,6 +783,116 @@ button[type="submit"]:disabled,
   white-space: pre-wrap;
 }
 
+/* ----- Job workspace steps ----- */
+
+.workspace-steps {
+  list-style: none;
+  counter-reset: workspace-step;
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.workspace-steps > li {
+  display: block;
+}
+
+.workspace-step {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6);
+  box-shadow: var(--card-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workspace-step-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+}
+
+.workspace-step-index {
+  background: var(--accent);
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.workspace-step-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.workspace-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.workspace-step-body > p {
+  margin: 0;
+}
+
+.workspace-step-help {
+  color: var(--muted-fg);
+  font-size: 13px;
+}
+
+.workspace-step-status {
+  font-weight: 500;
+  color: var(--content-fg);
+}
+
+.workspace-description-toggle {
+  align-self: flex-start;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-description-toggle:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.workspace-description-toggle[aria-expanded="true"] {
+  background: var(--accent);
+  color: white;
+}
+
+.workspace-run-status {
+  color: var(--muted-fg);
+  font-size: 13px;
+}
+
+.workspace-run-meta {
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+
+.workspace-application-list {
+  margin-top: var(--space-2);
+}
+
 /* ----- Stage track ----- */
 
 .job-status-track {

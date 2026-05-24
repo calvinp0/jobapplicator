@@ -11,6 +11,7 @@ const {
   listRunsMock,
   listApplicationsMock,
   createRunMock,
+  invokeRunMock,
   createApplicationMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
@@ -32,6 +33,7 @@ const {
     listRunsMock: vi.fn(),
     listApplicationsMock: vi.fn(),
     createRunMock: vi.fn(),
+    invokeRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
     ApiErrorMock,
   };
@@ -45,6 +47,7 @@ vi.mock("../api", () => ({
   listRuns: listRunsMock,
   listApplications: listApplicationsMock,
   createRun: createRunMock,
+  invokeRun: invokeRunMock,
   createApplication: createApplicationMock,
   ApiError: ApiErrorMock,
 }));
@@ -101,9 +104,10 @@ const pendingVersion = {
   id: "version-pending",
   approved_at: null,
   version_number: 2,
+  created_at: "2026-05-22T13:00:00Z",
 };
 
-describe("JobDetailPage Submit this job section", () => {
+describe("JobDetailPage step 5 — Send your application", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
     listMasterResumesMock.mockResolvedValue([]);
@@ -116,26 +120,29 @@ describe("JobDetailPage Submit this job section", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the gating message when no approved version exists", async () => {
+  it("shows the workflow-language gating copy when no approved draft exists", async () => {
     listResumeVersionsMock.mockResolvedValue([pendingVersion]);
 
     renderJob("job-1");
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /^submit this job$/i }),
+        screen.getByRole("heading", {
+          level: 3,
+          name: /send your application/i,
+        }),
       ).toBeInTheDocument(),
     );
 
     expect(
-      screen.getByText(/approve a resume version first/i),
+      screen.getByText(/pick an approved draft on the job page first/i),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /create application/i }),
+      screen.queryByRole("button", { name: /start application/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("creates an application from an approved version and navigates", async () => {
+  it("creates an application from an approved draft and navigates", async () => {
     const user = userEvent.setup();
     listResumeVersionsMock.mockResolvedValue([approvedVersion, pendingVersion]);
     createApplicationMock.mockResolvedValue({
@@ -152,16 +159,19 @@ describe("JobDetailPage Submit this job section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /^submit this job$/i }),
+        screen.getByRole("heading", {
+          level: 3,
+          name: /send your application/i,
+        }),
       ).toBeInTheDocument(),
     );
 
-    const createButtons = screen.getAllByRole("button", {
-      name: /create application/i,
+    const startButtons = screen.getAllByRole("button", {
+      name: /start application/i,
     });
-    expect(createButtons).toHaveLength(1);
+    expect(startButtons).toHaveLength(1);
 
-    await user.click(createButtons[0]);
+    await user.click(startButtons[0]);
 
     await waitFor(() =>
       expect(createApplicationMock).toHaveBeenCalledWith({
@@ -203,11 +213,14 @@ describe("JobDetailPage Submit this job section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 4, name: /applications/i }),
+        screen.getByRole("heading", {
+          level: 3,
+          name: /send your application/i,
+        }),
       ).toBeInTheDocument(),
     );
 
-    const link = screen.getByRole("link", { name: /app-1/i });
+    const link = screen.getByRole("link", { name: /application opened/i });
     expect(link).toHaveAttribute("href", "/applications/app-1");
 
     expect(
@@ -215,7 +228,7 @@ describe("JobDetailPage Submit this job section", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides Create application buttons when a submitted application exists", async () => {
+  it("hides Start application buttons when a Sent application exists", async () => {
     listResumeVersionsMock.mockResolvedValue([approvedVersion]);
     listApplicationsMock.mockResolvedValue([
       {
@@ -233,19 +246,16 @@ describe("JobDetailPage Submit this job section", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 3, name: /^submit this job$/i }),
+        screen.getByRole("heading", {
+          level: 3,
+          name: /send your application/i,
+        }),
       ).toBeInTheDocument(),
     );
 
     expect(
-      screen.queryByRole("button", { name: /create application/i }),
+      screen.queryByRole("button", { name: /start application/i }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/already has a submitted application/i),
-    ).toBeInTheDocument();
-
-    const track = screen.getByTestId("job-status-track");
-    const active = track.querySelector(".job-status-step-active");
-    expect(active?.textContent).toMatch(/submitted/i);
+    expect(screen.getByText(/^sent on /i)).toBeInTheDocument();
   });
 });

@@ -121,12 +121,14 @@ const newRun = {
   error_message: null,
 };
 
-describe("JobDetailPage generate resume flow", () => {
+const invokedRun = { ...newRun, status: "running" };
+
+describe("JobDetailPage generate draft flow", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
     listMasterResumesMock.mockResolvedValue([resume]);
     listEvidenceBanksMock.mockResolvedValue([evidenceBank]);
-    getRunMock.mockResolvedValue(newRun);
+    getRunMock.mockResolvedValue(invokedRun);
     listCapturesMock.mockResolvedValue([]);
     listResumeVersionsMock.mockResolvedValue([]);
     listRunsMock.mockResolvedValue([]);
@@ -137,9 +139,10 @@ describe("JobDetailPage generate resume flow", () => {
     vi.clearAllMocks();
   });
 
-  it("creates a run and navigates to the run page", async () => {
+  it("creates and invokes a run in one click and navigates to the run page", async () => {
     const user = userEvent.setup();
     createRunMock.mockResolvedValue(newRun);
+    invokeRunMock.mockResolvedValue(invokedRun);
 
     renderJob("job-1");
 
@@ -158,7 +161,9 @@ describe("JobDetailPage generate resume flow", () => {
       "bank-1",
     );
 
-    await user.click(screen.getByRole("button", { name: /generate resume/i }));
+    await user.click(
+      screen.getByRole("button", { name: /^generate draft$/i }),
+    );
 
     await waitFor(() =>
       expect(createRunMock).toHaveBeenCalledWith({
@@ -166,6 +171,9 @@ describe("JobDetailPage generate resume flow", () => {
         master_resume_id: "resume-1",
         evidence_bank_id: "bank-1",
       }),
+    );
+    await waitFor(() =>
+      expect(invokeRunMock).toHaveBeenCalledWith("run-1"),
     );
     await waitFor(() =>
       expect(
@@ -187,11 +195,14 @@ describe("JobDetailPage generate resume flow", () => {
       ).toBeInTheDocument(),
     );
 
-    await user.click(screen.getByRole("button", { name: /generate resume/i }));
+    await user.click(
+      screen.getByRole("button", { name: /^generate draft$/i }),
+    );
 
     expect(
       await screen.findByText(/pick a master resume/i),
     ).toBeInTheDocument();
     expect(createRunMock).not.toHaveBeenCalled();
+    expect(invokeRunMock).not.toHaveBeenCalled();
   });
 });
