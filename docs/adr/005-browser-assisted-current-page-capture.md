@@ -26,6 +26,27 @@ The user must confirm captured job data before resume generation.
 
 LinkedIn-specific parsing must stay isolated from the core backend.
 
+### Clarification: Capture → Job vs Job → Application vs Resume Generation
+
+"User must confirm captured job data" applies to resume generation and application creation, not to creating a Job row.
+
+A complete browser-extension capture (non-empty `title`, `company`, `url`, and `description`) may be auto-confirmed into a Job record without an extra manual confirmation step. This is allowed because:
+
+- the user explicitly initiated the capture from the extension
+- the extension surfaces the captured fields to the user before sending
+- creating a Job record is not the same as creating an Application
+- creating a Job record is not the same as generating a tailored resume
+- creating a Job record is not the same as submitting an application
+
+Explicit user action is still required for:
+
+- Job → tailored resume generation
+- Resume draft → user approval
+- Approved resume draft → Application creation
+- Application → submitted/sent state
+
+Incomplete or ambiguous captures (missing required fields) must continue to surface in the Captures review flow for manual confirmation before becoming a Job.
+
 ## Alternatives Considered
 
 - Manual paste only: simpler, but poor UX.
