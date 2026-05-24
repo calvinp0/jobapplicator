@@ -179,7 +179,28 @@ output/claim_audit.md
 
 Claude Code must not write outside the run directory.
 
-The backend validates outputs before importing them.
+The backend validates outputs at two boundaries:
+
+1. **Worker (post-invocation).** After the Claude subprocess exits with code
+   `0`, the worker checks that every required output file under `output/`
+   exists. If any are missing the run is marked `failed` with an
+   `error_message` that lists the missing files (e.g.
+   `expected output file missing: output/tailored_resume.docx, output/claim_audit.md`).
+   A run only reaches `completed` when the exit code is `0` *and* the full
+   output contract is satisfied. This prevents a successful-looking run from
+   silently producing no draft and surfacing the failure later at import time.
+2. **Import.** `/runs/{id}/import` re-validates the same files (and rejects
+   any that resolve outside the run directory) before creating a
+   `ResumeVersion` row and transitioning the run to `imported`.
+
+### Dry-run worker
+
+When `JOBAPPLY_CLAUDE_DRY_RUN=1`, the worker skips the Claude subprocess and
+writes placeholder versions of all four required output files itself
+(plain-text markdown for the `.md` files; a minimal valid Word package for
+`tailored_resume.docx`). A dry-run is therefore importable end-to-end, which
+makes it useful for local smoke testing of the run/import/approve flow
+without invoking Claude.
 
 
 ## Metadata

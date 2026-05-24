@@ -17,18 +17,28 @@ CANDIDATE_FILES = (
 )
 
 
+ALL_OUTPUTS = (
+    "tailored_resume.md",
+    "tailored_resume.docx",
+    "change_log.md",
+    "claim_audit.md",
+)
+
+
 def _write_fake_binary(
     tmp_path: Path,
     *,
     exit_code: int = 0,
+    write_outputs: tuple[str, ...] = ALL_OUTPUTS,
     extra_body: str = "",
 ) -> Path:
     """Write an executable Python script that imitates Claude Code.
 
     Writes a marker file (``where_am_i.txt``) recording the subprocess cwd,
-    a plausible output file, then exits with ``exit_code``.
+    the requested subset of ``output/`` files, then exits with ``exit_code``.
     """
-    binary = tmp_path / f"fake_claude_{exit_code}"
+    binary = tmp_path / f"fake_claude_{exit_code}_{'_'.join(write_outputs) or 'none'}"
+    outputs_repr = repr(list(write_outputs))
     body = textwrap.dedent(
         f"""\
         #!{sys.executable}
@@ -42,8 +52,8 @@ def _write_fake_binary(
         (cwd / "where_am_i.txt").write_text(str(cwd) + "\\n", encoding="utf-8")
         out = cwd / "output"
         out.mkdir(parents=True, exist_ok=True)
-        (out / "tailored_resume.md").write_text("# tailored resume\\n", encoding="utf-8")
-        (out / "change_log.md").write_text("# change log\\n", encoding="utf-8")
+        for name in {outputs_repr}:
+            (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
         {extra_body}
         sys.exit({exit_code})
         """
@@ -117,8 +127,9 @@ def test_invoke_run_success_transitions_status(client, tmp_path, monkeypatch):
     log_text = log_path.read_text(encoding="utf-8")
     assert "fake claude running in" in log_text
 
-    # Output files Claude was supposed to write.
-    assert (run_dir / "output" / "tailored_resume.md").is_file()
+    # All required output files Claude was supposed to write.
+    for name in ALL_OUTPUTS:
+        assert (run_dir / "output" / name).is_file()
 
 
 def test_invoke_run_failure_records_error(client, tmp_path, monkeypatch):
@@ -201,8 +212,69 @@ def test_invoke_run_dry_run_skips_subprocess(client, tmp_path, monkeypatch):
     assert body["completed_at"] is not None
     assert body["error_message"] is None
 
-    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    run_dir = Path(body["run_dir"])
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "dry-run" in log_text
+
+    # Dry-run must populate the full output contract so the run is importable.
+    for name in ALL_OUTPUTS:
+        assert (run_dir / "output" / name).is_file(), f"missing dry-run output: {name}"
+
+    # The placeholder docx must be a real zip (Word package) so the open-file
+    # flow can hand it to the host application without a corrupt-file error.
+    import zipfile
+
+    docx = run_dir / "output" / "tailored_resume.docx"
+    assert zipfile.is_zipfile(docx)
+    with zipfile.ZipFile(docx) as zf:
+        names = set(zf.namelist())
+    assert {"[Content_Types].xml", "_rels/.rels", "word/document.xml"} <= names
+
+
+def test_invoke_run_zero_exit_with_missing_outputs_marks_failed(
+    client, tmp_path, monkeypatch
+):
+    """Claude exit code 0 is not enough — the output contract must be satisfied."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    # Subprocess "succeeds" but only writes one of the four required files.
+    binary = _write_fake_binary(
+        tmp_path,
+        exit_code=0,
+        write_outputs=("tailored_resume.md",),
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["status"] == "failed"
+    assert body["completed_at"] is not None
+    message = body["error_message"]
+    assert "expected output file missing" in message
+    # All three missing files must be named so the user can see what went wrong.
+    for missing in (
+        "output/tailored_resume.docx",
+        "output/change_log.md",
+        "output/claim_audit.md",
+    ):
+        assert missing in message, f"{missing!r} not in {message!r}"
+    # The one file that was written must NOT be listed as missing.
+    assert "output/tailored_resume.md" not in message
+
+
+def test_invoke_run_zero_exit_with_all_outputs_marks_completed(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["error_message"] is None
 
 
 def test_invoke_run_missing_prompt_marks_failed(client, tmp_path, monkeypatch):
