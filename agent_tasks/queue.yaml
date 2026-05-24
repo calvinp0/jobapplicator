@@ -593,3 +593,146 @@ tasks:
       - "frontend/src/test/**"
       - "agent_tasks/032-frontend-visual-cockpit-redesign.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "033-frontend-workflow-language"
+    title: "Add shared workflow language and error helpers"
+    file: "agent_tasks/033-frontend-workflow-language.md"
+    branch: "agent/033-frontend-workflow-language"
+    worktree: "agent-033-frontend-workflow-language"
+    status: "ready"
+    depends_on:
+      - "032-frontend-visual-cockpit-redesign"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/lib/workflow.ts"
+      - "frontend/src/lib/api-errors.ts"
+      - "frontend/src/pages/DashboardPage.tsx"
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/test/workflow.test.ts"
+      - "frontend/src/test/apiErrors.test.ts"
+      - "frontend/src/test/dashboardPage.test.tsx"
+      - "frontend/src/test/settingsPage.test.tsx"
+      - "agent_tasks/033-frontend-workflow-language.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "034-frontend-job-workspace-stepper"
+    title: "Redesign JobDetailPage as five-step workspace"
+    file: "agent_tasks/034-frontend-job-workspace-stepper.md"
+    branch: "agent/034-frontend-job-workspace-stepper"
+    worktree: "agent-034-frontend-job-workspace-stepper"
+    status: "planned"
+    depends_on:
+      - "033-frontend-workflow-language"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/jobDetailApply.test.tsx"
+      - "frontend/src/test/jobDetailResumeVersions.test.tsx"
+      - "frontend/src/test/generateResume.test.tsx"
+      - "frontend/src/test/jobDetailWorkspace.test.tsx"
+      - "agent_tasks/034-frontend-job-workspace-stepper.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "035-frontend-tailoring-progress"
+    title: "Poll runs and parse import errors"
+    file: "agent_tasks/035-frontend-tailoring-progress.md"
+    branch: "agent/035-frontend-tailoring-progress"
+    worktree: "agent-035-frontend-tailoring-progress"
+    status: "planned"
+    depends_on:
+      - "034-frontend-job-workspace-stepper"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/runDetailPage.test.tsx"
+      - "frontend/src/test/runDetailPolling.test.tsx"
+      - "frontend/src/test/jobDetailWorkspace.test.tsx"
+      - "agent_tasks/035-frontend-tailoring-progress.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "036-frontend-resume-draft-review"
+    title: "Rename resume versions to drafts in review UI"
+    file: "agent_tasks/036-frontend-resume-draft-review.md"
+    branch: "agent/036-frontend-resume-draft-review"
+    worktree: "agent-036-frontend-resume-draft-review"
+    status: "planned"
+    depends_on:
+      - "034-frontend-job-workspace-stepper"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ResumeVersionDetailPage.tsx"
+      - "frontend/src/pages/ApplicationDetailPage.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/resumeVersionDetailPage.test.tsx"
+      - "frontend/src/test/applicationDetailPage.test.tsx"
+      - "agent_tasks/036-frontend-resume-draft-review.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "037-frontend-application-submit-language"
+    title: "Polish application submit wording"
+    file: "agent_tasks/037-frontend-application-submit-language.md"
+    branch: "agent/037-frontend-application-submit-language"
+    worktree: "agent-037-frontend-application-submit-language"
+    status: "planned"
+    depends_on:
+      - "036-frontend-resume-draft-review"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ApplicationDetailPage.tsx"
+      - "frontend/src/pages/ApplicationsPage.tsx"
+      - "frontend/src/test/applicationDetailPage.test.tsx"
+      - "frontend/src/test/applicationsPage.test.tsx"
+      - "agent_tasks/037-frontend-application-submit-language.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "038-frontend-settings-cards"
+    title: "Redesign Settings as cards with collapsed forms"
+    file: "agent_tasks/038-frontend-settings-cards.md"
+    branch: "agent/038-frontend-settings-cards"
+    worktree: "agent-038-frontend-settings-cards"
+    status: "planned"
+    depends_on:
+      - "033-frontend-workflow-language"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/settingsPage.test.tsx"
+      - "agent_tasks/038-frontend-settings-cards.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "039-revision-feedback-flow"
+    title: "Add revision feedback flow for drafts"
+    file: "agent_tasks/039-revision-feedback-flow.md"
+    branch: "agent/039-revision-feedback-flow"
+    worktree: "agent-039-revision-feedback-flow"
+    status: "blocked"
+    depends_on:
+      - "036-frontend-resume-draft-review"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ResumeVersionDetailPage.tsx"
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/039-revision-feedback-flow.md"
+      - "agent_tasks/queue.yaml"
