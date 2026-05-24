@@ -918,7 +918,7 @@ tasks:
     file: "agent_tasks/049-enforce-tailoring-output-contract.md"
     branch: "agent/049-enforce-tailoring-output-contract"
     worktree: "agent-049-enforce-tailoring-output-contract"
-    status: "ready"
+    status: "done"
     depends_on:
       - "048-tailoring-progress-and-import-failure-ux"
     verification:
