@@ -225,6 +225,32 @@ describe("ApplicationDetailPage", () => {
         name: /application — senior engineer — acme corp/i,
       }),
     ).toBeInTheDocument();
+
+    // Resume version link uses draft language, never "Version N".
+    const versionLink = screen.getByRole("link", {
+      name: /draft 2 \(approved\)/i,
+    });
+    expect(versionLink).toHaveAttribute(
+      "href",
+      "/resume-versions/version-1",
+    );
+    expect(screen.queryByText(/Version 2/i)).toBeNull();
+  });
+
+  it("renders the linked resume draft as 'Draft N (Awaiting review)' when pending", async () => {
+    getApplicationMock.mockResolvedValue({
+      ...applicationWithApprovedVersion,
+    });
+    getResumeVersionMock.mockResolvedValue(pendingVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+
+    renderApp("app-1");
+
+    const link = await screen.findByRole("link", {
+      name: /draft 2 \(awaiting review\)/i,
+    });
+    expect(link).toHaveAttribute("href", "/resume-versions/version-1");
+    expect(screen.queryByText(/Version 2/i)).toBeNull();
   });
 
   it("renders summary fields by default and hides provenance behind Advanced details", async () => {

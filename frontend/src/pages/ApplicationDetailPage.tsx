@@ -15,6 +15,7 @@ import type {
   Job,
   ResumeVersion,
 } from "../api";
+import { draftLabel, draftStatusLabel } from "../lib/workflow";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
@@ -190,9 +191,9 @@ export function ApplicationDetailPage() {
             <Link
               to={`/resume-versions/${application.resume_version_id}`}
             >
-              {`Version ${version.version_number}${
-                version.approved_at ? " (approved)" : " (pending)"
-              }`}
+              {`${draftLabel(version.version_number - 1)} (${draftStatusLabel(
+                version.approved_at,
+              )})`}
             </Link>
           ) : (
             "—"
