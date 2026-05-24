@@ -9,6 +9,7 @@ const {
   listResumeVersionsMock,
   listRunsMock,
   listApplicationsMock,
+  listRevisionFeedbacksMock,
   createRunMock,
   invokeRunMock,
   createApplicationMock,
@@ -31,6 +32,7 @@ const {
     listResumeVersionsMock: vi.fn(),
     listRunsMock: vi.fn(),
     listApplicationsMock: vi.fn(),
+    listRevisionFeedbacksMock: vi.fn(),
     createRunMock: vi.fn(),
     invokeRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("../api", () => ({
   listResumeVersions: listResumeVersionsMock,
   listRuns: listRunsMock,
   listApplications: listApplicationsMock,
+  listRevisionFeedbacks: listRevisionFeedbacksMock,
   createRun: createRunMock,
   invokeRun: invokeRunMock,
   createApplication: createApplicationMock,
@@ -164,6 +167,7 @@ describe("JobDetailPage step 4 — Review and approve drafts", () => {
     listResumeVersionsMock.mockResolvedValue(versions);
     listRunsMock.mockResolvedValue([inFlightRun, importedRun, otherJobRun]);
     listApplicationsMock.mockResolvedValue([]);
+    listRevisionFeedbacksMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -219,6 +223,59 @@ describe("JobDetailPage step 4 — Review and approve drafts", () => {
     expect(
       screen.getByText(/no drafts yet/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows a 'revises Draft N' pointer for drafts produced by a revision run", async () => {
+    listRevisionFeedbacksMock.mockResolvedValue([
+      {
+        id: "rf-1",
+        job_id: "job-1",
+        source_resume_version_id: "version-1",
+        followup_claude_run_id: "run-2",
+        feedback_markdown: "Shorten.",
+        status: "used",
+        created_at: "2026-05-22T12:30:00Z",
+      },
+    ]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 3,
+          name: /review and approve drafts/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/^revises Draft 1$/)).toBeInTheDocument(),
+    );
+
+    // Draft 1 (the source) is not labeled as revising anything.
+    const draft1Item = screen
+      .getByRole("link", { name: /^draft 1$/i })
+      .closest("li");
+    expect(draft1Item).not.toBeNull();
+    expect(draft1Item?.textContent ?? "").not.toMatch(/revises/i);
+  });
+
+  it("does not render a 'revises' pointer when no revision feedback matches", async () => {
+    listRevisionFeedbacksMock.mockResolvedValue([]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 3,
+          name: /review and approve drafts/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByText(/revises Draft/i)).toBeNull();
   });
 
   it("shows the latest run's user-facing status inside step 3", async () => {

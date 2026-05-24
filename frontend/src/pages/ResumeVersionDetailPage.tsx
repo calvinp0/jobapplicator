@@ -1,15 +1,23 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import type { FormEvent } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
   approveResumeVersion,
   getJob,
   getResumeVersion,
   openResumeVersionFile,
+  submitRevisionFeedback,
 } from "../api";
 import type { Job, ResumeVersion } from "../api";
 import { draftLabel, draftStatusLabel } from "../lib/workflow";
 import { extractApiDetail } from "../lib/api-errors";
+
+const COMMON_ASK_OPTIONS: { key: string; label: string }[] = [
+  { key: "shorten", label: "Shorten" },
+  { key: "reorder_sections", label: "Reorder sections" },
+  { key: "emphasize_x_over_y", label: "Emphasize X over Y" },
+];
 
 function truncateHash(hash: string | null): string {
   if (!hash) return "—";
@@ -23,12 +31,19 @@ function formatTimestamp(value: string | null): string {
 
 export function ResumeVersionDetailPage() {
   const { versionId } = useParams<{ versionId: string }>();
+  const navigate = useNavigate();
   const [version, setVersion] = useState<ResumeVersion | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
   const [isOpening, setIsOpening] = useState(false);
+  const [revisionFormOpen, setRevisionFormOpen] = useState(false);
+  const [feedbackMarkdown, setFeedbackMarkdown] = useState("");
+  const [selectedFlags, setSelectedFlags] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   useEffect(() => {
     if (!versionId) return;
@@ -65,6 +80,37 @@ export function ResumeVersionDetailPage() {
       setActionError(extractApiDetail(err));
     } finally {
       setIsApproving(false);
+    }
+  }
+
+  async function handleSubmitRevisionFeedback(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    if (!versionId) return;
+    const trimmed = feedbackMarkdown.trim();
+    if (!trimmed) return;
+    setIsSubmittingFeedback(true);
+    setActionError(null);
+    const activeFlags = Object.entries(selectedFlags)
+      .filter(([, on]) => on)
+      .reduce<Record<string, boolean>>((acc, [key]) => {
+        acc[key] = true;
+        return acc;
+      }, {});
+    const body =
+      Object.keys(activeFlags).length > 0
+        ? { feedback_markdown: trimmed, structured_flags: activeFlags }
+        : { feedback_markdown: trimmed };
+    try {
+      const feedback = await submitRevisionFeedback(versionId, body);
+      if (feedback.followup_claude_run_id) {
+        navigate(`/runs/${feedback.followup_claude_run_id}`);
+      }
+    } catch (err: unknown) {
+      setActionError(extractApiDetail(err));
+    } finally {
+      setIsSubmittingFeedback(false);
     }
   }
 
@@ -155,15 +201,72 @@ export function ResumeVersionDetailPage() {
             Approved ✓
           </span>
         ) : (
-          <button
-            type="button"
-            onClick={handleApprove}
-            disabled={isApproving}
-          >
-            {isApproving ? "Approving…" : "Approve draft"}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={handleApprove}
+              disabled={isApproving}
+            >
+              {isApproving ? "Approving…" : "Approve draft"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRevisionFormOpen((open) => !open)}
+              aria-expanded={revisionFormOpen}
+              aria-controls="revision-feedback-form"
+            >
+              Request revisions
+            </button>
+          </>
         )}
       </div>
+
+      {!approved && revisionFormOpen ? (
+        <form
+          id="revision-feedback-form"
+          className="revision-feedback-form"
+          onSubmit={handleSubmitRevisionFeedback}
+        >
+          <label className="field">
+            <span>What should change?</span>
+            <textarea
+              value={feedbackMarkdown}
+              onChange={(e) => setFeedbackMarkdown(e.target.value)}
+              rows={6}
+              required
+              placeholder="Describe the changes you want for the next draft."
+            />
+          </label>
+          <fieldset className="revision-feedback-flags">
+            <legend>Common asks (optional)</legend>
+            {COMMON_ASK_OPTIONS.map((opt) => (
+              <label key={opt.key} className="revision-feedback-flag">
+                <input
+                  type="checkbox"
+                  checked={!!selectedFlags[opt.key]}
+                  onChange={(e) =>
+                    setSelectedFlags((prev) => ({
+                      ...prev,
+                      [opt.key]: e.target.checked,
+                    }))
+                  }
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </fieldset>
+          <div className="revision-feedback-actions">
+            <button
+              type="submit"
+              disabled={
+                isSubmittingFeedback || feedbackMarkdown.trim().length === 0
+              }
+            >
+              {isSubmittingFeedback ? "Submitting…" : "Submit revision request"}
+            </button>
+          </div>
+        </form>
+      ) : null}
 
       {actionError ? (
         <p role="alert" className="error">

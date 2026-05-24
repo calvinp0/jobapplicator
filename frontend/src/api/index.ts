@@ -12,6 +12,8 @@ import type {
   MasterResume,
   MasterResumeCreate,
   ResumeVersion,
+  RevisionFeedback,
+  RevisionFeedbackCreate,
 } from "./types";
 
 export { API_BASE, ApiError } from "./client";
@@ -28,6 +30,8 @@ export type {
   MasterResume,
   MasterResumeCreate,
   ResumeVersion,
+  RevisionFeedback,
+  RevisionFeedbackCreate,
 };
 
 export function getHealth(): Promise<{ status: string }> {
@@ -119,6 +123,20 @@ export function openResumeVersionFile(versionId: string): Promise<void> {
     method: "POST",
     body: { resume_version_id: versionId },
   });
+}
+
+export function submitRevisionFeedback(
+  versionId: string,
+  body: RevisionFeedbackCreate,
+): Promise<RevisionFeedback> {
+  return apiRequest(`/resume-versions/${versionId}/revision-feedback`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function listRevisionFeedbacks(): Promise<RevisionFeedback[]> {
+  return apiRequest("/revision-feedbacks");
 }
 
 export function listApplications(): Promise<Application[]> {
