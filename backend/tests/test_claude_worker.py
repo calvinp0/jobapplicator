@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import textwrap
 from pathlib import Path
@@ -290,6 +291,81 @@ def test_invoke_run_missing_prompt_marks_failed(client, tmp_path, monkeypatch):
     body = resp.json()
     assert body["status"] == "failed"
     assert "tailoring prompt not found" in body["error_message"]
+
+
+def test_invoke_run_passes_default_permission_mode(client, tmp_path, monkeypatch):
+    """Worker must pass ``--permission-mode acceptEdits`` so writes auto-approve."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+    monkeypatch.delenv("JOBAPPLY_CLAUDE_PERMISSION_MODE", raising=False)
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    # The fake binary echoes its argv into the log via stdout.
+    assert "--permission-mode" in log_text
+    assert "acceptEdits" in log_text
+    # Worker-owned progress lines record the non-interactive launch context.
+    assert "jobapply: launching Claude Code with cwd=" in log_text
+    assert "jobapply: permission mode=acceptEdits" in log_text
+    assert "jobapply: output directory=" in log_text
+
+
+def test_invoke_run_permission_mode_env_override(client, tmp_path, monkeypatch):
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_PERMISSION_MODE", "plan")
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "--permission-mode plan" in log_text
+    assert "jobapply: permission mode=plan" in log_text
+    assert "jobapply: permission mode=acceptEdits" not in log_text
+
+
+def test_invoke_run_extra_args_still_passed(client, tmp_path, monkeypatch):
+    """Existing JOBAPPLY_CLAUDE_EXTRA_ARGS contract is preserved alongside permission-mode."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_EXTRA_ARGS", "--verbose")
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "--permission-mode" in log_text
+    assert "--verbose" in log_text
+
+
+def test_invoke_run_creates_output_dir_if_missing(client, tmp_path, monkeypatch):
+    """Worker must (re-)create output/ before launching so writes don't fail."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    output_dir = Path(run["run_dir"]) / "output"
+    assert output_dir.is_dir()
+    shutil.rmtree(output_dir)
+    assert not output_dir.exists()
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed", body
+    assert output_dir.is_dir()
+    for name in ALL_OUTPUTS:
+        assert (output_dir / name).is_file()
 
 
 def test_invoke_does_not_mutate_resume_versions(client, tmp_path, monkeypatch):

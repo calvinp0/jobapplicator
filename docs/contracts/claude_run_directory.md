@@ -179,6 +179,28 @@ output/claim_audit.md
 
 Claude Code must not write outside the run directory.
 
+### Runtime permission expectation
+
+The backend worker invokes Claude Code non-interactively. To let Claude write
+the output files without an operator-typed approval, the worker:
+
+- launches the subprocess with `cwd=<run_dir>` (Claude Code's default access
+  scope), so writes outside the run directory are not auto-permitted;
+- ensures `<run_dir>/output/` exists before launch, since the `acceptEdits`
+  permission mode only approves file edits — it does not create directories;
+- passes a permission-mode flag (default `acceptEdits`) so the
+  `Edit`/`Write` tool calls inside the run directory are auto-approved
+  rather than queued for an operator prompt.
+
+The permission mode is configurable via the `JOBAPPLY_CLAUDE_PERMISSION_MODE`
+environment variable. Local-dev defaults to `acceptEdits` so a draft run
+completes without manual approval. The mode is appended to the run log
+(`jobapply: permission mode=<mode>`) alongside the cwd and output directory,
+without exposing secrets.
+
+The worker does not pass `--add-dir` or otherwise broaden Claude's write scope
+beyond the run directory.
+
 The backend validates outputs at two boundaries:
 
 1. **Worker (post-invocation).** After the Claude subprocess exits with code

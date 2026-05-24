@@ -19,6 +19,14 @@ from .run_directory import EXPECTED_OUTPUTS
 CLAUDE_BINARY_ENV = "JOBAPPLY_CLAUDE_BINARY"
 CLAUDE_DRY_RUN_ENV = "JOBAPPLY_CLAUDE_DRY_RUN"
 CLAUDE_EXTRA_ARGS_ENV = "JOBAPPLY_CLAUDE_EXTRA_ARGS"
+CLAUDE_PERMISSION_MODE_ENV = "JOBAPPLY_CLAUDE_PERMISSION_MODE"
+
+# Default permission mode for the non-interactive backend run. ``acceptEdits``
+# auto-approves file writes inside the subprocess cwd (the run directory) so
+# Claude can produce ``output/`` without operator approval. The write scope is
+# bounded by ``cwd=<run_dir>``; Claude Code does not write outside cwd unless
+# given ``--add-dir``, which the worker does not pass.
+DEFAULT_PERMISSION_MODE = "acceptEdits"
 
 RUN_LOG_FILENAME = "run.log"
 PROMPT_RELPATH = Path("input") / "tailoring_prompt.md"
@@ -91,6 +99,11 @@ def is_dry_run() -> bool:
 def _extra_args() -> list[str]:
     raw = os.environ.get(CLAUDE_EXTRA_ARGS_ENV, "").strip()
     return raw.split() if raw else []
+
+
+def _permission_mode() -> str:
+    raw = os.environ.get(CLAUDE_PERMISSION_MODE_ENV, "").strip()
+    return raw or DEFAULT_PERMISSION_MODE
 
 
 def _now() -> datetime:
@@ -220,6 +233,13 @@ def invoke_claude_run(
             f"tailoring prompt not found: {prompt_file}",
         )
 
+    output_dir = run_dir / OUTPUT_DIRNAME
+    # Defensive: create_run_directory already mkdir's this, but ensure it
+    # exists at launch time so Claude can write outputs even if the directory
+    # was removed between create and invoke. The cwd=run_dir + acceptEdits
+    # combination only auto-approves writes; it does not create directories.
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     log_path = run_dir / RUN_LOG_FILENAME
     # Truncate any prior log so progress lines start fresh per invocation.
     log_path.write_text("", encoding="utf-8")
@@ -248,9 +268,18 @@ def invoke_claude_run(
         return run
 
     binary = claude_binary or default_claude_binary()
-    argv = [binary, str(PROMPT_RELPATH), *_extra_args()]
+    permission_mode = _permission_mode()
+    argv = [
+        binary,
+        "--permission-mode",
+        permission_mode,
+        str(PROMPT_RELPATH),
+        *_extra_args(),
+    ]
 
-    _append_progress(log_path, "launching Claude Code")
+    _append_progress(log_path, f"launching Claude Code with cwd={run_dir}")
+    _append_progress(log_path, f"permission mode={permission_mode}")
+    _append_progress(log_path, f"output directory={output_dir}")
     try:
         with log_path.open("a", encoding="utf-8") as log:
             log.write(
