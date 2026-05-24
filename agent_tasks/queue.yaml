@@ -758,3 +758,28 @@ tasks:
       - "agent_tasks/040-agentctl-review-verdicts-and-fix-flow.md"
       - "agent_tasks/queue.yaml"
       - ".agentctl/reviews/.gitkeep"
+
+  - id: "041-agentctl-work-autofix-and-journal"
+    title: "Add agentctl work autofix and journal"
+    file: "agent_tasks/041-agentctl-work-autofix-and-journal.md"
+    branch: "agent/041-agentctl-work-autofix-and-journal"
+    worktree: "agent-041-agentctl-work-autofix-and-journal"
+    status: "ready"
+    depends_on:
+      - "040-agentctl-review-verdicts-and-fix-flow"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh doctor"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh next"
+      - "scripts/agentctl.sh work --help"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/041-agentctl-work-autofix-and-journal.md"
+      - "agent_tasks/queue.yaml"
+      - ".agentctl/journal/.gitkeep"
+      - ".gitignore"
+      
