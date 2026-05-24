@@ -248,3 +248,11 @@ runs/*
 # git via .agent_plans/.gitkeep.
 .agent_plans/*
 !.agent_plans/.gitkeep
+
+# Agent work journals
+# scripts/agentctl.sh work writes per-invocation journal files under
+# .agentctl/journal/<timestamp>-<task-id>.md. They are local audit
+# trails and should not be committed; the directory itself is anchored
+# in git via .agentctl/journal/.gitkeep.
+.agentctl/journal/*
+!.agentctl/journal/.gitkeep
