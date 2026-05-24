@@ -123,3 +123,18 @@ export interface ApplicationEventCreate {
   notes?: string | null;
   source?: string | null;
 }
+
+export interface RevisionFeedbackCreate {
+  feedback_markdown: string;
+  structured_flags?: Record<string, unknown>;
+}
+
+export interface RevisionFeedback {
+  id: string;
+  job_id: string;
+  source_resume_version_id: string;
+  followup_claude_run_id: string | null;
+  feedback_markdown: string;
+  status: string;
+  created_at: string;
+}

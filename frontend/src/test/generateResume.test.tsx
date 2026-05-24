@@ -13,6 +13,7 @@ const {
   listResumeVersionsMock,
   listRunsMock,
   listApplicationsMock,
+  listRevisionFeedbacksMock,
   invokeRunMock,
   importRunMock,
   ApiErrorMock,
@@ -37,6 +38,7 @@ const {
     listResumeVersionsMock: vi.fn(),
     listRunsMock: vi.fn(),
     listApplicationsMock: vi.fn(),
+    listRevisionFeedbacksMock: vi.fn(),
     invokeRunMock: vi.fn(),
     importRunMock: vi.fn(),
     ApiErrorMock,
@@ -53,6 +55,7 @@ vi.mock("../api", () => ({
   listResumeVersions: listResumeVersionsMock,
   listRuns: listRunsMock,
   listApplications: listApplicationsMock,
+  listRevisionFeedbacks: listRevisionFeedbacksMock,
   invokeRun: invokeRunMock,
   importRun: importRunMock,
   ApiError: ApiErrorMock,
@@ -133,6 +136,7 @@ describe("JobDetailPage generate draft flow", () => {
     listResumeVersionsMock.mockResolvedValue([]);
     listRunsMock.mockResolvedValue([]);
     listApplicationsMock.mockResolvedValue([]);
+    listRevisionFeedbacksMock.mockResolvedValue([]);
   });
 
   afterEach(() => {

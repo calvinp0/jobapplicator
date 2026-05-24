@@ -10,6 +10,7 @@ import {
   listEvidenceBanks,
   listMasterResumes,
   listResumeVersions,
+  listRevisionFeedbacks,
   listRuns,
 } from "../api";
 import type {
@@ -19,6 +20,7 @@ import type {
   Job,
   MasterResume,
   ResumeVersion,
+  RevisionFeedback,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
 import {
@@ -81,6 +83,9 @@ export function JobDetailPage() {
   );
   const [runs, setRuns] = useState<ClaudeRun[] | null>(null);
   const [applications, setApplications] = useState<Application[] | null>(null);
+  const [revisionFeedbacks, setRevisionFeedbacks] = useState<
+    RevisionFeedback[]
+  >([]);
   const [selectedResumeId, setSelectedResumeId] = useState<string>("");
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -115,6 +120,15 @@ export function JobDetailPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setLoadError(extractApiDetail(err));
+      });
+    listRevisionFeedbacks()
+      .then((rows) => {
+        if (cancelled) return;
+        setRevisionFeedbacks(rows.filter((rf) => rf.job_id === jobId));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRevisionFeedbacks([]);
       });
     return () => {
       cancelled = true;
@@ -168,6 +182,29 @@ export function JobDetailPage() {
       a.created_at.localeCompare(b.created_at),
     );
   }, [resumeVersions]);
+
+  const revisionFollowupRunToSource = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const rf of revisionFeedbacks) {
+      if (rf.followup_claude_run_id) {
+        map.set(rf.followup_claude_run_id, rf.source_resume_version_id);
+      }
+    }
+    return map;
+  }, [revisionFeedbacks]);
+
+  const revisesLabelForDraft = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const draft of orderedDrafts) {
+      if (!draft.claude_run_id) continue;
+      const sourceId = revisionFollowupRunToSource.get(draft.claude_run_id);
+      if (!sourceId) continue;
+      const sourceIndex = orderedDrafts.findIndex((d) => d.id === sourceId);
+      if (sourceIndex < 0) continue;
+      labels.set(draft.id, `revises ${draftLabel(sourceIndex)}`);
+    }
+    return labels;
+  }, [orderedDrafts, revisionFollowupRunToSource]);
 
   const latestRun = useMemo(() => {
     if (!runs || runs.length === 0) return null;
@@ -392,16 +429,26 @@ export function JobDetailPage() {
               </p>
             ) : (
               <ul className="resume-version-list">
-                {orderedDrafts.map((v, index) => (
-                  <li key={v.id} className="resume-version-list-item">
-                    <Link to={`/resume-versions/${v.id}`}>
-                      {draftLabel(index)}
-                    </Link>
-                    <span className="resume-version-status">
-                      {draftStatusLabel(v.approved_at)}
-                    </span>
-                  </li>
-                ))}
+                {orderedDrafts.map((v, index) => {
+                  const revisesLabel = revisesLabelForDraft.get(v.id);
+                  return (
+                    <li key={v.id} className="resume-version-list-item">
+                      <span className="resume-version-draft-label">
+                        <Link to={`/resume-versions/${v.id}`}>
+                          {draftLabel(index)}
+                        </Link>
+                        {revisesLabel ? (
+                          <span className="resume-version-revises">
+                            {revisesLabel}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="resume-version-status">
+                        {draftStatusLabel(v.approved_at)}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </WorkspaceStep>

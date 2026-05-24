@@ -16,6 +16,7 @@ const {
   listResumeVersionsMock,
   listRunsMock,
   listApplicationsMock,
+  listRevisionFeedbacksMock,
   createRunMock,
   invokeRunMock,
   createApplicationMock,
@@ -40,6 +41,7 @@ const {
     listResumeVersionsMock: vi.fn(),
     listRunsMock: vi.fn(),
     listApplicationsMock: vi.fn(),
+    listRevisionFeedbacksMock: vi.fn(),
     createRunMock: vi.fn(),
     invokeRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
@@ -56,6 +58,7 @@ vi.mock("../api", () => ({
   listResumeVersions: listResumeVersionsMock,
   listRuns: listRunsMock,
   listApplications: listApplicationsMock,
+  listRevisionFeedbacks: listRevisionFeedbacksMock,
   createRun: createRunMock,
   invokeRun: invokeRunMock,
   createApplication: createApplicationMock,
@@ -109,6 +112,7 @@ describe("JobDetailPage five-step workspace", () => {
     listResumeVersionsMock.mockResolvedValue([]);
     listRunsMock.mockResolvedValue([]);
     listApplicationsMock.mockResolvedValue([]);
+    listRevisionFeedbacksMock.mockResolvedValue([]);
     // Defensive defaults: the auto-import polling hook may fire `importRun`
     // and `getRun` in tests where a run lands in `completed` state. We
     // stall both with never-resolving promises so individual tests can

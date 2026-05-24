@@ -715,6 +715,60 @@ button[type="submit"]:disabled,
   margin-top: var(--space-3);
 }
 
+.revision-feedback-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+.revision-feedback-flags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.revision-feedback-flags legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--content-fg);
+  padding: 0;
+  margin-bottom: var(--space-1);
+}
+
+.revision-feedback-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+  color: var(--content-fg);
+  cursor: pointer;
+}
+
+.revision-feedback-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.resume-version-draft-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.resume-version-revises {
+  color: var(--muted-fg);
+  font-size: 13px;
+  font-style: italic;
+}
+
 .resume-version-markdown {
   margin-top: var(--space-4);
 }

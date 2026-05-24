@@ -10,6 +10,7 @@ const {
   listResumeVersionsMock,
   listRunsMock,
   listApplicationsMock,
+  listRevisionFeedbacksMock,
   createRunMock,
   invokeRunMock,
   createApplicationMock,
@@ -32,6 +33,7 @@ const {
     listResumeVersionsMock: vi.fn(),
     listRunsMock: vi.fn(),
     listApplicationsMock: vi.fn(),
+    listRevisionFeedbacksMock: vi.fn(),
     createRunMock: vi.fn(),
     invokeRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
@@ -46,6 +48,7 @@ vi.mock("../api", () => ({
   listResumeVersions: listResumeVersionsMock,
   listRuns: listRunsMock,
   listApplications: listApplicationsMock,
+  listRevisionFeedbacks: listRevisionFeedbacksMock,
   createRun: createRunMock,
   invokeRun: invokeRunMock,
   createApplication: createApplicationMock,
@@ -114,6 +117,7 @@ describe("JobDetailPage step 5 — Send your application", () => {
     listEvidenceBanksMock.mockResolvedValue([]);
     listRunsMock.mockResolvedValue([]);
     listApplicationsMock.mockResolvedValue([]);
+    listRevisionFeedbacksMock.mockResolvedValue([]);
   });
 
   afterEach(() => {

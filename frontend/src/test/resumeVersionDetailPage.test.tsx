@@ -7,6 +7,7 @@ const {
   getResumeVersionMock,
   approveResumeVersionMock,
   openResumeVersionFileMock,
+  submitRevisionFeedbackMock,
   getJobMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
@@ -24,6 +25,7 @@ const {
     getResumeVersionMock: vi.fn(),
     approveResumeVersionMock: vi.fn(),
     openResumeVersionFileMock: vi.fn(),
+    submitRevisionFeedbackMock: vi.fn(),
     getJobMock: vi.fn(),
     ApiErrorMock,
   };
@@ -33,6 +35,7 @@ vi.mock("../api", () => ({
   getResumeVersion: getResumeVersionMock,
   approveResumeVersion: approveResumeVersionMock,
   openResumeVersionFile: openResumeVersionFileMock,
+  submitRevisionFeedback: submitRevisionFeedbackMock,
   getJob: getJobMock,
   ApiError: ApiErrorMock,
 }));
@@ -47,6 +50,7 @@ function renderVersion(versionId: string) {
           path="/resume-versions/:versionId"
           element={<ResumeVersionDetailPage />}
         />
+        <Route path="/runs/:runId" element={<div>run detail stub</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -319,6 +323,145 @@ describe("ResumeVersionDetailPage", () => {
       expect(openResumeVersionFileMock).toHaveBeenCalledWith("version-1"),
     );
     expect(openResumeVersionFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits revision feedback and navigates to the follow-up run", async () => {
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    submitRevisionFeedbackMock.mockResolvedValue({
+      id: "rf-1",
+      job_id: "job-1",
+      source_resume_version_id: "version-1",
+      followup_claude_run_id: "run-2",
+      feedback_markdown: "Please shorten the intro.",
+      status: "created",
+      created_at: "2026-05-22T13:30:00Z",
+    });
+
+    renderVersion("version-1");
+
+    const requestBtn = await screen.findByRole("button", {
+      name: /^request revisions$/i,
+    });
+
+    // The form is not visible until the action is invoked.
+    expect(
+      screen.queryByRole("textbox", { name: /what should change/i }),
+    ).toBeNull();
+
+    await user.click(requestBtn);
+
+    const textarea = screen.getByRole("textbox", {
+      name: /what should change/i,
+    });
+    const submitBtn = screen.getByRole("button", {
+      name: /^submit revision request$/i,
+    });
+
+    // Submit is disabled until the required field has content.
+    expect(submitBtn).toBeDisabled();
+
+    await user.type(textarea, "Please shorten the intro.");
+    await user.click(screen.getByLabelText(/^shorten$/i));
+
+    expect(submitBtn).toBeEnabled();
+
+    await user.click(submitBtn);
+
+    await waitFor(() =>
+      expect(submitRevisionFeedbackMock).toHaveBeenCalledWith("version-1", {
+        feedback_markdown: "Please shorten the intro.",
+        structured_flags: { shorten: true },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/run detail stub/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("omits structured_flags when no checkbox is ticked", async () => {
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    submitRevisionFeedbackMock.mockResolvedValue({
+      id: "rf-2",
+      job_id: "job-1",
+      source_resume_version_id: "version-1",
+      followup_claude_run_id: "run-3",
+      feedback_markdown: "Tighten the bullets.",
+      status: "created",
+      created_at: "2026-05-22T13:35:00Z",
+    });
+
+    renderVersion("version-1");
+
+    const requestBtn = await screen.findByRole("button", {
+      name: /^request revisions$/i,
+    });
+    await user.click(requestBtn);
+
+    await user.type(
+      screen.getByRole("textbox", { name: /what should change/i }),
+      "Tighten the bullets.",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /^submit revision request$/i }),
+    );
+
+    await waitFor(() => expect(submitRevisionFeedbackMock).toHaveBeenCalled());
+    const [, body] = submitRevisionFeedbackMock.mock.calls[0];
+    expect(body).toEqual({ feedback_markdown: "Tighten the bullets." });
+    expect("structured_flags" in body).toBe(false);
+  });
+
+  it("renders a parsed detail message when submitting revision feedback fails", async () => {
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    submitRevisionFeedbackMock.mockRejectedValue(
+      new ApiErrorMock(
+        "Request to /resume-versions/version-1/revision-feedback failed with status 422",
+        422,
+        { detail: "feedback_markdown must be non-empty." },
+      ),
+    );
+
+    renderVersion("version-1");
+
+    const requestBtn = await screen.findByRole("button", {
+      name: /^request revisions$/i,
+    });
+    await user.click(requestBtn);
+
+    await user.type(
+      screen.getByRole("textbox", { name: /what should change/i }),
+      "Something",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /^submit revision request$/i }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/feedback_markdown must be non-empty/i),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Request to \//i)).toBeNull();
+  });
+
+  it("hides the Request revisions button on an approved draft", async () => {
+    getResumeVersionMock.mockResolvedValue({ ...approvedVersion });
+
+    renderVersion("version-1");
+
+    await waitFor(() =>
+      expect(screen.getByText(/Approved on /i)).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /request revisions/i }),
+    ).toBeNull();
   });
 
   it("disables Open draft file when docx_path is null", async () => {
