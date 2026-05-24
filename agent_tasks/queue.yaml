@@ -721,7 +721,7 @@ tasks:
     file: "agent_tasks/039-revision-feedback-flow.md"
     branch: "agent/039-revision-feedback-flow"
     worktree: "agent-039-revision-feedback-flow"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "036-frontend-resume-draft-review"
       - "045-backend-revision-feedback-api"
@@ -879,7 +879,7 @@ tasks:
     file: "agent_tasks/047-unblock-frontend-revision-feedback.md"
     branch: "agent/047-unblock-frontend-revision-feedback"
     worktree: "agent-047-unblock-frontend-revision-feedback"
-    status: "ready"
+    status: "done"
     depends_on:
       - "045-backend-revision-feedback-api"
       - "046-runtime-prompt-revision-feedback"
