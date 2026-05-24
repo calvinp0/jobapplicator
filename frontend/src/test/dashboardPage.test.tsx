@@ -168,6 +168,59 @@ describe("DashboardPage", () => {
       (l) => l.getAttribute("href") === "/applications/app-1",
     );
     expect(appLink).toBeDefined();
+
+    expect(screen.getByText(/drafts approved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/resumes ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ready to apply/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/tailoring in progress/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders the Approved — ready to send stage label for jobs with an approved draft", async () => {
+    listJobsMock.mockResolvedValue([
+      {
+        id: "job-3",
+        source_platform: "linkedin",
+        external_url: null,
+        external_job_id: null,
+        company: "Gamma Co",
+        title: "Staff Engineer",
+        location: null,
+        description_text: "",
+        application_method: null,
+        created_from_capture_id: null,
+        created_at: "2026-05-22T08:00:00Z",
+        updated_at: "2026-05-22T08:00:00Z",
+      },
+    ]);
+    listApplicationsMock.mockResolvedValue([]);
+    listRunsMock.mockResolvedValue([]);
+    listResumeVersionsMock.mockResolvedValue([
+      {
+        id: "v-3",
+        job_id: "job-3",
+        master_resume_id: "mr-1",
+        claude_run_id: null,
+        version_number: 1,
+        content_markdown: null,
+        docx_path: null,
+        pdf_path: null,
+        content_hash: null,
+        prompt_hash: null,
+        source: "claude",
+        approved_at: "2026-05-22T09:00:00Z",
+        created_at: "2026-05-22T08:30:00Z",
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /application cockpit/i }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.getByText(/approved — ready to send/i)).toBeInTheDocument();
   });
 
   it("renders empty-state messages for every section when there is no data", async () => {
