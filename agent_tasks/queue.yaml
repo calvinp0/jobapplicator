@@ -643,7 +643,7 @@ tasks:
     file: "agent_tasks/035-frontend-tailoring-progress.md"
     branch: "agent/035-frontend-tailoring-progress"
     worktree: "agent-035-frontend-tailoring-progress"
-    status: "ready"
+    status: "done"
     depends_on:
       - "034-frontend-job-workspace-stepper"
     verification:
