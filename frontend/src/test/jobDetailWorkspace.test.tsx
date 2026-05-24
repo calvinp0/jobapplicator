@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -13,6 +19,8 @@ const {
   createRunMock,
   invokeRunMock,
   createApplicationMock,
+  getRunMock,
+  importRunMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -35,6 +43,8 @@ const {
     createRunMock: vi.fn(),
     invokeRunMock: vi.fn(),
     createApplicationMock: vi.fn(),
+    getRunMock: vi.fn(),
+    importRunMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -49,6 +59,8 @@ vi.mock("../api", () => ({
   createRun: createRunMock,
   invokeRun: invokeRunMock,
   createApplication: createApplicationMock,
+  getRun: getRunMock,
+  importRun: importRunMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -97,6 +109,13 @@ describe("JobDetailPage five-step workspace", () => {
     listResumeVersionsMock.mockResolvedValue([]);
     listRunsMock.mockResolvedValue([]);
     listApplicationsMock.mockResolvedValue([]);
+    // Defensive defaults: the auto-import polling hook may fire `importRun`
+    // and `getRun` in tests where a run lands in `completed` state. We
+    // stall both with never-resolving promises so individual tests can
+    // assert against the *initial* rendered state without racing the
+    // auto-import effect's state updates.
+    getRunMock.mockReturnValue(new Promise(() => {}));
+    importRunMock.mockReturnValue(new Promise(() => {}));
   });
 
   afterEach(() => {
@@ -235,5 +254,100 @@ describe("JobDetailPage five-step workspace", () => {
       name: /draft ready to review/i,
     });
     expect(runLink).toHaveAttribute("href", "/runs/run-completed");
+  });
+
+  it("updates step 3 from `Tailoring in progress` to `Draft ready to review` after the poller observes completed → imported", async () => {
+    const runningRun = {
+      id: "run-1",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      evidence_bank_id: null,
+      run_dir: "runs/run-1",
+      status: "running",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T13:00:00Z",
+      started_at: "2026-05-22T13:00:01Z",
+      completed_at: null,
+      error_message: null,
+    };
+    const completedRunRecord = {
+      ...runningRun,
+      status: "completed",
+      completed_at: "2026-05-22T13:05:00Z",
+    };
+    const importedRunRecord = {
+      ...completedRunRecord,
+      status: "imported",
+    };
+    const newVersion = {
+      id: "version-1",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      claude_run_id: "run-1",
+      version_number: 1,
+      content_markdown: "# Resume",
+      docx_path: "runs/run-1/output/resume.docx",
+      pdf_path: null,
+      content_hash: "abc",
+      prompt_hash: "p",
+      source: "claude_run",
+      approved_at: null,
+      created_at: "2026-05-22T13:06:00Z",
+    };
+
+    listRunsMock.mockResolvedValue([runningRun]);
+    listResumeVersionsMock.mockResolvedValue([]);
+    getRunMock.mockReset();
+    // First poll returns completed; second (post-import refresh) returns imported.
+    getRunMock
+      .mockResolvedValueOnce(completedRunRecord)
+      .mockResolvedValueOnce(importedRunRecord);
+    importRunMock.mockReset();
+    importRunMock.mockResolvedValue(newVersion);
+
+    // Fake timers must be active *before* render so the polling hook's
+    // setInterval is mocked, not native.
+    vi.useFakeTimers();
+    try {
+      renderJob("job-1");
+
+      // Flush the initial-load microtasks (Promise.all of mocked API calls).
+      await act(async () => {
+        for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      });
+
+      const generateStep = screen.getByRole("region", {
+        name: /step 3: generate a draft/i,
+      });
+      expect(
+        within(generateStep).getByText(/Tailoring in progress/i),
+      ).toBeInTheDocument();
+
+      // Advance one polling cycle. The poll observes `completed`; the
+      // auto-import effect then fires `importRun` and follows with a
+      // refetch that flips the run to `imported`.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      await act(async () => {
+        for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      });
+
+      expect(importRunMock).toHaveBeenCalledWith("run-1");
+
+      const step3After = screen.getByRole("region", {
+        name: /step 3: generate a draft/i,
+      });
+      expect(
+        within(step3After).getByText(/Draft ready to review/i),
+      ).toBeInTheDocument();
+      expect(
+        within(step3After).queryByText(/Tailoring in progress/i),
+      ).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
