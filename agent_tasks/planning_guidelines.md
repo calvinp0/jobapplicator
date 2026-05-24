@@ -19,10 +19,16 @@ The harness has three roles. Each one is a separate Claude Code session.
   single task within its `allowed_paths`. Commits locally with the task's
   required commit message. Does not push.
 - **Reviewer**. Invoked by `scripts/agentctl.sh review <task-id>`. Reads the
-  builder's commit and reports on scope, ADR compliance, tests, overbuild, and
-  unrelated changes. Default permission mode is read-only.
+  builder's commit and writes a structured review artifact at
+  `.agentctl/reviews/<task-id>.md` ending in exactly one verdict (see
+  "Review verdict semantics" below).
+- **Fixer**. Invoked by `scripts/agentctl.sh fix <task-id>` when a review
+  returns `REQUEST_CHANGES`, `REJECT`, or `BLOCKED`. Reads the latest
+  review artifact and addresses only its `Required fixes`, staying
+  within the task's `allowed_paths`.
 
-Planners must not perform builder or reviewer work in the same session.
+Planners must not perform builder, reviewer, or fixer work in the same
+session.
 
 ## What the planner may edit
 
@@ -212,6 +218,55 @@ prompt for each one.
 Planners do not need to mention permission propagation in generated task
 files; it is harness infrastructure. The symlinked settings file remains
 gitignored at every worktree level, so it never lands in a commit.
+
+## Review verdict semantics
+
+Reviewers (invoked by `scripts/agentctl.sh review <id>`) write a
+structured artifact at `.agentctl/reviews/<id>.md` whose front matter
+must contain exactly one verdict:
+
+```
+APPROVE              The task satisfies the spec. complete may proceed.
+APPROVE_WITH_NOTES   The task satisfies the spec. Notes are optional
+                     follow-ups and do not block completion.
+REQUEST_CHANGES      The task is close but misses required behavior,
+                     acceptance criteria, verification, scope, or tests.
+                     Must be fixed before completion.
+REJECT               The implementation is wrong enough that it should
+                     not be patched casually. Abort, reset, or rewrite.
+BLOCKED              The review could not decide because verification
+                     did not run, the worktree is dirty, the spec is
+                     ambiguous, dependencies are missing, or the task
+                     branch has no commit.
+```
+
+Mapping rules for planners writing review-related task language and for
+reviewers categorizing findings:
+
+- Minor caveats that do not affect the task's acceptance criteria are
+  `APPROVE_WITH_NOTES`. Put them in `Optional notes` so they do not
+  block completion.
+- Missing required behavior (or missing verification, or scope drift,
+  or thin/missing tests) is `REQUEST_CHANGES`. Put each item in
+  `Required fixes` as a concrete, actionable bullet.
+- Dirty task worktree or missing commit on the task branch is
+  `BLOCKED` unless the task explicitly allows that state (e.g. a
+  planning-only task with no code commits).
+- Implementation that is wrong enough that patching would be reckless
+  is `REJECT`. Do not soften REJECT into REQUEST_CHANGES; the operator
+  needs the signal.
+
+Planners do not need to add review-verdict guidance to every task file
+— this contract covers it for the whole project. Task files only need
+to specify their own acceptance criteria and verification commands
+clearly enough that the reviewer can decide.
+
+`scripts/agentctl.sh complete <id>` reads the latest artifact and
+refuses to mark the task `done` on `REQUEST_CHANGES`, `REJECT`,
+`BLOCKED`, or missing artifact (unless `--skip-review` is explicitly
+passed for the missing-artifact case). `scripts/agentctl.sh fix <id>`
+launches a follow-up Claude session that addresses only `Required
+fixes`. See `docs/contracts/agent_orchestration.md` for the full flow.
 
 ## Preflight check before dispatch
 
