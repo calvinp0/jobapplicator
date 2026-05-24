@@ -53,6 +53,14 @@ class JobCapture(Base):
     user_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
+    created_job: Mapped[Optional["Job"]] = relationship(
+        back_populates="source_capture", uselist=False
+    )
+
+    @property
+    def job_id(self) -> Optional[str]:
+        return self.created_job.id if self.created_job is not None else None
+
 
 class Job(Base):
     __tablename__ = "jobs"
@@ -72,6 +80,10 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+    source_capture: Mapped[Optional[JobCapture]] = relationship(
+        back_populates="created_job", foreign_keys=[created_from_capture_id]
     )
 
     claude_runs: Mapped[list["ClaudeRun"]] = relationship(back_populates="job", cascade="all, delete-orphan")

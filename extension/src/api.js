@@ -2,6 +2,18 @@
 // Kept separate from the parser so the parser stays free of fetch/chrome deps.
 
 export const DEFAULT_CAPTURE_ENDPOINT = "http://127.0.0.1:8000/captures";
+export const DEFAULT_FRONTEND_BASE = "http://localhost:5173";
+
+/**
+ * Build the frontend URL for a job workspace.
+ *
+ * @param {string} jobId
+ * @param {string} [base=DEFAULT_FRONTEND_BASE]
+ * @returns {string}
+ */
+export function jobWorkspaceUrl(jobId, base = DEFAULT_FRONTEND_BASE) {
+  return `${base}/jobs/${jobId}`;
+}
 
 /**
  * POST a normalized capture payload to the local backend.

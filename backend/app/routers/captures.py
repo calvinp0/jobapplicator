@@ -1,19 +1,69 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Job, JobCapture
-from ..schemas import JobCaptureCreate, JobCaptureRead, JobRead
+from ..schemas import (
+    JobCaptureCreate,
+    JobCaptureCreateResponse,
+    JobCaptureRead,
+    JobRead,
+)
 
 router = APIRouter(prefix="/captures", tags=["captures"])
 
 
-@router.post("", response_model=JobCaptureRead, status_code=status.HTTP_201_CREATED)
-def create_capture(payload: JobCaptureCreate, db: Session = Depends(get_db)) -> JobCapture:
+# Fields required for a capture to skip manual review and auto-confirm into a
+# Job. Location is intentionally excluded — remote roles legitimately omit it.
+_AUTO_CONFIRM_REQUIRED_FIELDS = ("title", "company", "external_url", "description_text")
+
+
+def _is_complete(capture: JobCapture) -> bool:
+    for field_name in _AUTO_CONFIRM_REQUIRED_FIELDS:
+        value = getattr(capture, field_name, None)
+        if value is None or not str(value).strip():
+            return False
+    return True
+
+
+def _find_job_by_url(db: Session, external_url: Optional[str]) -> Optional[Job]:
+    if not external_url:
+        return None
+    return db.query(Job).filter(Job.external_url == external_url).first()
+
+
+def _job_from_capture(capture: JobCapture) -> Job:
+    assert capture.company is not None and capture.title is not None
+    return Job(
+        source_platform=capture.source_platform,
+        external_url=capture.external_url,
+        external_job_id=capture.external_job_id,
+        company=capture.company.strip(),
+        title=capture.title.strip(),
+        location=capture.location.strip() if capture.location else None,
+        description_text=capture.description_text.strip(),
+        application_method=(
+            capture.application_method.strip()
+            if capture.application_method
+            else None
+        ),
+        created_from_capture_id=capture.id,
+    )
+
+
+@router.post(
+    "",
+    response_model=JobCaptureCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_capture(
+    payload: JobCaptureCreate, db: Session = Depends(get_db)
+) -> JobCaptureCreateResponse:
     capture = JobCapture(
         source_platform=payload.source_platform,
         capture_method=payload.capture_method,
@@ -29,9 +79,41 @@ def create_capture(payload: JobCaptureCreate, db: Session = Depends(get_db)) -> 
         user_confirmed=False,
     )
     db.add(capture)
+    db.flush()
+
+    auto_confirmed = False
+    job_reused = False
+    job_id: Optional[str] = None
+
+    if _is_complete(capture):
+        existing = _find_job_by_url(db, capture.external_url)
+        if existing is not None:
+            # Same URL captured before — reuse the existing Job rather than
+            # producing a duplicate. We intentionally do not rewrite the
+            # original Job.created_from_capture_id; the FK stays pointed at
+            # whichever capture first promoted the URL.
+            capture.user_confirmed = True
+            job_id = existing.id
+            job_reused = True
+        else:
+            job = _job_from_capture(capture)
+            db.add(job)
+            db.flush()
+            capture.user_confirmed = True
+            job_id = job.id
+        auto_confirmed = True
+
     db.commit()
     db.refresh(capture)
-    return capture
+
+    return JobCaptureCreateResponse.model_validate(
+        {
+            **JobCaptureRead.model_validate(capture).model_dump(),
+            "job_id": job_id if job_id is not None else capture.job_id,
+            "auto_confirmed": auto_confirmed,
+            "job_reused": job_reused,
+        }
+    )
 
 
 @router.get("", response_model=list[JobCaptureRead])
@@ -76,6 +158,11 @@ def confirm_capture(capture_id: str, db: Session = Depends(get_db)) -> Job:
             .first()
         )
         if existing_job is None:
+            # Fall back to URL-based lookup for captures that were
+            # auto-confirmed against a pre-existing Job (dedup case) and
+            # therefore have no created_from_capture_id pointing at them.
+            existing_job = _find_job_by_url(db, capture.external_url)
+        if existing_job is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
@@ -105,21 +192,7 @@ def confirm_capture(capture_id: str, db: Session = Depends(get_db)) -> Job:
             },
         )
 
-    job = Job(
-        source_platform=capture.source_platform,
-        external_url=capture.external_url,
-        external_job_id=capture.external_job_id,
-        company=capture.company.strip(),
-        title=capture.title.strip(),
-        location=capture.location.strip() if capture.location else None,
-        description_text=capture.description_text.strip(),
-        application_method=(
-            capture.application_method.strip()
-            if capture.application_method
-            else None
-        ),
-        created_from_capture_id=capture.id,
-    )
+    job = _job_from_capture(capture)
 
     capture.user_confirmed = True
     db.add(job)

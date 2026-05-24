@@ -13,6 +13,7 @@ export interface JobCapture {
   captured_at: string;
   user_confirmed: boolean;
   created_at: string;
+  job_id: string | null;
 }
 
 export interface Job {

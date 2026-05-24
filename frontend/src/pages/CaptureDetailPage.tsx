@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, confirmCapture, getCapture } from "../api";
 import type { JobCapture } from "../api";
 
@@ -137,6 +137,16 @@ export function CaptureDetailPage() {
       <section className="capture-detail">
         <h2>Capture</h2>
         <p>Loading…</p>
+      </section>
+    );
+  }
+
+  if (capture.user_confirmed && capture.job_id) {
+    return (
+      <section className="capture-detail">
+        <h2>Capture</h2>
+        <p>Job created from this capture.</p>
+        <Link to={`/jobs/${capture.job_id}`}>Open job</Link>
       </section>
     );
   }

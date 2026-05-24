@@ -5,7 +5,11 @@
 // scraping (via the content script) and the only place we contact the
 // local backend.
 
-import { postCapture, DEFAULT_CAPTURE_ENDPOINT } from "./api.js";
+import {
+  postCapture,
+  DEFAULT_CAPTURE_ENDPOINT,
+  jobWorkspaceUrl,
+} from "./api.js";
 import { isLinkedInJobUrl } from "./parser.js";
 
 let lastPayload = null;
@@ -19,6 +23,22 @@ function setStatus(text, kind) {
   el.textContent = text;
   el.className = `status ${kind}`;
   el.hidden = false;
+  hideJobLink();
+}
+
+function hideJobLink() {
+  const el = $("job-link");
+  if (!el) return;
+  el.hidden = true;
+  el.removeAttribute("href");
+}
+
+function showJobLink(jobId) {
+  const el = $("job-link");
+  if (!el) return;
+  el.hidden = false;
+  el.href = jobWorkspaceUrl(jobId);
+  el.textContent = "Open job workspace";
 }
 
 function formatChars(n) {
@@ -110,7 +130,7 @@ async function sendToBackend() {
   try {
     const { status, body } = await postCapture(lastPayload);
     if (status >= 200 && status < 300) {
-      setStatus(`Saved capture ${body?.id ?? ""}`.trim(), "ok");
+      renderSendResult(body);
     } else {
       setStatus(`Backend rejected capture (HTTP ${status}).`, "err");
       $("send-btn").disabled = false;
@@ -118,6 +138,18 @@ async function sendToBackend() {
   } catch (err) {
     setStatus(`Network error: ${err.message}`, "err");
     $("send-btn").disabled = false;
+  }
+}
+
+function renderSendResult(body) {
+  const jobId = body?.job_id ?? null;
+  const autoConfirmed = body?.auto_confirmed === true;
+  if (autoConfirmed && jobId) {
+    const reused = body?.job_reused === true;
+    setStatus(reused ? "Job already exists." : "Job created.", "ok");
+    showJobLink(jobId);
+  } else {
+    setStatus(`Sent to backend. Review in Captures.`, "ok");
   }
 }
 

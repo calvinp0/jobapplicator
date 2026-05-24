@@ -43,6 +43,22 @@ class JobCaptureRead(_ORMModel):
     captured_at: datetime
     user_confirmed: bool
     created_at: datetime
+    job_id: Optional[str] = None
+
+
+class JobCaptureCreateResponse(JobCaptureRead):
+    """Response shape for POST /captures.
+
+    Extends JobCaptureRead so the extension can act on the auto-confirm
+    outcome without a follow-up round trip: ``auto_confirmed`` tells the
+    popup whether to surface an "Open job workspace" link, ``job_id`` is
+    populated for both freshly created and reused (dedup-by-url) jobs,
+    and ``job_reused`` distinguishes the two so the popup can say "Job
+    created" vs "Job already exists".
+    """
+
+    auto_confirmed: bool = False
+    job_reused: bool = False
 
 
 # ---- Job ----
