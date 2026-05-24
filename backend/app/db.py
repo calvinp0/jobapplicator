@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+def _default_database_url() -> str:
+    backend_dir = Path(__file__).resolve().parents[1]
+    db_path = backend_dir / "jobapply.db"
+    return f"sqlite:///{db_path}"
+
 
 def _database_url() -> str:
-    return os.environ.get("JOBAPPLY_DATABASE_URL", "sqlite:///./jobapply.db")
+    return os.environ.get("JOBAPPLY_DATABASE_URL", _default_database_url())
 
 
 engine = create_engine(

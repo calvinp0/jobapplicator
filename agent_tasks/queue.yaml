@@ -891,4 +891,24 @@ tasks:
       - "agent_tasks/039-revision-feedback-flow.md"
       - "agent_tasks/047-unblock-frontend-revision-feedback.md"
       - "agent_tasks/queue.yaml"
-
+  - id: "048-tailoring-progress-and-import-failure-ux"
+    title: "Fix tailoring progress and import failure UX"
+    file: "agent_tasks/048-tailoring-progress-and-import-failure-ux.md"
+    branch: "agent/048-tailoring-progress-and-import-failure-ux"
+    worktree: "agent-048-tailoring-progress-and-import-failure-ux"
+    status: "ready"
+    depends_on:
+      - "035-frontend-tailoring-progress"
+      - "039-revision-feedback-flow"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/lib/workflow.ts"
+      - "frontend/src/lib/api-errors.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/048-tailoring-progress-and-import-failure-ux.md"
+      - "agent_tasks/queue.yaml"
