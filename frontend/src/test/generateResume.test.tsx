@@ -149,10 +149,12 @@ describe("JobDetailPage generate draft flow", () => {
     vi.clearAllMocks();
   });
 
-  it("creates and invokes a run in one click and navigates to the run page", async () => {
+  it("creates and invokes a run in one click and stays on the Job page with live progress", async () => {
     const user = userEvent.setup();
     createRunMock.mockResolvedValue(newRun);
     invokeRunMock.mockResolvedValue(invokedRun);
+    // Stall getRun so the polling tick does not race the assertions.
+    getRunMock.mockReturnValue(new Promise(() => {}));
 
     renderJob("job-1");
 
@@ -185,12 +187,20 @@ describe("JobDetailPage generate draft flow", () => {
     await waitFor(() =>
       expect(invokeRunMock).toHaveBeenCalledWith("run-1"),
     );
+    // The user stays on the Job page — the live workspace shows progress
+    // inline rather than redirecting to the run detail page.
+    expect(
+      screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        level: 2,
+        name: /resume tailoring run/i,
+      }),
+    ).not.toBeInTheDocument();
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", {
-          level: 2,
-          name: /resume tailoring run/i,
-        }),
+        screen.getByText(/tailoring in progress/i),
       ).toBeInTheDocument(),
     );
   });
