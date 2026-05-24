@@ -742,7 +742,7 @@ tasks:
     file: "agent_tasks/040-agentctl-review-verdicts-and-fix-flow.md"
     branch: "agent/040-agentctl-review-verdicts-and-fix-flow"
     worktree: "agent-040-agentctl-review-verdicts-and-fix-flow"
-    status: "ready"
+    status: "done"
     depends_on:
       - "031-agentctl-propagate-claude-permissions"
     verification:
