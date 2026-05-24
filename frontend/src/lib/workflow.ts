@@ -3,8 +3,8 @@ import type { Application, ClaudeRun, Job, ResumeVersion } from "../api";
 const RUN_STATUS_LABELS: Record<string, string> = {
   created: "Queued",
   running: "Tailoring in progress",
-  completed: "Draft ready to review",
-  imported: "Draft imported",
+  completed: "Tailoring finished — loading draft",
+  imported: "Draft ready to review",
   failed: "Tailoring failed",
 };
 

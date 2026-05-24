@@ -255,7 +255,7 @@ describe("JobDetailPage five-step workspace", () => {
     });
 
     const runLink = within(generateStep).getByRole("link", {
-      name: /draft ready to review/i,
+      name: /tailoring finished\. loading the generated draft/i,
     });
     expect(runLink).toHaveAttribute("href", "/runs/run-completed");
   });

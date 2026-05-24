@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getJob,
@@ -46,14 +46,21 @@ interface RunAutoPollingArgs {
   intervalMs?: number;
 }
 
+export interface RunAutoPollingState {
+  isImporting: boolean;
+  importFailed: boolean;
+  retryImport: () => Promise<void>;
+}
+
 /**
  * Poll `getRun(runId)` while the run is in a non-terminal state and fire
  * `importRun(runId)` exactly once when it transitions into `completed`
  * without an existing imported ResumeVersion.
  *
  * Polling stops on terminal states (`imported`, `failed`) and on unmount.
- * If `importRun` fails the callback receives a parsed message and the
- * one-shot guard is reset so a manual retry can succeed.
+ * The auto-import is single-shot per run: a failure does NOT reset the
+ * guard, which is what prevents repeated POST /import spam on every poll
+ * tick. The caller can invoke `retryImport()` to re-attempt manually.
  */
 export function useRunAutoPolling({
   runId,
@@ -63,8 +70,10 @@ export function useRunAutoPolling({
   onImported,
   onImportError,
   intervalMs = RUN_POLL_INTERVAL_MS,
-}: RunAutoPollingArgs) {
+}: RunAutoPollingArgs): RunAutoPollingState {
   const importTriggered = useRef(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importFailed, setImportFailed] = useState(false);
   const onUpdateRef = useRef(onUpdate);
   const onImportedRef = useRef(onImported);
   const onImportErrorRef = useRef(onImportError);
@@ -79,22 +88,46 @@ export function useRunAutoPolling({
     onImportErrorRef.current = onImportError;
   }, [onImportError]);
 
+  // Reset the per-run guard if the runId changes (different run loaded).
+  useEffect(() => {
+    importTriggered.current = false;
+    setImportFailed(false);
+  }, [runId]);
+
+  const runImport = useCallback(
+    async (id: string) => {
+      setIsImporting(true);
+      try {
+        const version = await importRun(id);
+        setImportFailed(false);
+        onImportedRef.current(version);
+        const refreshed = await getRun(id).catch(() => null);
+        if (refreshed) onUpdateRef.current(refreshed);
+      } catch (err: unknown) {
+        setImportFailed(true);
+        onImportErrorRef.current(extractApiDetail(err));
+      } finally {
+        setIsImporting(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!runId || !run) return;
     if (!needsImport) return;
     if (importTriggered.current) return;
     importTriggered.current = true;
-    importRun(runId)
-      .then(async (version) => {
-        onImportedRef.current(version);
-        const refreshed = await getRun(runId).catch(() => null);
-        if (refreshed) onUpdateRef.current(refreshed);
-      })
-      .catch((err: unknown) => {
-        importTriggered.current = false;
-        onImportErrorRef.current(extractApiDetail(err));
-      });
-  }, [runId, run, needsImport]);
+    void runImport(runId);
+  }, [runId, run, needsImport, runImport]);
+
+  const retryImport = useCallback(async () => {
+    if (!runId) return;
+    if (isImporting) return;
+    importTriggered.current = true;
+    setImportFailed(false);
+    await runImport(runId);
+  }, [runId, isImporting, runImport]);
 
   const polling =
     !!runId && !!run && (runIsActive(run.status) || needsImport);
@@ -108,6 +141,8 @@ export function useRunAutoPolling({
     }, intervalMs);
     return () => clearInterval(id);
   }, [polling, runId, intervalMs]);
+
+  return { isImporting, importFailed, retryImport };
 }
 
 function truncateHash(hash: string | null): string {
@@ -160,20 +195,21 @@ export function RunDetailPage() {
     ? runNeedsImport(run, resumeVersions ?? [])
     : false;
 
-  useRunAutoPolling({
-    runId: runId ?? null,
-    run,
-    needsImport,
-    onUpdate: setRun,
-    onImported: (version) => {
-      setResumeVersions((prev) => {
-        if (!prev) return [version];
-        const without = prev.filter((v) => v.id !== version.id);
-        return [...without, version];
-      });
-    },
-    onImportError: setImportError,
-  });
+  const { isImporting: isAutoImporting, importFailed, retryImport } =
+    useRunAutoPolling({
+      runId: runId ?? null,
+      run,
+      needsImport,
+      onUpdate: setRun,
+      onImported: (version) => {
+        setResumeVersions((prev) => {
+          if (!prev) return [version];
+          const without = prev.filter((v) => v.id !== version.id);
+          return [...without, version];
+        });
+      },
+      onImportError: setImportError,
+    });
 
   async function handleStartTailoring() {
     if (!runId || !run || run.status !== "created") return;
@@ -235,6 +271,18 @@ export function RunDetailPage() {
     ? `Resume tailoring run — ${job.title} — ${job.company}`
     : "Resume tailoring run";
 
+  const statusDisplay =
+    importFailed && run.status === "completed"
+      ? "Draft could not be loaded"
+      : resumeVersion
+        ? "Draft ready to review"
+        : runStatusLabel(run.status);
+
+  const showSpinner =
+    runIsActive(run.status) ||
+    (run.status === "completed" && !resumeVersion && !importFailed) ||
+    isAutoImporting;
+
   return (
     <section className="run-detail">
       <h2>
@@ -243,9 +291,21 @@ export function RunDetailPage() {
           {badge.label}
         </span>
       </h2>
+
+      <div
+        className="tailoring-progress"
+        role="status"
+        aria-live="polite"
+      >
+        {showSpinner ? (
+          <span className="tailoring-spinner" aria-hidden="true" />
+        ) : null}
+        <span className="tailoring-progress-label">{statusDisplay}</span>
+      </div>
+
       <dl className="run-meta">
         <dt>Status</dt>
-        <dd>{runStatusLabel(run.status)}</dd>
+        <dd>{statusDisplay}</dd>
         <dt>Created</dt>
         <dd>{formatTimestamp(run.created_at)}</dd>
         <dt>Started</dt>
@@ -261,9 +321,23 @@ export function RunDetailPage() {
       </dl>
 
       {importError ? (
-        <p role="alert" className="error">
-          {importError}
-        </p>
+        <div className="import-failure">
+          <p role="alert" className="error">
+            The tailoring run finished, but the draft could not be loaded.
+            <br />
+            {importError}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setImportError(null);
+              void retryImport();
+            }}
+            disabled={isAutoImporting}
+          >
+            {isAutoImporting ? "Loading draft…" : "Retry loading draft"}
+          </button>
+        </div>
       ) : null}
 
       {resumeVersion ? (

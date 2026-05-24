@@ -242,4 +242,78 @@ describe("RunDetailPage polling and auto-import", () => {
     // No further calls after unmount.
     expect(getRunMock).toHaveBeenCalledTimes(1);
   });
+
+  it("calls importRun at most once even when subsequent polls keep returning `completed` after a failure", async () => {
+    // This is the regression test for the spam bug:
+    //   POST /runs/{id}/import → 400
+    //   POST /runs/{id}/import → 400  (every poll)
+    //
+    // The auto-import effect must fire exactly once per run and stay
+    // off after a failure — only an explicit retry should fire it again.
+    getRunMock
+      .mockResolvedValueOnce({ ...runningRun })
+      .mockResolvedValueOnce({ ...completedRun })
+      .mockResolvedValue({ ...completedRun });
+    const apiError = new ApiErrorMock(
+      "Request to /runs/run-1/import failed with status 400",
+      400,
+      { detail: "expected output file missing: output/tailored_resume.docx" },
+    );
+    importRunMock.mockRejectedValue(apiError);
+
+    renderRunDetail("run-1");
+    await flushMicrotasks();
+    expect(getRunMock).toHaveBeenCalledTimes(1);
+
+    // First poll observes `completed` and fires auto-import once.
+    await advance(RUN_POLL_INTERVAL_MS);
+    await flushMicrotasks();
+    expect(importRunMock).toHaveBeenCalledTimes(1);
+
+    // Subsequent polls keep observing `completed`. importRun must NOT be
+    // re-fired — that's the bug this guards against.
+    await advance(RUN_POLL_INTERVAL_MS * 5);
+    await flushMicrotasks();
+    expect(importRunMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries import only when the user clicks `Retry loading draft`", async () => {
+    getRunMock
+      .mockResolvedValueOnce({ ...runningRun })
+      .mockResolvedValueOnce({ ...completedRun })
+      .mockResolvedValue({ ...completedRun });
+    const apiError = new ApiErrorMock(
+      "Request to /runs/run-1/import failed with status 400",
+      400,
+      { detail: "expected output file missing: output/tailored_resume.docx" },
+    );
+    // First import call fails, second succeeds after the user retries.
+    importRunMock.mockRejectedValueOnce(apiError);
+    importRunMock.mockResolvedValueOnce(resumeVersion);
+
+    renderRunDetail("run-1");
+    await flushMicrotasks();
+    await advance(RUN_POLL_INTERVAL_MS);
+    await flushMicrotasks();
+
+    expect(importRunMock).toHaveBeenCalledTimes(1);
+
+    // Use real timers briefly so userEvent can resolve its delays.
+    vi.useRealTimers();
+    try {
+      const userEvent = (
+        await import("@testing-library/user-event")
+      ).default;
+      const user = userEvent.setup();
+      const retryBtn = await screen.findByRole("button", {
+        name: /retry loading draft/i,
+      });
+      await user.click(retryBtn);
+    } finally {
+      vi.useFakeTimers();
+    }
+
+    await flushMicrotasks();
+    expect(importRunMock).toHaveBeenCalledTimes(2);
+  });
 });

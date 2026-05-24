@@ -89,8 +89,8 @@ describe("runStatusLabel", () => {
   it("maps every known status to a user-facing label", () => {
     expect(runStatusLabel("created")).toBe("Queued");
     expect(runStatusLabel("running")).toBe("Tailoring in progress");
-    expect(runStatusLabel("completed")).toBe("Draft ready to review");
-    expect(runStatusLabel("imported")).toBe("Draft imported");
+    expect(runStatusLabel("completed")).toBe("Tailoring finished — loading draft");
+    expect(runStatusLabel("imported")).toBe("Draft ready to review");
     expect(runStatusLabel("failed")).toBe("Tailoring failed");
   });
 
