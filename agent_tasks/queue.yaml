@@ -736,3 +736,25 @@ tasks:
       - "frontend/src/test/**"
       - "agent_tasks/039-revision-feedback-flow.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "040-agentctl-review-verdicts-and-fix-flow"
+    title: "Add structured review verdicts and fix flow"
+    file: "agent_tasks/040-agentctl-review-verdicts-and-fix-flow.md"
+    branch: "agent/040-agentctl-review-verdicts-and-fix-flow"
+    worktree: "agent-040-agentctl-review-verdicts-and-fix-flow"
+    status: "ready"
+    depends_on:
+      - "031-agentctl-propagate-claude-permissions"
+    verification:
+      - "bash -n scripts/agentctl.sh"
+      - "scripts/agentctl.sh doctor"
+      - "scripts/agentctl.sh status"
+      - "scripts/agentctl.sh ready"
+      - "scripts/agentctl.sh plan --help"
+    allowed_paths:
+      - "scripts/**"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/planning_guidelines.md"
+      - "agent_tasks/040-agentctl-review-verdicts-and-fix-flow.md"
+      - "agent_tasks/queue.yaml"
+      - ".agentctl/reviews/.gitkeep"
