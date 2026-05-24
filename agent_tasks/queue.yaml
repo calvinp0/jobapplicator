@@ -803,7 +803,7 @@ tasks:
     file: "agent_tasks/043-contract-run-directory-revision-feedback.md"
     branch: "agent/043-contract-run-directory-revision-feedback"
     worktree: "agent-043-contract-run-directory-revision-feedback"
-    status: "ready"
+    status: "done"
     depends_on:
       - "042-adr-revision-feedback"
     verification:
@@ -860,7 +860,7 @@ tasks:
     file: "agent_tasks/046-runtime-prompt-revision-feedback.md"
     branch: "agent/046-runtime-prompt-revision-feedback"
     worktree: "agent-046-runtime-prompt-revision-feedback"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "043-contract-run-directory-revision-feedback"
     verification:
