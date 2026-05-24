@@ -684,7 +684,7 @@ tasks:
     file: "agent_tasks/037-frontend-application-submit-language.md"
     branch: "agent/037-frontend-application-submit-language"
     worktree: "agent-037-frontend-application-submit-language"
-    status: "ready"
+    status: "done"
     depends_on:
       - "036-frontend-resume-draft-review"
     verification:
