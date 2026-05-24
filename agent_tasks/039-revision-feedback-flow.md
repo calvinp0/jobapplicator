@@ -1,52 +1,60 @@
-# Task 039: Revision feedback flow (BLOCKED — design first)
+# Task 039: Revision feedback flow
 
 Task ID: `039-revision-feedback-flow`
 
-Status: **blocked**
-
 ## Goal
 
-Document the future revision-feedback flow needed to let users request changes to
-generated drafts, and stage the frontend work so it can begin once the backend is
-designed.
+Add the frontend revision-feedback flow on `ResumeVersionDetailPage`,
+wiring it to the backend endpoint introduced by task 045 and surfacing
+the resulting follow-up tailoring run in the job workspace.
 
 ## Background
 
-The UX spec ([`docs/product/frontend_cockpit_ux.md`](../docs/product/frontend_cockpit_ux.md))
-describes a "Future revision feedback flow" alongside `Approve draft` on
-`ResumeVersionDetailPage`. The intended user behavior is:
+The design for this flow is fixed by
+[`docs/adr/008-revision-feedback-flow.md`](../docs/adr/008-revision-feedback-flow.md).
+The backend endpoint, schemas, and run-directory wiring have all
+landed:
+
+- Endpoint: `POST /resume-versions/{version_id}/revision-feedback`
+  (see `backend/app/routers/resume_versions.py`).
+- Request body: `{ "feedback_markdown": string, "structured_flags"?: object }`
+  (see `RevisionFeedbackCreate` in `backend/app/schemas.py`).
+  `feedback_markdown` must be non-empty.
+- Response (201 Created): `RevisionFeedbackRead`, including
+  `id`, `job_id`, `source_resume_version_id`,
+  `followup_claude_run_id`, `feedback_markdown`, `status`,
+  `created_at`. The follow-up `ClaudeRun` is created server-side and
+  its id is returned on the response.
+- The runtime tailoring prompt already consumes
+  `runs/<run_id>/input/revision_feedback.md` (task 046) and reasserts
+  the ADR-004 evidence-constraint rule.
+
+The UX spec
+([`docs/product/frontend_cockpit_ux.md`](../docs/product/frontend_cockpit_ux.md))
+describes a "Request revisions" action on
+`ResumeVersionDetailPage` alongside `Approve draft`. The intended
+behavior is:
 
 1. The user has a generated draft they don't want to approve as-is.
-2. They click `Request revisions`, describe what to change, and submit.
-3. A new tailoring run is created, parameterized by the prior draft and the feedback.
-4. The new draft appears in the job workspace as the next `Draft N`, with a visible link
-   back to the draft it revises.
+2. They click `Request revisions`, describe what to change, optionally
+   tick common-asks checkboxes, and submit.
+3. The frontend posts to the endpoint above, receives the new
+   `followup_claude_run_id`, and navigates the user to the follow-up
+   run's status view (which already polls via task 035).
+4. When that run imports a new `ResumeVersion`, it appears in the job
+   workspace step 4 as the next `Draft N`, with a visible "revises
+   Draft N" pointer resolved via the `revision_feedbacks` join (see
+   ADR-008 "Linking").
 
-This task is a placeholder so the work is tracked. It must not be run yet.
+## Scope
 
-## Blocker
+Frontend-only. Add the `Request revisions` action and form on
+`ResumeVersionDetailPage`, the API client function, the response
+routing, and the "revises Draft N" pointer on `JobDetailPage` step 4.
+Backend, runtime prompts, and ADRs are out of scope; they already
+exist.
 
-```text
-Backend does not yet model revision feedback. Implementing this requires a schema/API
-decision and likely an ADR update before frontend work begins.
-```
-
-**Do not run until unblocked by a backend/API design task.** Specifically, the following
-must exist first:
-
-- A schema decision for revision feedback (where feedback is stored, how it links to the
-  prior draft and the new run).
-- An API contract for creating a revision-feedback-driven tailoring run.
-- An ADR update under `docs/adr/` capturing the decision.
-
-A blocker-resolution task should land before this one is moved to `ready` in the queue.
-
-## Scope (preliminary, to be refined when unblocked)
-
-When unblocked, this task will touch frontend draft review and job workspace surfaces, plus
-new tests:
-
-### Allowed files (preliminary)
+### Allowed files
 
 ```text
 frontend/src/pages/ResumeVersionDetailPage.tsx
@@ -59,8 +67,6 @@ agent_tasks/039-revision-feedback-flow.md
 agent_tasks/queue.yaml
 ```
 
-The final allowed file list must be tightened when this task is moved out of `blocked`.
-
 ### Forbidden files
 
 ```text
@@ -68,35 +74,76 @@ backend/**
 extension/**
 runtime_prompts/**
 candidate_context/**
+docs/**
+scripts/**
 ```
-
-(Backend work belongs to the unblock task, not this one. This task remains
-frontend-only when it runs.)
 
 ### Out of scope
 
-- Implementing the backend revision-feedback schema/API. That is the unblocking task.
-- Any change to draft approval language already covered by task 036.
-- Any change to application submit wording already covered by task 037.
+- Any backend, runtime-prompt, or ADR change. Those are tasks
+  042–046 and have already landed.
+- Changes to draft approval language covered by task 036.
+- Changes to application submit wording covered by task 037.
+- Re-opening ADR-008 decisions (endpoint shape, status lifecycle,
+  evidence-constraint rule).
 
-## Required behavior (preliminary)
+## Required behavior
 
-When unblocked, the frontend must:
+On `ResumeVersionDetailPage`:
 
-- Add a `Request revisions` action on `ResumeVersionDetailPage` next to `Approve draft`.
-- Provide a structured feedback form (free-text plus optional checkboxes for common asks).
-- Submit feedback via the new API and create the follow-up tailoring run.
-- Show the new draft in `JobDetailPage` step 4 as the next `Draft N`, with a visible
-  pointer to the draft it revises.
-- Surface error messages via `extractApiDetail`.
+- Add a `Request revisions` action next to `Approve draft`.
+- Reveal a structured feedback form when clicked: a required
+  `feedback_markdown` textarea and optional common-asks checkboxes
+  (e.g., "Shorten", "Reorder sections", "Emphasize X over Y"). The
+  checkbox set is collected into a `structured_flags` object on
+  submit; if no checkboxes are ticked, omit `structured_flags` from
+  the request body.
+- Submit via a new `submitRevisionFeedback(versionId, body)` client in
+  `frontend/src/api/index.ts` that calls
+  `POST /resume-versions/{versionId}/revision-feedback`. The TypeScript
+  types for the request and response go in
+  `frontend/src/api/types.ts` and must match
+  `RevisionFeedbackCreate` / `RevisionFeedbackRead` from
+  `backend/app/schemas.py`.
+- On success, navigate the user to the follow-up run's detail view
+  using `followup_claude_run_id` from the response (the existing
+  tailoring-progress polling from task 035 then takes over).
+- On failure, render the error message through `extractApiDetail`
+  from `frontend/src/lib/api-errors.ts` (the shared helper from
+  task 033). Do not invent ad-hoc error formatting.
+- Disable the submit control while the request is in flight and
+  while `feedback_markdown` is empty.
 
-## Acceptance criteria (preliminary)
+On `JobDetailPage` step 4:
 
-To be finalized when unblocked. At minimum:
+- When a `ResumeVersion` was produced by a revision run, display a
+  visible "revises Draft N" pointer next to that draft entry. The
+  pointer is resolved by matching the draft's originating
+  `claude_run_id` to a `revision_feedbacks` row's
+  `followup_claude_run_id`; the prior draft is then looked up by
+  `source_resume_version_id`. The existing `revisionFeedbacks` list
+  endpoint (or the per-version data already loaded for step 4) is
+  the data source — do not add new backend endpoints for this.
 
-- Submitting feedback creates a new run linked to the prior draft.
-- The new draft is visibly labeled as a revision of the prior draft.
-- All frontend tests pass.
+## Acceptance criteria
+
+- `ResumeVersionDetailPage` exposes a `Request revisions` action that
+  reveals a feedback form with a required free-text field and
+  optional common-asks checkboxes.
+- Submitting the form calls
+  `POST /resume-versions/{versionId}/revision-feedback` with body
+  shape `{ feedback_markdown, structured_flags? }` and, on success,
+  navigates the user to the follow-up run identified by
+  `followup_claude_run_id` from the response.
+- API errors are surfaced via `extractApiDetail`.
+- `JobDetailPage` step 4 shows a "revises Draft N" pointer for any
+  draft that resolves to a `revision_feedbacks` row via its
+  originating `claude_run_id`.
+- Type definitions for the request and response in
+  `frontend/src/api/types.ts` match `RevisionFeedbackCreate` and
+  `RevisionFeedbackRead` in `backend/app/schemas.py`.
+- All frontend tests pass; `npm run build` succeeds.
+- No file outside the `Allowed files` list is modified.
 
 ## Verification
 
@@ -107,13 +154,12 @@ cd frontend && npm run build
 
 ## Git instructions
 
-Do not run this task yet. Do not push.
-Do not implement unrelated product features.
-Do not edit backend unless explicitly listed.
-Do not edit extension files.
-
-When this task is eventually executed, commit locally with message:
+Commit locally on the task branch with the message:
 
 ```text
 Add revision feedback flow for drafts
 ```
+
+Do not push.
+Do not implement unrelated product features.
+Do not edit backend, runtime prompts, or extension files.
