@@ -599,7 +599,7 @@ tasks:
     file: "agent_tasks/033-frontend-workflow-language.md"
     branch: "agent/033-frontend-workflow-language"
     worktree: "agent-033-frontend-workflow-language"
-    status: "ready"
+    status: "done"
     depends_on:
       - "032-frontend-visual-cockpit-redesign"
     verification:
@@ -622,7 +622,7 @@ tasks:
     file: "agent_tasks/034-frontend-job-workspace-stepper.md"
     branch: "agent/034-frontend-job-workspace-stepper"
     worktree: "agent-034-frontend-job-workspace-stepper"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "033-frontend-workflow-language"
     verification:
@@ -703,7 +703,7 @@ tasks:
     file: "agent_tasks/038-frontend-settings-cards.md"
     branch: "agent/038-frontend-settings-cards"
     worktree: "agent-038-frontend-settings-cards"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "033-frontend-workflow-language"
     verification:
