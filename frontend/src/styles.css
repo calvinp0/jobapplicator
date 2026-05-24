@@ -753,12 +753,43 @@ button[type="submit"]:disabled,
   border-radius: 4px;
 }
 
-.settings-section {
-  margin-top: var(--space-7);
+.settings-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6);
+  box-shadow: var(--card-shadow);
+  margin-top: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.settings-section h3 {
-  margin-bottom: var(--space-3);
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+}
+
+.settings-card-header h3 {
+  margin: 0;
+}
+
+.settings-card-form {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+  margin-top: var(--space-1);
+}
+
+.settings-card-form-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .settings-empty {

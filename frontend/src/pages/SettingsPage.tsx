@@ -21,30 +21,43 @@ interface CreatePayload {
   content_markdown: string;
 }
 
-interface SectionProps<T extends SeedEntity> {
+interface SeedCardProps<T extends SeedEntity> {
   title: string;
   items: T[] | null;
   emptyLabel: string;
+  addButtonLabel: string;
   onCreate: (payload: CreatePayload) => Promise<T>;
   onCreated: (item: T) => void;
   contentLabel: string;
-  submitLabel: string;
 }
 
-function SeedSection<T extends SeedEntity>({
+function SeedCard<T extends SeedEntity>({
   title,
   items,
   emptyLabel,
+  addButtonLabel,
   onCreate,
   onCreated,
   contentLabel,
-  submitLabel,
-}: SectionProps<T>) {
+}: SeedCardProps<T>) {
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [name, setName] = useState("");
   const [sourcePath, setSourcePath] = useState("");
   const [contentMarkdown, setContentMarkdown] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  function resetForm() {
+    setName("");
+    setSourcePath("");
+    setContentMarkdown("");
+    setSubmitError(null);
+  }
+
+  function handleCancel() {
+    resetForm();
+    setIsFormOpen(false);
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,9 +74,8 @@ function SeedSection<T extends SeedEntity>({
         content_markdown: contentMarkdown,
       });
       onCreated(created);
-      setName("");
-      setSourcePath("");
-      setContentMarkdown("");
+      resetForm();
+      setIsFormOpen(false);
     } catch (err: unknown) {
       setSubmitError(extractApiDetail(err));
     } finally {
@@ -72,8 +84,20 @@ function SeedSection<T extends SeedEntity>({
   }
 
   return (
-    <section className="settings-section">
-      <h3>{title}</h3>
+    <section className="settings-card">
+      <header className="settings-card-header">
+        <h3>{title}</h3>
+        {!isFormOpen ? (
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setIsFormOpen(true)}
+          >
+            {`+ ${addButtonLabel}`}
+          </button>
+        ) : null}
+      </header>
+
       {items === null ? (
         <p>Loading…</p>
       ) : items.length === 0 ? (
@@ -92,44 +116,56 @@ function SeedSection<T extends SeedEntity>({
         </ul>
       )}
 
-      <form onSubmit={handleSubmit} noValidate>
-        <label className="field">
-          <span>Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-        </label>
-        <label className="field">
-          <span>Source path (optional)</span>
-          <input
-            type="text"
-            value={sourcePath}
-            onChange={(e) => setSourcePath(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>{contentLabel}</span>
-          <textarea
-            value={contentMarkdown}
-            rows={8}
-            onChange={(e) => setContentMarkdown(e.target.value)}
-            required
-          />
-        </label>
+      {isFormOpen ? (
+        <form onSubmit={handleSubmit} noValidate className="settings-card-form">
+          <label className="field">
+            <span>Name</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Source path (optional)</span>
+            <input
+              type="text"
+              value={sourcePath}
+              onChange={(e) => setSourcePath(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>{contentLabel}</span>
+            <textarea
+              value={contentMarkdown}
+              rows={8}
+              onChange={(e) => setContentMarkdown(e.target.value)}
+              required
+            />
+          </label>
 
-        {submitError ? (
-          <p role="alert" className="error">
-            {submitError}
-          </p>
-        ) : null}
+          {submitError ? (
+            <p role="alert" className="error">
+              {submitError}
+            </p>
+          ) : null}
 
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Saving…" : submitLabel}
-        </button>
-      </form>
+          <div className="settings-card-form-actions">
+            <button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Saving…" : addButtonLabel}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={handleCancel}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
     </section>
   );
 }
@@ -167,22 +203,23 @@ export function SettingsPage() {
         </p>
       ) : null}
 
-      <SeedSection<MasterResume>
+      <SeedCard<MasterResume>
         title="Master resumes"
         items={resumes}
-        emptyLabel="No master resumes yet."
+        emptyLabel="No master resumes yet — add one to enable tailoring."
+        addButtonLabel="Add master resume"
         onCreate={createMasterResume}
         onCreated={(item) =>
           setResumes((prev) => (prev === null ? [item] : [item, ...prev]))
         }
         contentLabel="Content (markdown)"
-        submitLabel="Add master resume"
       />
 
-      <SeedSection<EvidenceBank>
+      <SeedCard<EvidenceBank>
         title="Evidence banks"
         items={evidenceBanks}
-        emptyLabel="No evidence banks yet."
+        emptyLabel="No evidence banks yet — optional, but useful for grounded tailoring."
+        addButtonLabel="Add evidence bank"
         onCreate={createEvidenceBank}
         onCreated={(item) =>
           setEvidenceBanks((prev) =>
@@ -190,7 +227,6 @@ export function SettingsPage() {
           )
         }
         contentLabel="Content (markdown)"
-        submitLabel="Add evidence bank"
       />
     </section>
   );

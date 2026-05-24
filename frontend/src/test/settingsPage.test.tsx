@@ -50,6 +50,18 @@ function renderPage() {
   );
 }
 
+function getResumeCard() {
+  return screen
+    .getByRole("heading", { level: 3, name: /master resumes/i })
+    .closest("section") as HTMLElement;
+}
+
+function getBankCard() {
+  return screen
+    .getByRole("heading", { level: 3, name: /evidence banks/i })
+    .closest("section") as HTMLElement;
+}
+
 describe("SettingsPage", () => {
   beforeEach(() => {
     listMasterResumesMock.mockResolvedValue([]);
@@ -61,7 +73,128 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("creates a master resume and shows it in the list", async () => {
+  it("renders both cards with their headers and the canonical empty-state copy", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 3, name: /master resumes/i }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.getByRole("heading", { level: 3, name: /evidence banks/i }),
+    ).toBeInTheDocument();
+
+    expect(
+      screen.getByText(
+        "No master resumes yet — add one to enable tailoring.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No evidence banks yet — optional, but useful for grounded tailoring.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides both add forms by default and exposes only the reveal buttons", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /\+ add master resume/i }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /\+ add evidence bank/i }),
+    ).toBeInTheDocument();
+
+    // No form fields are in the DOM until the user opens the form.
+    expect(screen.queryByLabelText(/^name$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/content/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^cancel$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reveals the master resume form when + Add master resume is clicked and only that form", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /\+ add master resume/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /\+ add master resume/i }),
+    );
+
+    const resumeCard = getResumeCard();
+    expect(within(resumeCard).getByLabelText(/^name$/i)).toBeInTheDocument();
+    expect(within(resumeCard).getByLabelText(/content/i)).toBeInTheDocument();
+    expect(
+      within(resumeCard).getByRole("button", { name: /^cancel$/i }),
+    ).toBeInTheDocument();
+
+    // Evidence bank card form remains hidden.
+    const bankCard = getBankCard();
+    expect(within(bankCard).queryByLabelText(/^name$/i)).not.toBeInTheDocument();
+    expect(
+      within(bankCard).getByRole("button", { name: /\+ add evidence bank/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("reveals the evidence bank form when + Add evidence bank is clicked", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /\+ add evidence bank/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /\+ add evidence bank/i }),
+    );
+
+    const bankCard = getBankCard();
+    expect(within(bankCard).getByLabelText(/^name$/i)).toBeInTheDocument();
+    expect(within(bankCard).getByLabelText(/content/i)).toBeInTheDocument();
+  });
+
+  it("collapses the form when Cancel is clicked", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /\+ add master resume/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /\+ add master resume/i }),
+    );
+
+    const resumeCard = getResumeCard();
+    expect(within(resumeCard).getByLabelText(/^name$/i)).toBeInTheDocument();
+
+    await user.click(
+      within(resumeCard).getByRole("button", { name: /^cancel$/i }),
+    );
+
+    expect(within(resumeCard).queryByLabelText(/^name$/i)).not.toBeInTheDocument();
+    expect(
+      within(resumeCard).getByRole("button", { name: /\+ add master resume/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("creates a master resume, collapses the form, and shows the new row", async () => {
     const user = userEvent.setup();
     createMasterResumeMock.mockResolvedValue({
       id: "resume-1",
@@ -75,13 +208,17 @@ describe("SettingsPage", () => {
     renderPage();
 
     await waitFor(() =>
-      expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/no master resumes yet/i),
+      ).toBeInTheDocument(),
     );
 
-    const resumeSection = screen
-      .getByRole("heading", { level: 3, name: /master resumes/i })
-      .closest("section") as HTMLElement;
-    const utils = within(resumeSection);
+    await user.click(
+      screen.getByRole("button", { name: /\+ add master resume/i }),
+    );
+
+    const resumeCard = getResumeCard();
+    const utils = within(resumeCard);
 
     await user.type(utils.getByLabelText(/^name$/i), "Calvin – Generalist");
     await user.type(
@@ -91,7 +228,7 @@ describe("SettingsPage", () => {
     await user.type(utils.getByLabelText(/content/i), "# Calvin");
 
     await user.click(
-      utils.getByRole("button", { name: /add master resume/i }),
+      utils.getByRole("button", { name: /^add master resume$/i }),
     );
 
     await waitFor(() =>
@@ -102,18 +239,28 @@ describe("SettingsPage", () => {
       }),
     );
 
+    // Form collapsed after success.
+    await waitFor(() =>
+      expect(
+        within(resumeCard).queryByLabelText(/^name$/i),
+      ).not.toBeInTheDocument(),
+    );
+
+    // New row appears, empty-state gone.
     expect(
-      await within(resumeSection).findByText("Calvin – Generalist"),
+      within(resumeCard).getByText("Calvin – Generalist"),
     ).toBeInTheDocument();
     expect(
-      within(resumeSection).queryByText(/no master resumes yet/i),
+      within(resumeCard).queryByText(/no master resumes yet/i),
     ).not.toBeInTheDocument();
     expect(
-      (utils.getByLabelText(/^name$/i) as HTMLInputElement).value,
-    ).toBe("");
+      within(resumeCard).getByRole("button", {
+        name: /\+ add master resume/i,
+      }),
+    ).toBeInTheDocument();
   });
 
-  it("creates an evidence bank and shows it in the list", async () => {
+  it("creates an evidence bank, collapses the form, and shows the new row", async () => {
     const user = userEvent.setup();
     createEvidenceBankMock.mockResolvedValue({
       id: "bank-1",
@@ -127,19 +274,23 @@ describe("SettingsPage", () => {
     renderPage();
 
     await waitFor(() =>
-      expect(screen.getByText(/no evidence banks yet/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/no evidence banks yet/i),
+      ).toBeInTheDocument(),
     );
 
-    const bankSection = screen
-      .getByRole("heading", { level: 3, name: /evidence banks/i })
-      .closest("section") as HTMLElement;
-    const utils = within(bankSection);
+    await user.click(
+      screen.getByRole("button", { name: /\+ add evidence bank/i }),
+    );
+
+    const bankCard = getBankCard();
+    const utils = within(bankCard);
 
     await user.type(utils.getByLabelText(/^name$/i), "Backend evidence");
     await user.type(utils.getByLabelText(/content/i), "# Evidence");
 
     await user.click(
-      utils.getByRole("button", { name: /add evidence bank/i }),
+      utils.getByRole("button", { name: /^add evidence bank$/i }),
     );
 
     await waitFor(() =>
@@ -150,15 +301,21 @@ describe("SettingsPage", () => {
       }),
     );
 
+    await waitFor(() =>
+      expect(
+        within(bankCard).queryByLabelText(/^name$/i),
+      ).not.toBeInTheDocument(),
+    );
+
     expect(
-      await within(bankSection).findByText("Backend evidence"),
+      within(bankCard).getByText("Backend evidence"),
     ).toBeInTheDocument();
     expect(
-      within(bankSection).queryByText(/no evidence banks yet/i),
+      within(bankCard).queryByText(/no evidence banks yet/i),
     ).not.toBeInTheDocument();
   });
 
-  it("surfaces server validation errors on create", async () => {
+  it("surfaces server validation errors on create and keeps the form open", async () => {
     const user = userEvent.setup();
     createMasterResumeMock.mockRejectedValue(
       new ApiErrorMock("Request failed", 422, {
@@ -178,20 +335,24 @@ describe("SettingsPage", () => {
       expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
     );
 
-    const resumeSection = screen
-      .getByRole("heading", { level: 3, name: /master resumes/i })
-      .closest("section") as HTMLElement;
-    const utils = within(resumeSection);
+    await user.click(
+      screen.getByRole("button", { name: /\+ add master resume/i }),
+    );
+
+    const resumeCard = getResumeCard();
+    const utils = within(resumeCard);
 
     await user.type(utils.getByLabelText(/^name$/i), "Bad");
     await user.type(utils.getByLabelText(/content/i), "x");
     await user.click(
-      utils.getByRole("button", { name: /add master resume/i }),
+      utils.getByRole("button", { name: /^add master resume$/i }),
     );
 
     expect(
-      await within(resumeSection).findByText(/value cannot be blank/i),
+      await within(resumeCard).findByText(/value cannot be blank/i),
     ).toBeInTheDocument();
+    // Form stays open so the user can correct the input.
+    expect(within(resumeCard).getByLabelText(/^name$/i)).toBeInTheDocument();
   });
 
   it("shows a friendly fallback (never the raw request string) when an ApiError has no detail", async () => {
@@ -210,22 +371,24 @@ describe("SettingsPage", () => {
       expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
     );
 
-    const resumeSection = screen
-      .getByRole("heading", { level: 3, name: /master resumes/i })
-      .closest("section") as HTMLElement;
-    const utils = within(resumeSection);
+    await user.click(
+      screen.getByRole("button", { name: /\+ add master resume/i }),
+    );
+
+    const resumeCard = getResumeCard();
+    const utils = within(resumeCard);
 
     await user.type(utils.getByLabelText(/^name$/i), "Bad");
     await user.type(utils.getByLabelText(/content/i), "x");
     await user.click(
-      utils.getByRole("button", { name: /add master resume/i }),
+      utils.getByRole("button", { name: /^add master resume$/i }),
     );
 
     expect(
-      await within(resumeSection).findByText(/something went wrong/i),
+      await within(resumeCard).findByText(/something went wrong/i),
     ).toBeInTheDocument();
     expect(
-      within(resumeSection).queryByText(/request to/i),
+      within(resumeCard).queryByText(/request to/i),
     ).not.toBeInTheDocument();
   });
 });
