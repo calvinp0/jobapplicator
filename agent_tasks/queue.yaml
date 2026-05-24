@@ -896,7 +896,7 @@ tasks:
     file: "agent_tasks/048-tailoring-progress-and-import-failure-ux.md"
     branch: "agent/048-tailoring-progress-and-import-failure-ux"
     worktree: "agent-048-tailoring-progress-and-import-failure-ux"
-    status: "ready"
+    status: "done"
     depends_on:
       - "035-frontend-tailoring-progress"
       - "039-revision-feedback-flow"
