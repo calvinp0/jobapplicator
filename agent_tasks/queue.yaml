@@ -1085,7 +1085,7 @@ tasks:
     file: "agent_tasks/056-adr-capture-auto-confirm-clarification.md"
     branch: "agent/056-adr-capture-auto-confirm-clarification"
     worktree: "agent-056-adr-capture-auto-confirm-clarification"
-    status: "ready"
+    status: "done"
     depends_on:
       - "054-auto-confirm-complete-extension-captures"
     verification:
