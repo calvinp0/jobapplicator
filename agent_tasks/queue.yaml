@@ -782,4 +782,111 @@ tasks:
       - "agent_tasks/queue.yaml"
       - ".agentctl/journal/.gitkeep"
       - ".gitignore"
-      
+
+  - id: "042-adr-revision-feedback"
+    title: "Add ADR-008 for revision feedback flow"
+    file: "agent_tasks/042-adr-revision-feedback.md"
+    branch: "agent/042-adr-revision-feedback"
+    worktree: "agent-042-adr-revision-feedback"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "ls docs/adr/"
+      - "test -f docs/adr/008-revision-feedback-flow.md"
+    allowed_paths:
+      - "docs/adr/008-revision-feedback-flow.md"
+      - "agent_tasks/042-adr-revision-feedback.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "043-contract-run-directory-revision-feedback"
+    title: "Add revision feedback input to run directory contract"
+    file: "agent_tasks/043-contract-run-directory-revision-feedback.md"
+    branch: "agent/043-contract-run-directory-revision-feedback"
+    worktree: "agent-043-contract-run-directory-revision-feedback"
+    status: "planned"
+    depends_on:
+      - "042-adr-revision-feedback"
+    verification:
+      - "ls docs/contracts/"
+      - "grep -q revision_feedback docs/contracts/claude_run_directory.md"
+      - "grep -q ADR-008 docs/contracts/claude_run_directory.md"
+    allowed_paths:
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/043-contract-run-directory-revision-feedback.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "044-backend-revision-feedback-model"
+    title: "Add backend model and schemas for revision feedback"
+    file: "agent_tasks/044-backend-revision-feedback-model.md"
+    branch: "agent/044-backend-revision-feedback-model"
+    worktree: "agent-044-backend-revision-feedback-model"
+    status: "planned"
+    depends_on:
+      - "042-adr-revision-feedback"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/models.py"
+      - "backend/app/schemas.py"
+      - "backend/app/db.py"
+      - "backend/tests/**"
+      - "agent_tasks/044-backend-revision-feedback-model.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "045-backend-revision-feedback-api"
+    title: "Add backend API for revision-feedback-driven runs"
+    file: "agent_tasks/045-backend-revision-feedback-api.md"
+    branch: "agent/045-backend-revision-feedback-api"
+    worktree: "agent-045-backend-revision-feedback-api"
+    status: "planned"
+    depends_on:
+      - "043-contract-run-directory-revision-feedback"
+      - "044-backend-revision-feedback-model"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/routers/**"
+      - "backend/app/run_directory.py"
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_import.py"
+      - "backend/app/main.py"
+      - "backend/app/schemas.py"
+      - "backend/tests/**"
+      - "agent_tasks/045-backend-revision-feedback-api.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "046-runtime-prompt-revision-feedback"
+    title: "Update tailoring prompt to consume revision feedback"
+    file: "agent_tasks/046-runtime-prompt-revision-feedback.md"
+    branch: "agent/046-runtime-prompt-revision-feedback"
+    worktree: "agent-046-runtime-prompt-revision-feedback"
+    status: "planned"
+    depends_on:
+      - "043-contract-run-directory-revision-feedback"
+    verification:
+      - "ls runtime_prompts/"
+      - "grep -q revision_feedback runtime_prompts/resume_tailoring.md"
+      - "grep -q ADR-004 runtime_prompts/resume_tailoring.md"
+    allowed_paths:
+      - "runtime_prompts/resume_tailoring.md"
+      - "agent_tasks/046-runtime-prompt-revision-feedback.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "047-unblock-frontend-revision-feedback"
+    title: "Unblock and refine frontend revision-feedback task 039"
+    file: "agent_tasks/047-unblock-frontend-revision-feedback.md"
+    branch: "agent/047-unblock-frontend-revision-feedback"
+    worktree: "agent-047-unblock-frontend-revision-feedback"
+    status: "planned"
+    depends_on:
+      - "045-backend-revision-feedback-api"
+      - "046-runtime-prompt-revision-feedback"
+    verification:
+      - "scripts/agentctl.sh list"
+      - "scripts/agentctl.sh status"
+      - "grep -q ADR-008 agent_tasks/039-revision-feedback-flow.md"
+    allowed_paths:
+      - "agent_tasks/039-revision-feedback-flow.md"
+      - "agent_tasks/047-unblock-frontend-revision-feedback.md"
+      - "agent_tasks/queue.yaml"
+
