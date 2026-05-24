@@ -990,6 +990,105 @@ button[type="submit"]:disabled,
   margin-top: var(--space-2);
 }
 
+/* ----- Tailoring progress panel ----- */
+
+.tailoring-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  margin: var(--space-2) 0 var(--space-3);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+
+.tailoring-progress-running {
+  border-left-color: #1a3e8c;
+  background: #f4f7ff;
+}
+
+.tailoring-progress-loading {
+  border-left-color: #b07a00;
+  background: #fffaf0;
+}
+
+.tailoring-progress-ready {
+  border-left-color: #1f6a2a;
+  background: #f1faf1;
+}
+
+.tailoring-progress-failed {
+  border-left-color: #8a1f2c;
+  background: #fdf2f4;
+}
+
+.tailoring-progress-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tailoring-progress-title {
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.tailoring-progress-title:hover {
+  text-decoration: underline;
+}
+
+.tailoring-progress-detail {
+  font-size: 13px;
+  color: var(--muted-fg);
+  margin: 0;
+}
+
+.tailoring-progress-meta {
+  font-size: 12px;
+  color: var(--muted-fg);
+  margin: 0;
+}
+
+.tailoring-progress-retry {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+}
+
+.tailoring-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tailoring-spin 0.9s linear infinite;
+  color: var(--muted-fg);
+}
+
+@keyframes tailoring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.import-failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.import-failure .error {
+  margin: 0;
+}
+
+.import-failure > button {
+  align-self: flex-start;
+}
+
 /* ----- Stage track ----- */
 
 .job-status-track {

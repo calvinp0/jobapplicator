@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -28,7 +28,6 @@ import {
   draftStatusLabel,
   runIsActive,
   runNeedsImport,
-  runStatusLabel,
 } from "../lib/workflow";
 import { useRunAutoPolling } from "./RunDetailPage";
 
@@ -43,6 +42,15 @@ const STEP_TITLES = [
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
   return new Date(value).toLocaleString();
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainder}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
 }
 
 function WorkspaceStep({
@@ -90,7 +98,10 @@ export function JobDetailPage() {
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const trackedRunIdRef = useRef<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applyingVersionId, setApplyingVersionId] = useState<string | null>(
     null,
@@ -235,10 +246,10 @@ export function JobDetailPage() {
   }, []);
 
   const handleImportError = useCallback((message: string) => {
-    setGenerateError(message);
+    setImportError(message);
   }, []);
 
-  useRunAutoPolling({
+  const { isImporting, importFailed, retryImport } = useRunAutoPolling({
     runId: latestRun?.id ?? null,
     run: latestRun,
     needsImport: latestRunNeedsImportForPoll,
@@ -246,6 +257,29 @@ export function JobDetailPage() {
     onImported: handleVersionImported,
     onImportError: handleImportError,
   });
+
+  // Reset import error when the user starts a new run.
+  useEffect(() => {
+    const id = latestRun?.id ?? null;
+    if (id !== trackedRunIdRef.current) {
+      trackedRunIdRef.current = id;
+      setImportError(null);
+    }
+  }, [latestRun?.id]);
+
+  // Tick the elapsed-time display while a run is active.
+  const runActiveForTick =
+    !!latestRun &&
+    (runIsActive(latestRun.status) ||
+      (latestRun.status === "completed" &&
+        resumeVersions !== null &&
+        runNeedsImport(latestRun, resumeVersions) &&
+        !importFailed));
+  useEffect(() => {
+    if (!runActiveForTick) return;
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [runActiveForTick]);
 
   if (loadError) {
     return (
@@ -282,20 +316,59 @@ export function JobDetailPage() {
   );
   const approvedDrafts = orderedDrafts.filter((v) => v.approved_at !== null);
   const hasPriorRuns = runs.length > 0;
+  const latestRunVersion = latestRun
+    ? resumeVersions.find((v) => v.claude_run_id === latestRun.id) ?? null
+    : null;
   const latestRunNeedsImport = latestRun
     ? runNeedsImport(latestRun, resumeVersions)
     : false;
   const latestRunActive = latestRun
     ? runIsActive(latestRun.status) || latestRunNeedsImport
     : false;
-  const latestRunDraftReady =
-    !!latestRun &&
-    (latestRunNeedsImport || latestRun.status === "imported");
-  const latestRunStatusText = latestRun
-    ? latestRunDraftReady
-      ? "Draft ready to review"
-      : runStatusLabel(latestRun.status)
-    : null;
+  // Step-3 progress copy — must match the task's wording.
+  let progressCopy: { title: string; detail: string | null } | null = null;
+  let progressTone: "running" | "loading" | "ready" | "failed" | null = null;
+  if (latestRun) {
+    if (latestRun.status === "failed") {
+      progressCopy = {
+        title: "Tailoring failed",
+        detail: latestRun.error_message ?? null,
+      };
+      progressTone = "failed";
+    } else if (importFailed && importError) {
+      progressCopy = {
+        title:
+          "The tailoring run finished, but the draft could not be loaded.",
+        detail: importError,
+      };
+      progressTone = "failed";
+    } else if (latestRunVersion || latestRun.status === "imported") {
+      progressCopy = { title: "Draft ready to review.", detail: null };
+      progressTone = "ready";
+    } else if (latestRun.status === "completed") {
+      progressCopy = {
+        title: "Tailoring finished. Loading the generated draft…",
+        detail: null,
+      };
+      progressTone = "loading";
+    } else {
+      progressCopy = {
+        title: "Tailoring in progress…",
+        detail:
+          "The app is generating a draft using your selected resume and evidence bank. This can take a little while.",
+      };
+      progressTone = "running";
+    }
+  }
+
+  const latestRunStartedAt = latestRun?.started_at ?? latestRun?.created_at ?? null;
+  const elapsedSeconds =
+    latestRunActive && latestRunStartedAt
+      ? Math.max(
+          0,
+          Math.floor((nowTick - new Date(latestRunStartedAt).getTime()) / 1000),
+        )
+      : null;
 
   return (
     <section className="job-detail">
@@ -390,17 +463,56 @@ export function JobDetailPage() {
             <p className="workspace-step-help">
               Generate a tailored draft from the resume source above.
             </p>
-            {latestRun && latestRunStatusText ? (
-              <p className="workspace-run-status">
-                Latest tailoring:{" "}
-                <Link to={`/runs/${latestRun.id}`}>{latestRunStatusText}</Link>
-                {latestRunActive ? null : (
-                  <span className="workspace-run-meta">
-                    {" "}
-                    · started {formatTimestamp(latestRun.created_at)}
-                  </span>
-                )}
-              </p>
+            {latestRun && progressCopy && progressTone ? (
+              <div
+                className={`tailoring-progress tailoring-progress-${progressTone}`}
+                role="status"
+                aria-live="polite"
+              >
+                <div className="tailoring-progress-header">
+                  {progressTone === "running" || progressTone === "loading" ? (
+                    <span
+                      className="tailoring-spinner"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <Link
+                    to={`/runs/${latestRun.id}`}
+                    className="tailoring-progress-title"
+                  >
+                    {progressCopy.title}
+                  </Link>
+                </div>
+                {progressCopy.detail ? (
+                  <p className="tailoring-progress-detail">
+                    {progressCopy.detail}
+                  </p>
+                ) : null}
+                <p className="tailoring-progress-meta">
+                  Started {formatTimestamp(latestRun.created_at)}
+                  {elapsedSeconds !== null ? (
+                    <>
+                      {" "}
+                      · {formatElapsed(elapsedSeconds)} elapsed
+                    </>
+                  ) : null}
+                </p>
+                {importFailed && importError ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportError(null);
+                      void retryImport();
+                    }}
+                    disabled={isImporting}
+                    className="tailoring-progress-retry"
+                  >
+                    {isImporting
+                      ? "Loading draft…"
+                      : "Retry loading draft"}
+                  </button>
+                ) : null}
+              </div>
             ) : null}
             <button
               type="button"
