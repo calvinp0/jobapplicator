@@ -17,18 +17,78 @@ def _capture_payload(**overrides):
     return base
 
 
-def test_create_capture(client):
-    r = client.post("/captures", json=_capture_payload())
+def test_create_capture_incomplete_stays_pending(client):
+    r = client.post(
+        "/captures",
+        json=_capture_payload(description_text="", company=None),
+    )
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["company"] == "Example Corp"
     assert body["user_confirmed"] is False
+    assert body["auto_confirmed"] is False
+    assert body["job_id"] is None
     assert body["id"]
 
 
+def test_create_capture_complete_auto_confirms_into_job(client):
+    r = client.post("/captures", json=_capture_payload())
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["user_confirmed"] is True
+    assert body["auto_confirmed"] is True
+    assert body["job_id"]
+
+    job = client.get(f"/jobs/{body['job_id']}").json()
+    assert job["company"] == "Example Corp"
+    assert job["title"] == "ML Engineer"
+    assert job["created_from_capture_id"] == body["id"]
+
+
+def test_create_capture_complete_without_location_still_auto_confirms(client):
+    r = client.post("/captures", json=_capture_payload(location=None))
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["auto_confirmed"] is True
+    assert body["job_id"]
+
+
+def test_create_capture_dedups_on_repeat_url(client):
+    first = client.post("/captures", json=_capture_payload()).json()
+    assert first["job_reused"] is False
+
+    second = client.post(
+        "/captures",
+        json=_capture_payload(title="Different Title"),
+    ).json()
+    assert second["auto_confirmed"] is True
+    assert second["job_reused"] is True
+    assert second["job_id"] == first["job_id"]
+    assert second["id"] != first["id"]
+
+    jobs = client.get("/jobs").json()
+    matching = [j for j in jobs if j["id"] == first["job_id"]]
+    assert len(matching) == 1
+    # Original job is reused as-is; we do not overwrite it from a later capture.
+    assert matching[0]["title"] == "ML Engineer"
+
+
 def test_list_captures_returns_recent_first(client):
-    client.post("/captures", json=_capture_payload(company="One"))
-    client.post("/captures", json=_capture_payload(company="Two"))
+    client.post(
+        "/captures",
+        json=_capture_payload(
+            company="One",
+            external_url="https://www.linkedin.com/jobs/view/1",
+            description_text="",
+        ),
+    )
+    client.post(
+        "/captures",
+        json=_capture_payload(
+            company="Two",
+            external_url="https://www.linkedin.com/jobs/view/2",
+            description_text="",
+        ),
+    )
     r = client.get("/captures")
     assert r.status_code == 200
     companies = [c["company"] for c in r.json()]

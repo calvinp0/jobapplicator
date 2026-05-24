@@ -66,6 +66,7 @@ const baseCapture = {
   captured_at: "2026-05-22T12:00:00Z",
   user_confirmed: false,
   created_at: "2026-05-22T12:00:00Z",
+  job_id: null,
 };
 
 describe("CaptureDetailPage confirm flow", () => {
@@ -130,6 +131,23 @@ describe("CaptureDetailPage confirm flow", () => {
     expect(
       await screen.findByText(/missing required fields:.*company/i),
     ).toBeInTheDocument();
+    expect(confirmCaptureMock).not.toHaveBeenCalled();
+  });
+
+  it("shows an Open job link when the capture was auto-confirmed", async () => {
+    getCaptureMock.mockResolvedValue({
+      ...baseCapture,
+      user_confirmed: true,
+      job_id: "job-99",
+    });
+
+    renderDetail("cap-1");
+
+    const link = await screen.findByRole("link", { name: /open job/i });
+    expect(link).toHaveAttribute("href", "/jobs/job-99");
+    expect(
+      screen.queryByRole("button", { name: /confirm/i }),
+    ).not.toBeInTheDocument();
     expect(confirmCaptureMock).not.toHaveBeenCalled();
   });
 
