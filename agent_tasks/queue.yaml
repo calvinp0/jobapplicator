@@ -1016,3 +1016,19 @@ tasks:
       - "docs/contracts/claude_run_directory.md"
       - "agent_tasks/052-tailoring-progress-events.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "053-extension-linkedin-description-extraction"
+    title: "Improve LinkedIn job description extraction"
+    file: "agent_tasks/053-extension-linkedin-description-extraction.md"
+    branch: "agent/053-extension-linkedin-description-extraction"
+    worktree: "agent-053-extension-linkedin-description-extraction"
+    status: "ready"
+    depends_on:
+      - "005-extension-capture"
+    verification:
+      - "cd extension && npm install"
+      - "cd extension && npm run build"
+    allowed_paths:
+      - "extension/**"
+      - "agent_tasks/053-extension-linkedin-description-extraction.md"
+      - "agent_tasks/queue.yaml"
