@@ -193,4 +193,39 @@ describe("SettingsPage", () => {
       await within(resumeSection).findByText(/value cannot be blank/i),
     ).toBeInTheDocument();
   });
+
+  it("shows a friendly fallback (never the raw request string) when an ApiError has no detail", async () => {
+    const user = userEvent.setup();
+    createMasterResumeMock.mockRejectedValue(
+      new ApiErrorMock(
+        "Request to /master-resumes failed with status 500",
+        500,
+        null,
+      ),
+    );
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
+    );
+
+    const resumeSection = screen
+      .getByRole("heading", { level: 3, name: /master resumes/i })
+      .closest("section") as HTMLElement;
+    const utils = within(resumeSection);
+
+    await user.type(utils.getByLabelText(/^name$/i), "Bad");
+    await user.type(utils.getByLabelText(/content/i), "x");
+    await user.click(
+      utils.getByRole("button", { name: /add master resume/i }),
+    );
+
+    expect(
+      await within(resumeSection).findByText(/something went wrong/i),
+    ).toBeInTheDocument();
+    expect(
+      within(resumeSection).queryByText(/request to/i),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -13,21 +13,22 @@ import type {
   Job,
   ResumeVersion,
 } from "../api";
+import {
+  computeJobStage,
+  jobStageLabel,
+  runIsActive,
+  runNeedsImport,
+  runStatusLabel,
+  type JobStage,
+} from "../lib/workflow";
 
-const IN_FLIGHT_RUN_STATUSES = new Set(["created", "running", "completed"]);
-
-type JobStageKey =
-  | "tailoring"
-  | "review"
-  | "ready"
-  | "submitted"
-  | "captured";
-
-interface JobStage {
-  key: JobStageKey;
-  label: string;
-  variant: string;
-}
+const JOB_STAGE_VARIANTS: Record<JobStage, string> = {
+  captured: "pending",
+  tailoring: "running",
+  draft_ready: "completed",
+  approved: "approved",
+  sent: "submitted",
+};
 
 interface JobView {
   job: Job;
@@ -59,41 +60,17 @@ function formatRelative(value: string | null): string {
   return new Date(value).toLocaleDateString();
 }
 
-function computeJobStage(
-  job: Job,
-  versions: ResumeVersion[],
-  applications: Application[],
-  runs: ClaudeRun[],
-): JobStage {
-  const jobApps = applications.filter((a) => a.job_id === job.id);
-  if (jobApps.some((a) => a.status === "submitted")) {
-    return { key: "submitted", label: "Submitted", variant: "submitted" };
-  }
-  const jobVersions = versions.filter((v) => v.job_id === job.id);
-  if (jobVersions.some((v) => v.approved_at)) {
-    return { key: "ready", label: "Ready to apply", variant: "approved" };
-  }
-  if (jobVersions.length > 0) {
-    return {
-      key: "review",
-      label: "Resume ready to review",
-      variant: "completed",
-    };
-  }
-  const jobRuns = runs.filter((r) => r.job_id === job.id);
-  if (jobRuns.some((r) => IN_FLIGHT_RUN_STATUSES.has(r.status))) {
-    return { key: "tailoring", label: "Tailoring resume", variant: "running" };
-  }
-  return { key: "captured", label: "Awaiting tailoring", variant: "pending" };
-}
-
 function buildJobView(
   job: Job,
   versions: ResumeVersion[],
   applications: Application[],
   runs: ClaudeRun[],
 ): JobView {
-  const stage = computeJobStage(job, versions, applications, runs);
+  const jobApps = applications.filter((a) => a.job_id === job.id);
+  const submittedApp = jobApps.find((a) => a.status === "submitted") ?? null;
+  const openApp = jobApps.find((a) => a.status !== "submitted") ?? null;
+  const relevantApp = submittedApp ?? openApp;
+  const stage = computeJobStage(job, runs, versions, relevantApp);
   const jobVersions = versions
     .filter((v) => v.job_id === job.id)
     .sort((a, b) => b.version_number - a.version_number);
@@ -103,10 +80,9 @@ function buildJobView(
     jobVersions.find((v) => v.approved_at === null) ?? null;
   const jobRuns = runs.filter((r) => r.job_id === job.id);
   const inFlightRun =
-    jobRuns.find((r) => IN_FLIGHT_RUN_STATUSES.has(r.status)) ?? null;
-  const jobApps = applications.filter((a) => a.job_id === job.id);
-  const submittedApp = jobApps.find((a) => a.status === "submitted") ?? null;
-  const openApp = jobApps.find((a) => a.status !== "submitted") ?? null;
+    jobRuns.find(
+      (r) => runIsActive(r.status) || runNeedsImport(r, versions),
+    ) ?? null;
   return {
     job,
     stage,
@@ -126,18 +102,18 @@ interface NextAction {
 }
 
 function computeNextAction(views: JobView[]): NextAction | null {
-  const priority: JobStageKey[] = [
-    "ready",
-    "review",
+  const priority: JobStage[] = [
+    "approved",
+    "draft_ready",
     "tailoring",
     "captured",
   ];
-  for (const key of priority) {
-    const view = views.find((v) => v.stage.key === key);
+  for (const stage of priority) {
+    const view = views.find((v) => v.stage === stage);
     if (!view) continue;
     const company = view.job.company;
     const title = view.job.title;
-    if (key === "ready" && view.approvedVersion) {
+    if (stage === "approved" && view.approvedVersion) {
       const target = view.openApp
         ? `/applications/${view.openApp.id}`
         : `/jobs/${view.job.id}`;
@@ -148,7 +124,7 @@ function computeNextAction(views: JobView[]): NextAction | null {
         cta: view.openApp ? "Continue application" : "Open job",
       };
     }
-    if (key === "review" && view.pendingVersion) {
+    if (stage === "draft_ready" && view.pendingVersion) {
       return {
         title: `Review tailored resume for ${company}`,
         description: `${title} — a new draft is waiting on your approval.`,
@@ -156,7 +132,7 @@ function computeNextAction(views: JobView[]): NextAction | null {
         cta: "Review resume",
       };
     }
-    if (key === "tailoring" && view.inFlightRun) {
+    if (stage === "tailoring" && view.inFlightRun) {
       return {
         title: `Tailoring resume for ${company}`,
         description: `${title} — a tailoring run is in progress. Check on it when it finishes.`,
@@ -164,7 +140,7 @@ function computeNextAction(views: JobView[]): NextAction | null {
         cta: "View run",
       };
     }
-    if (key === "captured") {
+    if (stage === "captured") {
       return {
         title: `Tailor a resume for ${company}`,
         description: `${title} — pick a master resume and start a tailoring run.`,
@@ -321,20 +297,13 @@ export function DashboardPage() {
     applications.filter((a) => a.submitted_at !== null).map((a) => a.job_id),
   );
   const activeJobs = jobs.filter((j) => !submittedJobIds.has(j.id));
-  const importedRunIds = new Set(
-    resumeVersions
-      .map((v) => v.claude_run_id)
-      .filter((id): id is string => id !== null),
+  const inFlightRuns = runs.filter(
+    (run) => runIsActive(run.status) || runNeedsImport(run, resumeVersions),
   );
-  const inFlightRuns = runs.filter((run) => {
-    if (!IN_FLIGHT_RUN_STATUSES.has(run.status)) return false;
-    if (run.status === "completed" && importedRunIds.has(run.id)) return false;
-    return true;
-  });
   const submittedApplications = applications.filter(
     (a) => a.submitted_at !== null,
   );
-  const resumesReady = resumeVersions.filter((v) => v.approved_at !== null);
+  const draftsApproved = resumeVersions.filter((v) => v.approved_at !== null);
 
   const activeJobViews = activeJobs.map((j) =>
     buildJobView(j, resumeVersions, applications, runs),
@@ -378,10 +347,10 @@ export function DashboardPage() {
           </Link>
         </li>
         <li className="summary-card">
-          <span className="summary-card-label">Resumes ready</span>
-          <span className="summary-card-value">{resumesReady.length}</span>
+          <span className="summary-card-label">Drafts approved</span>
+          <span className="summary-card-value">{draftsApproved.length}</span>
           <span className="summary-card-meta">
-            {resumesReady.length === 0
+            {draftsApproved.length === 0
               ? "Approve a draft to unlock submitting"
               : "Approved and ready to send"}
           </span>
@@ -453,9 +422,9 @@ export function DashboardPage() {
                     <p className="job-card-company">{view.job.company}</p>
                   </div>
                   <span
-                    className={`status-badge status-badge-${view.stage.variant}`}
+                    className={`status-badge status-badge-${JOB_STAGE_VARIANTS[view.stage]}`}
                   >
-                    {view.stage.label}
+                    {jobStageLabel(view.stage)}
                   </span>
                 </div>
                 {view.job.location ? (
@@ -526,7 +495,8 @@ export function DashboardPage() {
                   </Link>
                   <span className="run-meta-inline">
                     {" "}
-                    · {run.status} · {formatTimestamp(run.created_at)}
+                    · {runStatusLabel(run.status)} ·{" "}
+                    {formatTimestamp(run.created_at)}
                   </span>
                 </li>
               );

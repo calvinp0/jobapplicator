@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import {
-  ApiError,
   createEvidenceBank,
   createMasterResume,
   listEvidenceBanks,
   listMasterResumes,
 } from "../api";
 import type { EvidenceBank, MasterResume } from "../api";
+import { extractApiDetail } from "../lib/api-errors";
 
 interface SeedEntity {
   id: string;
@@ -29,33 +29,6 @@ interface SectionProps<T extends SeedEntity> {
   onCreated: (item: T) => void;
   contentLabel: string;
   submitLabel: string;
-}
-
-function extractServerMessage(body: unknown): string | null {
-  if (body && typeof body === "object" && "detail" in body) {
-    const detail = (body as { detail: unknown }).detail;
-    if (typeof detail === "string") return detail;
-    if (
-      detail &&
-      typeof detail === "object" &&
-      "message" in detail &&
-      typeof (detail as { message: unknown }).message === "string"
-    ) {
-      return (detail as { message: string }).message;
-    }
-    if (Array.isArray(detail)) {
-      const first = detail[0];
-      if (
-        first &&
-        typeof first === "object" &&
-        "msg" in first &&
-        typeof (first as { msg: unknown }).msg === "string"
-      ) {
-        return (first as { msg: string }).msg;
-      }
-    }
-  }
-  return null;
 }
 
 function SeedSection<T extends SeedEntity>({
@@ -92,11 +65,7 @@ function SeedSection<T extends SeedEntity>({
       setSourcePath("");
       setContentMarkdown("");
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setSubmitError(extractServerMessage(err.body) ?? err.message);
-      } else {
-        setSubmitError(`Failed to create ${title.toLowerCase()}`);
-      }
+      setSubmitError(extractApiDetail(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -182,9 +151,7 @@ export function SettingsPage() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message =
-          err instanceof ApiError ? err.message : "Failed to load settings";
-        setLoadError(message);
+        setLoadError(extractApiDetail(err));
       });
     return () => {
       cancelled = true;
