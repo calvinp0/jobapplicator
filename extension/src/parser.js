@@ -30,12 +30,28 @@ const LOCATION_SELECTORS = [
   ".topcard__flavor--bullet",
 ];
 
+// Ranked list of selectors used to locate the job description on LinkedIn.
+// LinkedIn ships several layouts (logged-in two-pane, /jobs/view/ detail page,
+// public-share fallback) and the markup drifts often. We try the most specific
+// id first, then the layout-level wrappers, then a couple of legacy/test-id
+// selectors. Absolute XPath is intentionally avoided — see task 053.
 const DESCRIPTION_SELECTORS = [
   "#job-details",
-  ".jobs-description__content .jobs-description-content__text",
+  ".jobs-description__content",
+  ".jobs-box__html-content",
   ".jobs-description-content__text",
+  "[data-test-job-description]",
   ".description__text",
 ];
+
+// A non-empty match shorter than this is treated as suspect (e.g. a not-yet-
+// hydrated skeleton). We still keep it as a fallback in case no selector
+// returns a "real" description.
+const DESCRIPTION_MIN_CHARS = 100;
+
+// Whitespace class includes non-breaking space ( ) because LinkedIn
+// frequently injects NBSPs around bullets and inline icons.
+const INLINE_WS_RE = /[ \t ]+/g;
 
 /**
  * Determine whether a URL looks like a LinkedIn job page.
@@ -111,17 +127,40 @@ function detectApplicationMethod(document) {
   return null;
 }
 
-function extractDescriptionText(document) {
-  const node = firstMatchingNode(document, DESCRIPTION_SELECTORS);
-  if (!node) return null;
-  // Preserve paragraph breaks but collapse runs of whitespace within lines.
-  const raw = node.textContent || "";
-  const collapsed = raw
+function readVisibleText(node) {
+  // Prefer innerText in a real browser — it respects CSS visibility (LinkedIn
+  // sometimes hides parts of the description behind a "Show more" affordance)
+  // and inserts line breaks at block boundaries. jsdom does not implement
+  // innerText faithfully, so fall back to textContent for tests.
+  if (!node) return "";
+  const fromInner = typeof node.innerText === "string" ? node.innerText : "";
+  if (fromInner) return fromInner;
+  return node.textContent || "";
+}
+
+function normalizeMultiline(raw) {
+  if (!raw) return "";
+  return raw
     .split(/\n+/)
-    .map((line) => line.replace(/[ \t ]+/g, " ").trim())
+    .map((line) => line.replace(INLINE_WS_RE, " ").trim())
     .filter((line) => line.length > 0)
     .join("\n");
-  return collapsed || null;
+}
+
+function extractDescriptionText(document) {
+  // Walk the ranked selector list. Return the first match that clears the
+  // "real description" length bar; otherwise return the longest shorter match
+  // so an unusually terse posting still surfaces something useful.
+  let fallback = "";
+  for (const selector of DESCRIPTION_SELECTORS) {
+    const node = document.querySelector(selector);
+    if (!node) continue;
+    const text = normalizeMultiline(readVisibleText(node));
+    if (!text) continue;
+    if (text.length >= DESCRIPTION_MIN_CHARS) return text;
+    if (text.length > fallback.length) fallback = text;
+  }
+  return fallback || null;
 }
 
 function extractRawText(document) {
@@ -136,7 +175,7 @@ function extractRawText(document) {
   const node = firstMatchingNode(document, containerSelectors);
   if (!node) return null;
   const text = (node.textContent || "")
-    .replace(/[ \t ]+/g, " ")
+    .replace(INLINE_WS_RE, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return text || null;

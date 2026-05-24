@@ -30,6 +30,12 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
       }
+      .label.ok {
+        color: #1a7f37;
+      }
+      .label.err {
+        color: #cf222e;
+      }
       .value {
         white-space: pre-wrap;
         word-break: break-word;
@@ -74,7 +80,7 @@
       <div class="row"><span class="label">Location</span><div class="value" id="f-location"></div></div>
       <div class="row"><span class="label">Apply</span><div class="value" id="f-apply"></div></div>
       <div class="row"><span class="label">URL</span><div class="value" id="f-url"></div></div>
-      <div class="row"><span class="label">Description (preview)</span><pre id="f-desc"></pre></div>
+      <div class="row"><span class="label" id="f-desc-label">Description</span><pre id="f-desc"></pre></div>
     </div>
     <script src="popup.js"></script>
   </body>

@@ -134,6 +134,66 @@ describe("parseLinkedInJob — missing location", () => {
   });
 });
 
+describe("parseLinkedInJob — description selector fallback", () => {
+  const url = "https://www.linkedin.com/jobs/view/4012345678/";
+
+  function buildDoc(bodyHtml) {
+    const dom = new JSDOM(
+      `<!doctype html><html><body>${bodyHtml}</body></html>`,
+    );
+    return dom.window.document;
+  }
+
+  it("uses #job-details first when present", () => {
+    const long = "Lorem ipsum ".repeat(20);
+    const document = buildDoc(`
+      <div id="job-details"><p>${long}</p></div>
+      <div class="jobs-box__html-content"><p>SHOULD NOT WIN</p></div>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toContain("Lorem ipsum");
+    expect(payload.description_text).not.toContain("SHOULD NOT WIN");
+  });
+
+  it("falls back to .jobs-box__html-content when #job-details is absent", () => {
+    const long = "Responsibilities and requirements ".repeat(10);
+    const document = buildDoc(`
+      <div class="jobs-box__html-content"><p>${long}</p></div>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toContain("Responsibilities and requirements");
+  });
+
+  it("falls back to [data-test-job-description] as a last resort", () => {
+    const long = "We are hiring talented engineers to build great products. ".repeat(4);
+    const document = buildDoc(`
+      <section data-test-job-description><p>${long}</p></section>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toContain("We are hiring");
+  });
+
+  it("prefers a longer match over a short skeleton match earlier in the list", () => {
+    // #job-details exists but is empty / skeleton; the real text sits in a
+    // later selector. We should still return the longer description.
+    const long = "Detailed job description that easily exceeds the threshold. ".repeat(5);
+    const document = buildDoc(`
+      <div id="job-details"></div>
+      <div class="jobs-description__content"><p>${long}</p></div>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toContain("Detailed job description");
+  });
+
+  it("still surfaces short descriptions when nothing clears the threshold", () => {
+    const document = buildDoc(`
+      <div id="job-details"><p>Tiny posting.</p></div>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toBe("Tiny posting.");
+  });
+});
+
 describe("parseLinkedInJob — non-LinkedIn page rejection", () => {
   it("throws when the URL is not a LinkedIn job page", async () => {
     const document = await loadFixtureDocument("non_linkedin_page.html");
