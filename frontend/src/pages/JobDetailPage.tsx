@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ApiError,
   createApplication,
   createRun,
   getJob,
+  invokeRun,
   listApplications,
   listEvidenceBanks,
   listMasterResumes,
@@ -19,30 +20,51 @@ import type {
   MasterResume,
   ResumeVersion,
 } from "../api";
+import { extractApiDetail } from "../lib/api-errors";
+import {
+  draftLabel,
+  draftStatusLabel,
+  runIsActive,
+  runNeedsImport,
+  runStatusLabel,
+} from "../lib/workflow";
 
-const STAGES = ["Captured", "Tailoring", "Approved", "Submitted"] as const;
-type Stage = (typeof STAGES)[number];
-
-const IN_FLIGHT_RUN_STATUSES = new Set([
-  "created",
-  "running",
-  "completed-not-imported",
-]);
-
-function computeStage(
-  runs: ClaudeRun[],
-  versions: ResumeVersion[],
-  applications: Application[],
-): Stage {
-  if (applications.some((a) => a.status === "submitted")) return "Submitted";
-  if (versions.some((v) => v.approved_at)) return "Approved";
-  if (runs.length > 0) return "Tailoring";
-  return "Captured";
-}
+const STEP_TITLES = [
+  "Read the job description",
+  "Choose resume source",
+  "Generate a draft",
+  "Review and approve drafts",
+  "Send your application",
+] as const;
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
   return new Date(value).toLocaleString();
+}
+
+function WorkspaceStep({
+  index,
+  title,
+  children,
+}: {
+  index: number;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className="workspace-step"
+      aria-label={`Step ${index}: ${title}`}
+    >
+      <header className="workspace-step-header">
+        <span className="workspace-step-index" aria-hidden="true">
+          {index}
+        </span>
+        <h3 className="workspace-step-title">{title}</h3>
+      </header>
+      <div className="workspace-step-body">{children}</div>
+    </section>
+  );
 }
 
 export function JobDetailPage() {
@@ -61,12 +83,13 @@ export function JobDetailPage() {
   const [selectedResumeId, setSelectedResumeId] = useState<string>("");
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applyingVersionId, setApplyingVersionId] = useState<string | null>(
     null,
   );
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
 
   useEffect(() => {
     if (!jobId) return;
@@ -90,9 +113,7 @@ export function JobDetailPage() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message =
-          err instanceof ApiError ? err.message : "Failed to load job";
-        setLoadError(message);
+        setLoadError(extractApiDetail(err));
       });
     return () => {
       cancelled = true;
@@ -111,38 +132,48 @@ export function JobDetailPage() {
       });
       navigate(`/applications/${application.id}`);
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to create application";
-      setApplyError(message);
+      setApplyError(extractApiDetail(err));
     } finally {
       setApplyingVersionId(null);
     }
   }
 
-  async function handleGenerate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handleGenerate() {
     if (!jobId) return;
     if (!selectedResumeId) {
-      setSubmitError("Pick a master resume before generating.");
+      setGenerateError("Pick a master resume before generating a draft.");
       return;
     }
-    setIsSubmitting(true);
-    setSubmitError(null);
+    setIsGenerating(true);
+    setGenerateError(null);
     try {
       const run = await createRun({
         job_id: jobId,
         master_resume_id: selectedResumeId,
         evidence_bank_id: selectedBankId || null,
       });
+      await invokeRun(run.id);
       navigate(`/runs/${run.id}`);
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to create run";
-      setSubmitError(message);
+      setGenerateError(extractApiDetail(err));
     } finally {
-      setIsSubmitting(false);
+      setIsGenerating(false);
     }
   }
+
+  const orderedDrafts = useMemo(() => {
+    if (!resumeVersions) return [];
+    return [...resumeVersions].sort((a, b) =>
+      a.created_at.localeCompare(b.created_at),
+    );
+  }, [resumeVersions]);
+
+  const latestRun = useMemo(() => {
+    if (!runs || runs.length === 0) return null;
+    return [...runs].sort((a, b) =>
+      b.created_at.localeCompare(a.created_at),
+    )[0];
+  }, [runs]);
 
   if (loadError) {
     return (
@@ -171,11 +202,25 @@ export function JobDetailPage() {
     );
   }
 
-  const stage = computeStage(runs, resumeVersions, applications);
-  const inFlightRuns = runs.filter((r) => IN_FLIGHT_RUN_STATUSES.has(r.status));
   const hasSubmittedApplication = applications.some(
     (a) => a.status === "submitted",
   );
+  const submittedApplication = applications.find(
+    (a) => a.status === "submitted",
+  );
+  const approvedDrafts = orderedDrafts.filter((v) => v.approved_at !== null);
+  const hasPriorRuns = runs.length > 0;
+  const latestRunNeedsImport = latestRun
+    ? runNeedsImport(latestRun, resumeVersions)
+    : false;
+  const latestRunActive = latestRun
+    ? runIsActive(latestRun.status) || latestRunNeedsImport
+    : false;
+  const latestRunStatusText = latestRun
+    ? latestRunNeedsImport
+      ? "Draft ready to review"
+      : runStatusLabel(latestRun.status)
+    : null;
 
   return (
     <section className="job-detail">
@@ -191,177 +236,204 @@ export function JobDetailPage() {
         </p>
       ) : null}
 
-      <ol
-        className="job-status-track"
-        aria-label="Job status"
-        data-testid="job-status-track"
-      >
-        {STAGES.map((s) => {
-          const isActive = s === stage;
-          return (
-            <li
-              key={s}
-              className={
-                isActive
-                  ? "job-status-step job-status-step-active"
-                  : "job-status-step"
-              }
-              aria-current={isActive ? "step" : undefined}
+      <ol className="workspace-steps" aria-label="Job workspace">
+        <li>
+          <WorkspaceStep index={1} title={STEP_TITLES[0]}>
+            <p className="workspace-step-help">
+              Confirm the role before tailoring a draft.
+            </p>
+            <button
+              type="button"
+              className="workspace-description-toggle"
+              aria-expanded={descriptionOpen}
+              aria-controls="job-description-body"
+              onClick={() => setDescriptionOpen((open) => !open)}
             >
-              {s}
-            </li>
-          );
-        })}
-      </ol>
+              {descriptionOpen ? "Hide job description" : "Read job description"}
+            </button>
+            {descriptionOpen ? (
+              <pre
+                id="job-description-body"
+                className="job-description"
+              >
+                {job.description_text}
+              </pre>
+            ) : null}
+          </WorkspaceStep>
+        </li>
 
-      <details>
-        <summary>Description</summary>
-        <pre className="job-description">{job.description_text}</pre>
-      </details>
-
-      <h3>Tailored resumes</h3>
-      {resumeVersions.length === 0 ? (
-        <p className="settings-empty">No resume versions for this job yet.</p>
-      ) : (
-        <ul className="resume-version-list">
-          {resumeVersions.map((v) => (
-            <li key={v.id} className="resume-version-list-item">
-              <Link to={`/resume-versions/${v.id}`}>
-                Version {v.version_number}
-              </Link>
-              <span className="resume-version-status">
-                {v.approved_at ? "Approved" : "Pending"}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <h4>In-flight runs</h4>
-      {inFlightRuns.length === 0 ? (
-        <p className="settings-empty">No runs in flight for this job.</p>
-      ) : (
-        <ul className="run-list">
-          {inFlightRuns.map((r) => (
-            <li key={r.id} className="run-list-item">
-              <Link to={`/runs/${r.id}`}>
-                <strong>{r.id}</strong>
-              </Link>
-              <span className="run-meta-inline"> · {r.status}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <h3>Submit this job</h3>
-      {(() => {
-        const approved = resumeVersions.filter((v) => v.approved_at);
-        if (hasSubmittedApplication) {
-          return (
-            <p className="settings-empty">
-              This job already has a submitted application.
-            </p>
-          );
-        }
-        if (approved.length === 0) {
-          return (
-            <p className="settings-empty">
-              Approve a resume version first (see Tailored resumes above).
-            </p>
-          );
-        }
-        return (
-          <ul className="resume-version-list">
-            {approved.map((v) => (
-              <li key={v.id} className="resume-version-list-item">
-                <span>
-                  Version {v.version_number}{" "}
-                  <span className="resume-version-status">(approved)</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleCreateApplication(v.id)}
-                  disabled={applyingVersionId !== null}
+        <li>
+          <WorkspaceStep index={2} title={STEP_TITLES[1]}>
+            {resumes.length === 0 ? (
+              <p className="settings-empty">
+                No master resumes yet —{" "}
+                <Link to="/settings">add one in Settings</Link> to enable
+                tailoring.
+              </p>
+            ) : (
+              <label className="field">
+                <span>Master resume</span>
+                <select
+                  value={selectedResumeId}
+                  onChange={(e) => setSelectedResumeId(e.target.value)}
                 >
-                  {applyingVersionId === v.id
-                    ? "Creating…"
-                    : "Create application"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        );
-      })()}
-      {applyError ? (
-        <p role="alert" className="error">
-          {applyError}
-        </p>
-      ) : null}
+                  <option value="">Select a master resume…</option>
+                  {resumes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {evidenceBanks.length === 0 ? (
+              <p className="workspace-step-help">
+                No evidence banks yet — optional, but useful for grounded
+                tailoring. <Link to="/settings">Add one in Settings.</Link>
+              </p>
+            ) : (
+              <label className="field">
+                <span>Evidence bank (optional)</span>
+                <select
+                  value={selectedBankId}
+                  onChange={(e) => setSelectedBankId(e.target.value)}
+                >
+                  <option value="">No evidence bank</option>
+                  {evidenceBanks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </WorkspaceStep>
+        </li>
 
-      <h4>Applications</h4>
-      {applications.length === 0 ? (
-        <p className="settings-empty">No applications for this job yet.</p>
-      ) : (
-        <ul className="application-list">
-          {applications.map((app) => (
-            <li key={app.id} className="application-list-item">
-              <Link to={`/applications/${app.id}`}>
-                <strong>{app.id}</strong>
-              </Link>
-              <span className="application-meta">
-                {" "}
-                · {app.status} · submitted {formatTimestamp(app.submitted_at)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+        <li>
+          <WorkspaceStep index={3} title={STEP_TITLES[2]}>
+            <p className="workspace-step-help">
+              Generate a tailored draft from the resume source above.
+            </p>
+            {latestRun && latestRunStatusText ? (
+              <p className="workspace-run-status">
+                Latest tailoring:{" "}
+                <Link to={`/runs/${latestRun.id}`}>{latestRunStatusText}</Link>
+                {latestRunActive ? null : (
+                  <span className="workspace-run-meta">
+                    {" "}
+                    · started {formatTimestamp(latestRun.created_at)}
+                  </span>
+                )}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={isGenerating || resumes.length === 0}
+            >
+              {isGenerating
+                ? "Generating…"
+                : hasPriorRuns
+                  ? "Generate another draft"
+                  : "Generate draft"}
+            </button>
+            {generateError ? (
+              <p role="alert" className="error">
+                {generateError}
+              </p>
+            ) : null}
+          </WorkspaceStep>
+        </li>
 
-      <h3>Tailor a new resume</h3>
-      <p className="job-meta">
-        Generate a new tailored draft when you want to iterate on the resume.
-      </p>
-      <form onSubmit={handleGenerate} noValidate>
-        <label className="field">
-          <span>Master resume</span>
-          <select
-            value={selectedResumeId}
-            onChange={(e) => setSelectedResumeId(e.target.value)}
-            required
-          >
-            <option value="">Select a master resume…</option>
-            {resumes.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Evidence bank (optional)</span>
-          <select
-            value={selectedBankId}
-            onChange={(e) => setSelectedBankId(e.target.value)}
-          >
-            <option value="">No evidence bank</option>
-            {evidenceBanks.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <li>
+          <WorkspaceStep index={4} title={STEP_TITLES[3]}>
+            {orderedDrafts.length === 0 ? (
+              <p className="settings-empty">
+                No drafts yet — generate one in step 3.
+              </p>
+            ) : (
+              <ul className="resume-version-list">
+                {orderedDrafts.map((v, index) => (
+                  <li key={v.id} className="resume-version-list-item">
+                    <Link to={`/resume-versions/${v.id}`}>
+                      {draftLabel(index)}
+                    </Link>
+                    <span className="resume-version-status">
+                      {draftStatusLabel(v.approved_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </WorkspaceStep>
+        </li>
 
-        {submitError ? (
-          <p role="alert" className="error">
-            {submitError}
-          </p>
-        ) : null}
-
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Generating…" : "Generate resume"}
-        </button>
-      </form>
+        <li>
+          <WorkspaceStep index={5} title={STEP_TITLES[4]}>
+            {hasSubmittedApplication ? (
+              <p className="workspace-step-status">
+                Sent
+                {submittedApplication?.submitted_at
+                  ? ` on ${formatTimestamp(submittedApplication.submitted_at)}`
+                  : null}
+                .
+              </p>
+            ) : approvedDrafts.length === 0 ? (
+              <p className="application-gating">
+                Pick an approved draft on the job page first.
+              </p>
+            ) : (
+              <ul className="resume-version-list">
+                {approvedDrafts.map((v) => {
+                  const index = orderedDrafts.findIndex((d) => d.id === v.id);
+                  return (
+                    <li key={v.id} className="resume-version-list-item">
+                      <span>
+                        {draftLabel(index)}{" "}
+                        <span className="resume-version-status">
+                          (Approved — ready to send)
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCreateApplication(v.id)}
+                        disabled={applyingVersionId !== null}
+                      >
+                        {applyingVersionId === v.id
+                          ? "Starting…"
+                          : "Start application"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {applyError ? (
+              <p role="alert" className="error">
+                {applyError}
+              </p>
+            ) : null}
+            {applications.length > 0 ? (
+              <ul className="application-list workspace-application-list">
+                {applications.map((app) => (
+                  <li key={app.id} className="application-list-item">
+                    <Link to={`/applications/${app.id}`}>
+                      Application opened {formatTimestamp(app.created_at)}
+                    </Link>
+                    {app.status === "submitted" ? (
+                      <span className="application-meta">
+                        {" "}
+                        · Sent {formatTimestamp(app.submitted_at)}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </WorkspaceStep>
+        </li>
+      </ol>
     </section>
   );
 }
