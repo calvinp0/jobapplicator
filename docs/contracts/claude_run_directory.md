@@ -20,6 +20,9 @@ runs/<run_id>/
 │   ├── tailored_resume.md
 │   ├── change_log.md
 │   └── claim_audit.md
+├── progress/
+│   └── progress.log              # user-facing phase events + worker heartbeats
+├── run.log
 └── metadata.json
 ```
 
@@ -175,9 +178,18 @@ output/tailored_resume.docx
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
+progress/progress.log
 ```
 
 Claude Code must not write outside the run directory.
+
+`progress/progress.log` is an append-only stream of short user-facing phase
+events (e.g., `Reading job description`, `Drafting tailored resume markdown`).
+The runtime prompt instructs Claude to append one plain-language line per
+phase, never to overwrite earlier lines, and never to include secrets, raw
+prompts, hashes, or internal paths. Progress events are informational only —
+they do not satisfy the required-output contract, and a run that writes
+progress lines but omits a required output file is still a failed run.
 
 ### Runtime permission expectation
 
@@ -230,7 +242,30 @@ see meaningful progress even when Claude Code itself produces sparse output.
 The file is truncated on each invocation. `GET /runs/{id}/log` returns the
 last `N` non-empty lines from this file for the live-progress UI; the
 endpoint reads only the tail and strips ANSI escape sequences, never
-exposing files outside the run directory.
+exposing files outside the run directory. `run.log` is the operator/technical
+stream — the default UI surfaces it under *Advanced details* only.
+
+### Progress log
+
+The worker also creates `progress/progress.log` inside `runs/<run_id>/` and
+truncates it on every invocation. This file is the user-facing progress feed:
+plain-language one-liners with no `jobapply:` prefix and no ANSI codes. Two
+writers append to it:
+
+- **Claude Code**, as instructed by the runtime prompt, writes one short line
+  per phase (e.g., `Reading job description`,
+  `Drafting tailored resume markdown`, `Validating required outputs`).
+- **The worker**, on a background thread, appends fallback heartbeats while
+  the subprocess is running and Claude has not produced its own events
+  (e.g., `Claude Code is running — 15 seconds elapsed`). The heartbeat
+  interval defaults to 15 seconds and can be tuned (or disabled) via the
+  `JOBAPPLY_PROGRESS_HEARTBEAT_SECONDS` environment variable. Setting it to
+  `0` disables the heartbeat thread entirely.
+
+`GET /runs/{id}/progress` returns the last `N` non-empty lines from this
+file. The default *Recent activity* panel on the run and job pages prefers
+this feed; if it is empty, the UI may fall back to `run.log`. Progress lines
+do not satisfy the required-output contract.
 
 ### Dry-run worker
 

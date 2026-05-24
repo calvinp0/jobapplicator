@@ -9,6 +9,7 @@ const {
   listResumeVersionsMock,
   getJobMock,
   getRunLogMock,
+  getRunProgressMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -28,6 +29,7 @@ const {
     listResumeVersionsMock: vi.fn(),
     getJobMock: vi.fn(),
     getRunLogMock: vi.fn(),
+    getRunProgressMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -39,6 +41,7 @@ vi.mock("../api", () => ({
   listResumeVersions: listResumeVersionsMock,
   getJob: getJobMock,
   getRunLog: getRunLogMock,
+  getRunProgress: getRunProgressMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -101,6 +104,14 @@ describe("RunDetailPage recent-activity panel", () => {
     vi.clearAllMocks();
     getJobMock.mockResolvedValue(job);
     listResumeVersionsMock.mockResolvedValue([]);
+    // Default: progress feed is empty so the existing tests exercise the
+    // run.log fallback path. Per-test overrides can install real progress
+    // lines via getRunProgressMock.mockResolvedValue(...).
+    getRunProgressMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: [],
+      truncated: false,
+    });
   });
 
   afterEach(() => {

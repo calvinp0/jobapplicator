@@ -4,6 +4,8 @@ import io
 import os
 import re
 import subprocess
+import threading
+import time
 import zipfile
 from collections import deque
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ CLAUDE_BINARY_ENV = "JOBAPPLY_CLAUDE_BINARY"
 CLAUDE_DRY_RUN_ENV = "JOBAPPLY_CLAUDE_DRY_RUN"
 CLAUDE_EXTRA_ARGS_ENV = "JOBAPPLY_CLAUDE_EXTRA_ARGS"
 CLAUDE_PERMISSION_MODE_ENV = "JOBAPPLY_CLAUDE_PERMISSION_MODE"
+PROGRESS_HEARTBEAT_ENV = "JOBAPPLY_PROGRESS_HEARTBEAT_SECONDS"
 
 # Default permission mode for the non-interactive backend run. ``acceptEdits``
 # auto-approves file writes inside the subprocess cwd (the run directory) so
@@ -31,12 +34,25 @@ DEFAULT_PERMISSION_MODE = "acceptEdits"
 RUN_LOG_FILENAME = "run.log"
 PROMPT_RELPATH = Path("input") / "tailoring_prompt.md"
 OUTPUT_DIRNAME = "output"
+PROGRESS_DIRNAME = "progress"
+PROGRESS_LOG_FILENAME = "progress.log"
+PROGRESS_RELPATH = Path(PROGRESS_DIRNAME) / PROGRESS_LOG_FILENAME
 
 # Default cap on lines returned by ``read_recent_log_lines`` and on bytes read
 # from the log file. Keeps the response small for the polling UI and bounds
 # memory use if a runaway Claude run produces a giant log.
 DEFAULT_LOG_TAIL_LINES = 40
 LOG_READ_MAX_BYTES = 256 * 1024
+
+# Heartbeat tick interval for the worker's fallback progress writer (seconds).
+# A value of 0 disables the heartbeat entirely (used by tests that don't want
+# the extra thread).
+DEFAULT_PROGRESS_HEARTBEAT_SECONDS = 15.0
+
+# Cap user-facing progress lines so a runaway Claude write doesn't bloat the
+# poll response. The runtime prompt asks for <=120 chars per line; this is a
+# defensive hard cap on top of that.
+PROGRESS_LINE_MAX_CHARS = 200
 
 # Strip the common subset of ANSI escape codes (CSI/SGR) that Claude's stdout
 # may carry. We intentionally do not parse OSC sequences — the simple regex
@@ -78,6 +94,76 @@ def read_recent_log_lines(
     if total_nonempty > max_lines:
         truncated = True
     return list(tail), truncated
+
+
+def read_progress_lines(
+    progress_path: Path,
+    *,
+    max_lines: int = DEFAULT_LOG_TAIL_LINES,
+    max_bytes: int = LOG_READ_MAX_BYTES,
+) -> tuple[list[str], bool]:
+    """Return the last ``max_lines`` user-facing progress lines.
+
+    Mirrors ``read_recent_log_lines`` but targets ``progress/progress.log``,
+    which contains plain user-facing one-liners (no ``jobapply:`` prefix and
+    no ANSI). Returns ``([], False)`` when the file does not yet exist so the
+    polling UI can stay quiet before the first event.
+    """
+    if not progress_path.is_file():
+        return [], False
+    size = progress_path.stat().st_size
+    truncated = size > max_bytes
+    with progress_path.open("rb") as f:
+        if truncated:
+            f.seek(size - max_bytes)
+            f.readline()
+        raw = f.read()
+    text = raw.decode("utf-8", errors="replace")
+    lines: list[str] = []
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        lines.append(cleaned)
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+        truncated = True
+    return lines, truncated
+
+
+def _heartbeat_interval_seconds() -> float:
+    """Return the heartbeat tick interval, or 0 to disable.
+
+    ``0`` disables the heartbeat thread entirely (used by tests where the
+    fake binary completes faster than any reasonable tick anyway).
+    """
+    raw = os.environ.get(PROGRESS_HEARTBEAT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_PROGRESS_HEARTBEAT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_PROGRESS_HEARTBEAT_SECONDS
+    return max(0.0, value)
+
+
+def _append_progress_line(progress_path: Path, message: str) -> None:
+    """Append one user-facing progress line. Best-effort: errors swallowed.
+
+    The progress file is shared between the worker (heartbeats, dry-run) and
+    Claude Code (phase events). Each writer opens-append-closes so a partial
+    write never blocks the other writer for long.
+    """
+    text = message.replace("\n", " ").replace("\r", " ").strip()
+    if not text:
+        return
+    if len(text) > PROGRESS_LINE_MAX_CHARS:
+        text = text[:PROGRESS_LINE_MAX_CHARS]
+    try:
+        with progress_path.open("a", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except OSError:
+        pass
 
 
 class ClaudeWorkerError(RuntimeError):
@@ -186,6 +272,27 @@ def _write_minimal_docx(path: Path) -> None:
     path.write_bytes(buf.getvalue())
 
 
+def _run_heartbeat(
+    progress_path: Path,
+    stop_event: threading.Event,
+    interval_seconds: float,
+) -> None:
+    """Write periodic 'still running' lines to ``progress/progress.log``.
+
+    Runs on a background thread alongside the Claude subprocess. Stops as
+    soon as the parent sets ``stop_event`` (which it does when the process
+    exits). The first tick fires after ``interval_seconds`` so a fast run
+    that completes inside the first interval gets no heartbeat lines at all.
+    """
+    start = time.monotonic()
+    while not stop_event.wait(interval_seconds):
+        elapsed = int(time.monotonic() - start)
+        _append_progress_line(
+            progress_path,
+            f"Claude Code is running — {elapsed} seconds elapsed",
+        )
+
+
 def _append_progress(log_path: Path, message: str) -> None:
     """Append a worker-owned progress line to ``run.log``.
 
@@ -245,6 +352,14 @@ def invoke_claude_run(
     log_path.write_text("", encoding="utf-8")
     _append_progress(log_path, "preparing tailoring inputs")
 
+    # Per docs/contracts/claude_run_directory.md the user-facing progress feed
+    # lives at ``progress/progress.log``. The directory is (re-)created and the
+    # file truncated on every invocation so the UI starts from a clean slate.
+    progress_dir = run_dir / PROGRESS_DIRNAME
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = progress_dir / PROGRESS_LOG_FILENAME
+    progress_path.write_text("", encoding="utf-8")
+
     run.status = "running"
     run.started_at = _now()
     run.completed_at = None
@@ -253,6 +368,14 @@ def invoke_claude_run(
 
     if is_dry_run():
         _append_progress(log_path, "dry-run mode: skipping Claude subprocess")
+        # Mirror the user-facing phases so the UI's progress panel still has
+        # something meaningful to show during a dry-run smoke test.
+        for line in (
+            "Preparing tailoring inputs",
+            "Writing placeholder tailored resume",
+            "Validating required outputs",
+        ):
+            _append_progress_line(progress_path, line)
         _write_dry_run_outputs(run_dir)
         with log_path.open("a", encoding="utf-8") as log:
             log.write(
@@ -280,49 +403,71 @@ def invoke_claude_run(
     _append_progress(log_path, f"launching Claude Code with cwd={run_dir}")
     _append_progress(log_path, f"permission mode={permission_mode}")
     _append_progress(log_path, f"output directory={output_dir}")
+    heartbeat_interval = _heartbeat_interval_seconds()
+    heartbeat_stop = threading.Event()
+    heartbeat_thread: Optional[threading.Thread] = None
     try:
         with log_path.open("a", encoding="utf-8") as log:
             log.write(
                 f"$ {' '.join(argv)}  (cwd={run_dir})\n"
             )
             log.flush()
+            try:
+                process = subprocess.Popen(
+                    argv,
+                    cwd=str(run_dir),
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+            except FileNotFoundError as exc:
+                _append_progress(log_path, f"claude binary not found: {binary}")
+                _append_progress(log_path, "marking run failed")
+                return _record_failure(
+                    db,
+                    run,
+                    f"claude binary not found: {binary} ({exc})",
+                )
+            except OSError as exc:
+                _append_progress(log_path, f"failed to launch claude binary {binary}")
+                _append_progress(log_path, "marking run failed")
+                return _record_failure(
+                    db,
+                    run,
+                    f"failed to launch claude binary {binary}: {exc}",
+                )
             _append_progress(log_path, "Claude Code process started")
-            # The append handle and the milestone helper both append; flushing
-            # before the subprocess starts keeps line ordering stable.
-            result = subprocess.run(
-                argv,
-                cwd=str(run_dir),
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-    except FileNotFoundError as exc:
-        _append_progress(log_path, f"claude binary not found: {binary}")
-        _append_progress(log_path, "marking run failed")
-        return _record_failure(
-            db,
-            run,
-            f"claude binary not found: {binary} ({exc})",
-        )
+            if heartbeat_interval > 0:
+                heartbeat_thread = threading.Thread(
+                    target=_run_heartbeat,
+                    args=(progress_path, heartbeat_stop, heartbeat_interval),
+                    daemon=True,
+                )
+                heartbeat_thread.start()
+            try:
+                returncode = process.wait()
+            finally:
+                heartbeat_stop.set()
+                if heartbeat_thread is not None:
+                    heartbeat_thread.join(timeout=2.0)
     except OSError as exc:
-        _append_progress(log_path, f"failed to launch claude binary {binary}")
+        _append_progress(log_path, f"failed to write run log: {exc}")
         _append_progress(log_path, "marking run failed")
         return _record_failure(
             db,
             run,
-            f"failed to launch claude binary {binary}: {exc}",
+            f"failed to write run log: {exc}",
         )
 
     _append_progress(
-        log_path, f"Claude Code process exited with code {result.returncode}"
+        log_path, f"Claude Code process exited with code {returncode}"
     )
 
-    if result.returncode != 0:
+    if returncode != 0:
         _append_progress(log_path, "marking run failed")
         run.status = "failed"
         run.error_message = (
-            f"claude exited with code {result.returncode}; see {log_path}"
+            f"claude exited with code {returncode}; see {log_path}"
         )
     else:
         _append_progress(log_path, "validating output files")

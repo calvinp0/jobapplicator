@@ -34,6 +34,7 @@ import {
   runIsTerminal,
   useRunAutoPolling,
   useRunLogPolling,
+  useRunProgressPolling,
 } from "./RunDetailPage";
 
 const STEP_TITLES = [
@@ -277,6 +278,20 @@ export function JobDetailPage() {
     runId: latestRun?.id ?? null,
     active: logPollingActive,
   });
+  const {
+    lines: latestRunProgressLines,
+    hasLoadedOnce: latestRunProgressLoaded,
+    truncated: latestRunProgressTruncated,
+  } = useRunProgressPolling({
+    runId: latestRun?.id ?? null,
+    active: logPollingActive,
+  });
+  const activityHasLoadedOnce =
+    latestRunProgressLoaded || latestRunLogLoaded;
+  const activityTruncated =
+    latestRunProgressLines.length > 0
+      ? latestRunProgressTruncated
+      : latestRunLogTruncated;
 
   // Reset import error when the user starts a new run.
   useEffect(() => {
@@ -533,9 +548,10 @@ export function JobDetailPage() {
                   </button>
                 ) : null}
                 <RunActivityPanel
+                  progressLines={latestRunProgressLines}
                   lines={latestRunLogLines}
-                  hasLoadedOnce={latestRunLogLoaded}
-                  truncated={latestRunLogTruncated}
+                  hasLoadedOnce={activityHasLoadedOnce}
+                  truncated={activityTruncated}
                 />
               </div>
             ) : null}

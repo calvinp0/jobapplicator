@@ -82,6 +82,12 @@ export interface RunLog {
   truncated: boolean;
 }
 
+export interface RunProgress {
+  run_id: string;
+  lines: string[];
+  truncated: boolean;
+}
+
 export interface ResumeVersion {
   id: string;
   job_id: string;

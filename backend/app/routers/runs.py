@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..claude_worker import (
+    PROGRESS_RELPATH,
     RUN_LOG_FILENAME,
     ClaudeWorkerError,
     invoke_claude_run,
+    read_progress_lines,
     read_recent_log_lines,
 )
 from ..db import get_db
@@ -24,6 +26,7 @@ from ..run_import import RunImportError, import_run_outputs
 from ..schemas import (
     ClaudeRunCreate,
     ClaudeRunLogRead,
+    ClaudeRunProgressRead,
     ClaudeRunRead,
     ResumeVersionRead,
 )
@@ -108,6 +111,28 @@ def get_run_log(run_id: str, db: Session = Depends(get_db)) -> ClaudeRunLogRead:
     log_path = Path(run.run_dir) / RUN_LOG_FILENAME
     lines, truncated = read_recent_log_lines(log_path)
     return ClaudeRunLogRead(run_id=run.id, lines=lines, truncated=truncated)
+
+
+@router.get("/{run_id}/progress", response_model=ClaudeRunProgressRead)
+def get_run_progress(
+    run_id: str, db: Session = Depends(get_db)
+) -> ClaudeRunProgressRead:
+    """Return recent user-facing progress lines for the live progress panel.
+
+    Reads ``progress/progress.log`` inside the run directory. The file
+    contains plain-language phase events written by Claude during the run
+    and worker heartbeats (when Claude is silent). Returns an empty list
+    when the file is absent so the UI can fall back to the technical log
+    or its waiting state.
+    """
+    run = db.get(ClaudeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="claude run not found")
+    progress_path = Path(run.run_dir) / PROGRESS_RELPATH
+    lines, truncated = read_progress_lines(progress_path)
+    return ClaudeRunProgressRead(
+        run_id=run.id, lines=lines, truncated=truncated
+    )
 
 
 @router.post("/{run_id}/invoke", response_model=ClaudeRunRead)
