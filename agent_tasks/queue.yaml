@@ -962,3 +962,25 @@ tasks:
       - "docs/contracts/claude_run_directory.md"
       - "agent_tasks/050-tailoring-live-progress-log.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "051-fix-claude-runtime-write-permissions"
+    title: "Fix Claude runtime write permissions"
+    file: "agent_tasks/051-fix-claude-runtime-write-permissions.md"
+    branch: "agent/051-fix-claude-runtime-write-permissions"
+    worktree: "agent-051-fix-claude-runtime-write-permissions"
+    status: "ready"
+    depends_on:
+      - "049-enforce-tailoring-output-contract"
+      - "050-tailoring-live-progress-log"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py backend/tests/test_run_directory.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_directory.py"
+      - "backend/app/routers/runs.py"
+      - "backend/tests/test_claude_worker.py"
+      - "backend/tests/test_run_directory.py"
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/051-fix-claude-runtime-write-permissions.md"
+      - "agent_tasks/queue.yaml"
