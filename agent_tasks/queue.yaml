@@ -1032,3 +1032,27 @@ tasks:
       - "extension/**"
       - "agent_tasks/053-extension-linkedin-description-extraction.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "054-auto-confirm-complete-extension-captures"
+    title: "Auto-confirm complete extension captures"
+    file: "agent_tasks/054-auto-confirm-complete-extension-captures.md"
+    branch: "agent/054-auto-confirm-complete-extension-captures"
+    worktree: "agent-054-auto-confirm-complete-extension-captures"
+    status: "ready"
+    depends_on:
+      - "053-extension-linkedin-description-extraction"
+    verification:
+      - "pytest backend/tests"
+      - "cd extension && npm install"
+      - "cd extension && npm run build"
+    allowed_paths:
+      - "backend/app/routers/captures.py"
+      - "backend/app/schemas.py"
+      - "backend/app/models.py"
+      - "backend/tests/**"
+      - "extension/**"
+      - "frontend/src/pages/CapturesPage.tsx"
+      - "frontend/src/pages/CaptureDetailPage.tsx"
+      - "frontend/src/test/**"
+      - "agent_tasks/054-auto-confirm-complete-extension-captures.md"
+      - "agent_tasks/queue.yaml"
