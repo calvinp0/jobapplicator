@@ -5,10 +5,10 @@ import json
 import os
 import shutil
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .models import EvidenceBank, Job, JobCapture, MasterResume
 
@@ -28,6 +28,7 @@ EXPECTED_OUTPUTS = (
 )
 
 RUNTIME_PROMPT_FILENAME = "resume_tailoring.md"
+REVISION_FEEDBACK_FILENAME = "revision_feedback.md"
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,19 @@ class RunDirectoryInfo:
     run_dir: Path
     prompt_hash: str
     input_hash: str
+
+
+@dataclass(frozen=True)
+class RevisionFeedbackInput:
+    """Inputs needed to stage ``input/revision_feedback.md`` on a follow-up run.
+
+    Per ADR-008 the file carries the user's free-text feedback body plus an
+    identifier for the source ``ResumeVersion`` and optional structured flags.
+    """
+
+    source_resume_version_id: str
+    feedback_markdown: str
+    structured_flags: Optional[dict[str, Any]] = field(default=None)
 
 
 class RunDirectoryError(ValueError):
@@ -78,6 +92,7 @@ def create_run_directory(
     job_capture: Optional[JobCapture] = None,
     run_id: Optional[str] = None,
     now: Optional[datetime] = None,
+    revision_feedback: Optional[RevisionFeedbackInput] = None,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
 
@@ -133,6 +148,12 @@ def create_run_directory(
     # Verbatim copy of the runtime prompt so prompt_hash matches the source.
     shutil.copyfile(prompt_src, input_dir / "tailoring_prompt.md")
 
+    if revision_feedback is not None:
+        _write_text(
+            input_dir / REVISION_FEEDBACK_FILENAME,
+            _render_revision_feedback(revision_feedback),
+        )
+
     # --- hashes ---
     prompt_hash = _sha256_bytes((input_dir / "tailoring_prompt.md").read_bytes())
 
@@ -175,6 +196,28 @@ def create_run_directory(
         prompt_hash=prompt_hash,
         input_hash=input_hash,
     )
+
+
+def _render_revision_feedback(feedback: RevisionFeedbackInput) -> str:
+    """Render the contents of ``input/revision_feedback.md`` per ADR-008.
+
+    The rendered file uses a small frontmatter block to surface the source
+    ResumeVersion id (and structured flags, when provided) so the worker
+    prompt can reference them distinctly from the free-text feedback body.
+    """
+    lines = ["---", f"source_resume_version_id: {feedback.source_resume_version_id}"]
+    if feedback.structured_flags is not None:
+        lines.append(
+            "structured_flags: "
+            + json.dumps(feedback.structured_flags, sort_keys=True)
+        )
+    lines.append("---")
+    lines.append("")
+    body = feedback.feedback_markdown.rstrip()
+    if body:
+        lines.append(body)
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _format_job_description(job: Job) -> str:
