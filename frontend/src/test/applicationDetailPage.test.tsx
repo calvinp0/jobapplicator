@@ -121,7 +121,7 @@ describe("ApplicationDetailPage", () => {
     vi.clearAllMocks();
   });
 
-  it("disables Mark Submitted when no resume version is linked", async () => {
+  it("disables 'I've sent it' when no resume version is linked", async () => {
     getApplicationMock.mockResolvedValue(applicationWithoutVersion);
     listApplicationEventsMock.mockResolvedValue([]);
 
@@ -134,15 +134,18 @@ describe("ApplicationDetailPage", () => {
     );
 
     const button = await screen.findByRole("button", {
-      name: /mark submitted/i,
+      name: /i've sent it/i,
     });
     expect(button).toBeDisabled();
     expect(
-      screen.getByText(/link an approved resume version first/i),
+      screen.getByText(
+        /pick an approved draft on the job page first\./i,
+      ),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /mark submitted/i })).toBeNull();
   });
 
-  it("disables Mark Submitted when the linked version is not approved", async () => {
+  it("disables 'I've sent it' when the linked version is not approved", async () => {
     getApplicationMock.mockResolvedValue({
       ...applicationWithApprovedVersion,
     });
@@ -156,15 +159,17 @@ describe("ApplicationDetailPage", () => {
     );
 
     const button = await screen.findByRole("button", {
-      name: /mark submitted/i,
+      name: /i've sent it/i,
     });
     await waitFor(() => expect(button).toBeDisabled());
     expect(
-      screen.getByText(/not yet approved/i),
+      screen.getByText(
+        /this draft has not been approved yet\. approve it on the job page first\./i,
+      ),
     ).toBeInTheDocument();
   });
 
-  it("submits and reflects the submitted status when version is approved", async () => {
+  it("records send and reflects the Sent status when version is approved", async () => {
     const user = userEvent.setup();
     getApplicationMock.mockResolvedValue({
       ...applicationWithApprovedVersion,
@@ -187,7 +192,7 @@ describe("ApplicationDetailPage", () => {
     renderApp("app-1");
 
     const button = await screen.findByRole("button", {
-      name: /mark submitted/i,
+      name: /i've sent it/i,
     });
     await waitFor(() => expect(button).toBeEnabled());
 
@@ -197,16 +202,11 @@ describe("ApplicationDetailPage", () => {
       expect(submitApplicationMock).toHaveBeenCalledWith("app-1"),
     );
 
-    await waitFor(() => {
-      const statusTerms = screen.getAllByText(/submitted/i);
-      expect(statusTerms.length).toBeGreaterThan(0);
-    });
-
-    // Badge updates to Submitted with the submitted variant once the
+    // Badge updates to Sent with the submitted variant once the
     // status transitions.
     await waitFor(() => {
       const badge = screen
-        .getAllByText("Submitted")
+        .getAllByText("Sent")
         .find((el) => el.classList.contains("status-badge"));
       expect(badge).toBeDefined();
       expect(badge).toHaveClass("status-badge-submitted");
@@ -214,9 +214,17 @@ describe("ApplicationDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /mark submitted/i }),
+        screen.getByRole("button", { name: /i've sent it/i }),
       ).toBeDisabled(),
     );
+
+    // Raw backend status enum string must not appear in the default UI.
+    // (The event_type field is allowed to render its raw value.)
+    expect(
+      screen
+        .queryAllByText(/^submitted$/i)
+        .filter((el) => el.tagName !== "STRONG"),
+    ).toHaveLength(0);
 
     // Heading now includes the job context.
     expect(
@@ -272,7 +280,7 @@ describe("ApplicationDetailPage", () => {
 
     // Summary fields live outside the disclosure.
     expect(screen.getByText(/^Status$/).closest("details")).toBeNull();
-    expect(screen.getByText(/^Submitted$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Sent at$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Job$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Resume version$/).closest("details")).toBeNull();
     expect(

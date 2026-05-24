@@ -122,11 +122,14 @@ describe("ApplicationsPage", () => {
     expect(screen.getByText(/5\/22\/2026|May 22, 2026|2026/)).toBeInTheDocument();
 
     // Each row carries a status badge: Approved (default variant) and
-    // Submitted (submitted variant).
+    // Sent (submitted variant).
     expect(screen.getByText("Approved")).toHaveClass("status-badge");
-    expect(screen.getByText("Submitted")).toHaveClass(
+    expect(screen.getByText("Sent")).toHaveClass(
       "status-badge-submitted",
     );
+
+    // Raw backend status enum strings must not appear in default UI.
+    expect(screen.queryByText(/^submitted$/i)).toBeNull();
   });
 
   it("renders the empty state when there are no applications", async () => {
