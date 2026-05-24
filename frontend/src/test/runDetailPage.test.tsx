@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -81,6 +81,14 @@ const importedRun = {
   status: "imported",
 };
 
+const failedRun = {
+  ...baseRun,
+  status: "failed",
+  started_at: "2026-05-22T12:01:00Z",
+  completed_at: "2026-05-22T12:02:00Z",
+  error_message: "model error",
+};
+
 const job = {
   id: "job-1",
   source_platform: "linkedin",
@@ -112,7 +120,7 @@ const resumeVersion = {
   created_at: "2026-05-22T12:06:00Z",
 };
 
-describe("RunDetailPage actions", () => {
+describe("RunDetailPage default UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getJobMock.mockResolvedValue(job);
@@ -122,7 +130,99 @@ describe("RunDetailPage actions", () => {
     vi.clearAllMocks();
   });
 
-  it("invokes a created run and reflects the updated status", async () => {
+  it("does not surface operator verbs `Invoke` or `Import outputs` in the default UI", async () => {
+    // `failed` is a terminal state — no polling, no auto-import — so the
+    // page is stable and we can assert the static structure of the UI.
+    getRunMock.mockResolvedValue({ ...failedRun });
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByText(/^Invoke$/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^invoke$/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/import outputs/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /import outputs/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the run status using runStatusLabel, not the raw enum", async () => {
+    getRunMock.mockResolvedValue({ ...failedRun });
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+
+    const statusDt = screen.getByText(/^Status$/);
+    expect(statusDt.nextElementSibling).toHaveTextContent(
+      /Tailoring failed/i,
+    );
+    // The raw enum should not appear in the default Status field.
+    expect(statusDt.nextElementSibling).not.toHaveTextContent(/^failed$/);
+  });
+
+  it("moves operator controls into Advanced details with the renamed labels", async () => {
+    const user = userEvent.setup();
+    getRunMock.mockResolvedValue({ ...failedRun });
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+
+    const disclosure = screen.getByText(/^Advanced details$/);
+    const detailsEl = disclosure.closest("details");
+    expect(detailsEl).not.toBeNull();
+    expect(detailsEl).toHaveClass("advanced-details");
+    expect(detailsEl).not.toHaveAttribute("open");
+
+    // The renamed operator controls live inside the disclosure.
+    const startBtn = within(detailsEl as HTMLElement).getByRole("button", {
+      name: /start tailoring/i,
+    });
+    const retryBtn = within(detailsEl as HTMLElement).getByRole("button", {
+      name: /retry import/i,
+    });
+    expect(startBtn).toBeInTheDocument();
+    expect(retryBtn).toBeInTheDocument();
+
+    // The raw status enum also lives inside Advanced details.
+    expect(screen.getByText(/^Raw status$/).closest("details")).toBe(
+      detailsEl,
+    );
+
+    // Expanding the disclosure surfaces the controls.
+    await user.click(disclosure);
+    expect(detailsEl).toHaveAttribute("open");
+  });
+
+  it("starts tailoring from the Advanced controls when status is created", async () => {
     const user = userEvent.setup();
     getRunMock.mockResolvedValueOnce({ ...baseRun });
     listResumeVersionsMock.mockResolvedValue([]);
@@ -138,92 +238,48 @@ describe("RunDetailPage actions", () => {
         }),
       ).toBeInTheDocument(),
     );
-    // Pending badge renders for status="created".
-    expect(screen.getByText("Pending")).toHaveClass("status-badge-pending");
 
-    const invokeBtn = screen.getByRole("button", { name: /^invoke$/i });
-    expect(invokeBtn).toBeEnabled();
+    const startBtn = screen.getByRole("button", {
+      name: /start tailoring/i,
+    });
+    expect(startBtn).toBeEnabled();
 
-    await user.click(invokeBtn);
+    await user.click(startBtn);
 
-    await waitFor(() =>
-      expect(invokeRunMock).toHaveBeenCalledWith("run-1"),
-    );
+    await waitFor(() => expect(invokeRunMock).toHaveBeenCalledWith("run-1"));
 
     await waitFor(() => {
       const statusDt = screen.getByText(/^Status$/);
-      expect(statusDt.nextElementSibling).toHaveTextContent("running");
+      expect(statusDt.nextElementSibling).toHaveTextContent(
+        /Tailoring in progress/i,
+      );
     });
-
-    expect(
-      screen.getByRole("button", { name: /^invoke$/i }),
-    ).toBeDisabled();
   });
 
-  it("imports outputs on a completed run and surfaces the new resume version", async () => {
-    const user = userEvent.setup();
-    getRunMock
-      .mockResolvedValueOnce({ ...completedRun })
-      .mockResolvedValueOnce({ ...importedRun });
+  it("renders import failures via extractApiDetail rather than the raw request/status string", async () => {
+    // The auto-import effect fires on a completed run with no version yet.
+    // The failing importRun should be parsed into the backend's `detail`.
+    getRunMock.mockResolvedValueOnce({ ...completedRun });
     listResumeVersionsMock.mockResolvedValue([]);
-    importRunMock.mockResolvedValue(resumeVersion);
+    const apiError = new ApiErrorMock(
+      "Request to /runs/run-1/import failed with status 400",
+      400,
+      { detail: "DOCX file is missing from the run directory" },
+    );
+    importRunMock.mockRejectedValue(apiError);
 
     renderRunDetail("run-1");
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", {
-          level: 2,
-          name: /resume tailoring run/i,
-        }),
-      ).toBeInTheDocument(),
-    );
-
-    const importBtn = screen.getByRole("button", {
-      name: /import outputs/i,
-    });
-    expect(importBtn).toBeEnabled();
-
-    await user.click(importBtn);
 
     await waitFor(() =>
       expect(importRunMock).toHaveBeenCalledWith("run-1"),
     );
 
-    await waitFor(() =>
-      expect(screen.getByText(/Resume version:/i)).toBeInTheDocument(),
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      /DOCX file is missing from the run directory/i,
     );
-    const versionLink = screen.getByRole("link", { name: "version-1" });
-    expect(versionLink).toHaveAttribute(
-      "href",
-      "/resume-versions/version-1",
-    );
-  });
-
-  it("does not call importRun when the run is not completed", async () => {
-    const user = userEvent.setup();
-    getRunMock.mockResolvedValue({ ...baseRun });
-    listResumeVersionsMock.mockResolvedValue([]);
-
-    renderRunDetail("run-1");
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", {
-          level: 2,
-          name: /resume tailoring run/i,
-        }),
-      ).toBeInTheDocument(),
-    );
-
-    const importBtn = screen.getByRole("button", {
-      name: /import outputs/i,
-    });
-    expect(importBtn).toBeDisabled();
-
-    await user.click(importBtn);
-
-    expect(importRunMock).not.toHaveBeenCalled();
+    expect(alert).not.toHaveTextContent(/Request to \/runs/i);
+    expect(alert).not.toHaveTextContent(/status 400/i);
   });
 
   it("surfaces an existing resume version when the run is already imported", async () => {
@@ -244,8 +300,7 @@ describe("RunDetailPage actions", () => {
   });
 
   it("renders summary fields by default and hides provenance behind Advanced details", async () => {
-    const user = userEvent.setup();
-    getRunMock.mockResolvedValue({ ...completedRun });
+    getRunMock.mockResolvedValue({ ...failedRun });
     listResumeVersionsMock.mockResolvedValue([]);
 
     renderRunDetail("run-1");
@@ -259,9 +314,7 @@ describe("RunDetailPage actions", () => {
       ).toBeInTheDocument(),
     );
 
-    // Summary fields are visible outside the disclosure. "Completed"
-    // appears both as a dt label and as the status badge label, so
-    // scope to the DT element.
+    // Summary fields are visible outside the disclosure.
     expect(screen.getByText(/^Status$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Created$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Started$/).closest("details")).toBeNull();
@@ -271,14 +324,11 @@ describe("RunDetailPage actions", () => {
     expect(completedDt).toBeDefined();
     expect(completedDt!.closest("details")).toBeNull();
 
-    // The disclosure renders with the heading "Advanced details", closed by default.
-    const disclosure = screen.getByText(/^Advanced details$/);
-    const detailsEl = disclosure.closest("details");
+    // Provenance fields live inside the Advanced details disclosure.
+    const detailsEl = screen
+      .getByText(/^Advanced details$/)
+      .closest("details");
     expect(detailsEl).not.toBeNull();
-    expect(detailsEl).toHaveClass("advanced-details");
-    expect(detailsEl).not.toHaveAttribute("open");
-
-    // Provenance fields live inside the disclosure.
     expect(screen.getByText(/^Run id$/).closest("details")).toBe(detailsEl);
     expect(screen.getByText(/^Run directory$/).closest("details")).toBe(
       detailsEl,
@@ -293,9 +343,5 @@ describe("RunDetailPage actions", () => {
     expect(screen.getByText(/^Output hash$/).closest("details")).toBe(
       detailsEl,
     );
-
-    // Expanding the disclosure surfaces the provenance fields to the user.
-    await user.click(disclosure);
-    expect(detailsEl).toHaveAttribute("open");
   });
 });

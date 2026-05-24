@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  ApiError,
   getJob,
   getRun,
   importRun,
@@ -9,6 +8,10 @@ import {
   listResumeVersions,
 } from "../api";
 import type { ClaudeRun, Job, ResumeVersion } from "../api";
+import { extractApiDetail } from "../lib/api-errors";
+import { runIsActive, runNeedsImport, runStatusLabel } from "../lib/workflow";
+
+export const RUN_POLL_INTERVAL_MS = 5000;
 
 export function runStatusBadge(status: string): {
   label: string;
@@ -16,19 +19,95 @@ export function runStatusBadge(status: string): {
 } {
   switch (status) {
     case "created":
-      return { label: "Pending", variant: "pending" };
+      return { label: runStatusLabel(status), variant: "pending" };
     case "running":
-      return { label: "Running", variant: "running" };
+      return { label: runStatusLabel(status), variant: "running" };
     case "completed":
-      return { label: "Completed", variant: "completed" };
+      return { label: runStatusLabel(status), variant: "completed" };
+    case "imported":
+      return { label: runStatusLabel(status), variant: "completed" };
     case "failed":
-      return { label: "Failed", variant: "failed" };
+      return { label: runStatusLabel(status), variant: "failed" };
     default:
       return {
         label: status.charAt(0).toUpperCase() + status.slice(1),
         variant: "default",
       };
   }
+}
+
+interface RunAutoPollingArgs {
+  runId: string | null;
+  run: ClaudeRun | null;
+  needsImport: boolean;
+  onUpdate: (run: ClaudeRun) => void;
+  onImported: (version: ResumeVersion) => void;
+  onImportError: (message: string) => void;
+  intervalMs?: number;
+}
+
+/**
+ * Poll `getRun(runId)` while the run is in a non-terminal state and fire
+ * `importRun(runId)` exactly once when it transitions into `completed`
+ * without an existing imported ResumeVersion.
+ *
+ * Polling stops on terminal states (`imported`, `failed`) and on unmount.
+ * If `importRun` fails the callback receives a parsed message and the
+ * one-shot guard is reset so a manual retry can succeed.
+ */
+export function useRunAutoPolling({
+  runId,
+  run,
+  needsImport,
+  onUpdate,
+  onImported,
+  onImportError,
+  intervalMs = RUN_POLL_INTERVAL_MS,
+}: RunAutoPollingArgs) {
+  const importTriggered = useRef(false);
+  const onUpdateRef = useRef(onUpdate);
+  const onImportedRef = useRef(onImported);
+  const onImportErrorRef = useRef(onImportError);
+
+  useEffect(() => {
+    onUpdateRef.current = onUpdate;
+  }, [onUpdate]);
+  useEffect(() => {
+    onImportedRef.current = onImported;
+  }, [onImported]);
+  useEffect(() => {
+    onImportErrorRef.current = onImportError;
+  }, [onImportError]);
+
+  useEffect(() => {
+    if (!runId || !run) return;
+    if (!needsImport) return;
+    if (importTriggered.current) return;
+    importTriggered.current = true;
+    importRun(runId)
+      .then(async (version) => {
+        onImportedRef.current(version);
+        const refreshed = await getRun(runId).catch(() => null);
+        if (refreshed) onUpdateRef.current(refreshed);
+      })
+      .catch((err: unknown) => {
+        importTriggered.current = false;
+        onImportErrorRef.current(extractApiDetail(err));
+      });
+  }, [runId, run, needsImport]);
+
+  const polling =
+    !!runId && !!run && (runIsActive(run.status) || needsImport);
+
+  useEffect(() => {
+    if (!polling || !runId) return;
+    const id = setInterval(() => {
+      getRun(runId)
+        .then((r) => onUpdateRef.current(r))
+        .catch(() => {});
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [polling, runId, intervalMs]);
 }
 
 function truncateHash(hash: string | null): string {
@@ -45,11 +124,12 @@ export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [run, setRun] = useState<ClaudeRun | null>(null);
   const [job, setJob] = useState<Job | null>(null);
-  const [resumeVersion, setResumeVersion] = useState<ResumeVersion | null>(
+  const [resumeVersions, setResumeVersions] = useState<ResumeVersion[] | null>(
     null,
   );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [isInvoking, setIsInvoking] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
@@ -60,25 +140,42 @@ export function RunDetailPage() {
       .then(async ([r, versions]) => {
         if (cancelled) return;
         setRun(r);
-        const existing =
-          versions.find((v) => v.claude_run_id === runId) ?? null;
-        setResumeVersion(existing);
+        setResumeVersions(versions);
         const j = await getJob(r.job_id).catch(() => null);
         if (cancelled || !j) return;
         setJob(j);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message =
-          err instanceof ApiError ? err.message : "Failed to load run";
-        setLoadError(message);
+        setLoadError(extractApiDetail(err));
       });
     return () => {
       cancelled = true;
     };
   }, [runId]);
 
-  async function handleInvoke() {
+  const resumeVersion =
+    resumeVersions?.find((v) => v.claude_run_id === runId) ?? null;
+  const needsImport = run
+    ? runNeedsImport(run, resumeVersions ?? [])
+    : false;
+
+  useRunAutoPolling({
+    runId: runId ?? null,
+    run,
+    needsImport,
+    onUpdate: setRun,
+    onImported: (version) => {
+      setResumeVersions((prev) => {
+        if (!prev) return [version];
+        const without = prev.filter((v) => v.id !== version.id);
+        return [...without, version];
+      });
+    },
+    onImportError: setImportError,
+  });
+
+  async function handleStartTailoring() {
     if (!runId || !run || run.status !== "created") return;
     setIsInvoking(true);
     setActionError(null);
@@ -86,27 +183,28 @@ export function RunDetailPage() {
       const updated = await invokeRun(runId);
       setRun(updated);
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to invoke run";
-      setActionError(message);
+      setActionError(extractApiDetail(err));
     } finally {
       setIsInvoking(false);
     }
   }
 
-  async function handleImport() {
+  async function handleRetryImport() {
     if (!runId || !run || run.status !== "completed") return;
     setIsImporting(true);
     setActionError(null);
+    setImportError(null);
     try {
       const version = await importRun(runId);
-      setResumeVersion(version);
+      setResumeVersions((prev) => {
+        if (!prev) return [version];
+        const without = prev.filter((v) => v.id !== version.id);
+        return [...without, version];
+      });
       const refreshed = await getRun(runId);
       setRun(refreshed);
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to import run";
-      setActionError(message);
+      setActionError(extractApiDetail(err));
     } finally {
       setIsImporting(false);
     }
@@ -147,7 +245,7 @@ export function RunDetailPage() {
       </h2>
       <dl className="run-meta">
         <dt>Status</dt>
-        <dd>{run.status}</dd>
+        <dd>{runStatusLabel(run.status)}</dd>
         <dt>Created</dt>
         <dd>{formatTimestamp(run.created_at)}</dd>
         <dt>Started</dt>
@@ -162,26 +260,9 @@ export function RunDetailPage() {
         ) : null}
       </dl>
 
-      <div className="run-actions">
-        <button
-          type="button"
-          onClick={handleInvoke}
-          disabled={run.status !== "created" || isInvoking}
-        >
-          {isInvoking ? "Invoking…" : "Invoke"}
-        </button>
-        <button
-          type="button"
-          onClick={handleImport}
-          disabled={run.status !== "completed" || isImporting}
-        >
-          {isImporting ? "Importing…" : "Import outputs"}
-        </button>
-      </div>
-
-      {actionError ? (
+      {importError ? (
         <p role="alert" className="error">
-          {actionError}
+          {importError}
         </p>
       ) : null}
 
@@ -205,6 +286,10 @@ export function RunDetailPage() {
           <dd>
             <code>{run.run_dir}</code>
           </dd>
+          <dt>Raw status</dt>
+          <dd>
+            <code>{run.status}</code>
+          </dd>
           <dt>Prompt hash</dt>
           <dd>
             <code>{truncateHash(run.prompt_hash)}</code>
@@ -218,6 +303,27 @@ export function RunDetailPage() {
             <code>{truncateHash(run.output_hash)}</code>
           </dd>
         </dl>
+        <div className="run-actions advanced-run-actions">
+          <button
+            type="button"
+            onClick={handleStartTailoring}
+            disabled={run.status !== "created" || isInvoking}
+          >
+            {isInvoking ? "Starting…" : "Start tailoring"}
+          </button>
+          <button
+            type="button"
+            onClick={handleRetryImport}
+            disabled={run.status !== "completed" || isImporting}
+          >
+            {isImporting ? "Importing…" : "Retry import"}
+          </button>
+        </div>
+        {actionError ? (
+          <p role="alert" className="error">
+            {actionError}
+          </p>
+        ) : null}
       </details>
     </section>
   );

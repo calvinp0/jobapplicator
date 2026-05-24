@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -28,6 +28,7 @@ import {
   runNeedsImport,
   runStatusLabel,
 } from "../lib/workflow";
+import { useRunAutoPolling } from "./RunDetailPage";
 
 const STEP_TITLES = [
   "Read the job description",
@@ -175,6 +176,40 @@ export function JobDetailPage() {
     )[0];
   }, [runs]);
 
+  const latestRunNeedsImportForPoll =
+    latestRun && resumeVersions
+      ? runNeedsImport(latestRun, resumeVersions)
+      : false;
+
+  const handleRunUpdate = useCallback((updated: ClaudeRun) => {
+    setRuns((prev) => {
+      if (!prev) return prev;
+      const without = prev.filter((r) => r.id !== updated.id);
+      return [...without, updated];
+    });
+  }, []);
+
+  const handleVersionImported = useCallback((version: ResumeVersion) => {
+    setResumeVersions((prev) => {
+      if (!prev) return [version];
+      const without = prev.filter((v) => v.id !== version.id);
+      return [...without, version];
+    });
+  }, []);
+
+  const handleImportError = useCallback((message: string) => {
+    setGenerateError(message);
+  }, []);
+
+  useRunAutoPolling({
+    runId: latestRun?.id ?? null,
+    run: latestRun,
+    needsImport: latestRunNeedsImportForPoll,
+    onUpdate: handleRunUpdate,
+    onImported: handleVersionImported,
+    onImportError: handleImportError,
+  });
+
   if (loadError) {
     return (
       <section className="job-detail">
@@ -216,8 +251,11 @@ export function JobDetailPage() {
   const latestRunActive = latestRun
     ? runIsActive(latestRun.status) || latestRunNeedsImport
     : false;
+  const latestRunDraftReady =
+    !!latestRun &&
+    (latestRunNeedsImport || latestRun.status === "imported");
   const latestRunStatusText = latestRun
-    ? latestRunNeedsImport
+    ? latestRunDraftReady
       ? "Draft ready to review"
       : runStatusLabel(latestRun.status)
     : null;
