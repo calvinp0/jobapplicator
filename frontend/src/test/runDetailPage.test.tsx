@@ -37,6 +37,9 @@ vi.mock("../api", () => ({
   importRun: importRunMock,
   listResumeVersions: listResumeVersionsMock,
   getJob: getJobMock,
+  getRunLog: vi.fn(() =>
+    Promise.resolve({ run_id: "stub", lines: [], truncated: false }),
+  ),
   ApiError: ApiErrorMock,
 }));
 

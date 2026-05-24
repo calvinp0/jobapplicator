@@ -29,7 +29,12 @@ import {
   runIsActive,
   runNeedsImport,
 } from "../lib/workflow";
-import { useRunAutoPolling } from "./RunDetailPage";
+import {
+  RunActivityPanel,
+  runIsTerminal,
+  useRunAutoPolling,
+  useRunLogPolling,
+} from "./RunDetailPage";
 
 const STEP_TITLES = [
   "Read the job description",
@@ -256,6 +261,21 @@ export function JobDetailPage() {
     onUpdate: handleRunUpdate,
     onImported: handleVersionImported,
     onImportError: handleImportError,
+  });
+
+  // Live recent-activity feed for the most-recent run. Active until the run
+  // reaches a terminal state; the final lines stay visible after failure or
+  // import so the user sees what happened.
+  const logPollingActive = latestRun
+    ? !runIsTerminal(latestRun.status)
+    : false;
+  const {
+    lines: latestRunLogLines,
+    hasLoadedOnce: latestRunLogLoaded,
+    truncated: latestRunLogTruncated,
+  } = useRunLogPolling({
+    runId: latestRun?.id ?? null,
+    active: logPollingActive,
   });
 
   // Reset import error when the user starts a new run.
@@ -512,6 +532,11 @@ export function JobDetailPage() {
                       : "Retry loading draft"}
                   </button>
                 ) : null}
+                <RunActivityPanel
+                  lines={latestRunLogLines}
+                  hasLoadedOnce={latestRunLogLoaded}
+                  truncated={latestRunLogTruncated}
+                />
               </div>
             ) : null}
             <button

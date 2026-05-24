@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from ..claude_worker import ClaudeWorkerError, invoke_claude_run
+from ..claude_worker import (
+    RUN_LOG_FILENAME,
+    ClaudeWorkerError,
+    invoke_claude_run,
+    read_recent_log_lines,
+)
 from ..db import get_db
 from ..models import ClaudeRun, EvidenceBank, Job, JobCapture, MasterResume
 from ..run_directory import (
@@ -14,7 +21,12 @@ from ..run_directory import (
     default_runtime_prompts_root,
 )
 from ..run_import import RunImportError, import_run_outputs
-from ..schemas import ClaudeRunCreate, ClaudeRunRead, ResumeVersionRead
+from ..schemas import (
+    ClaudeRunCreate,
+    ClaudeRunLogRead,
+    ClaudeRunRead,
+    ResumeVersionRead,
+)
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -79,6 +91,23 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> ClaudeRun:
     if run is None:
         raise HTTPException(status_code=404, detail="claude run not found")
     return run
+
+
+@router.get("/{run_id}/log", response_model=ClaudeRunLogRead)
+def get_run_log(run_id: str, db: Session = Depends(get_db)) -> ClaudeRunLogRead:
+    """Return recent ``run.log`` lines for live progress polling.
+
+    The log file is read directly from the run directory recorded on the
+    ``ClaudeRun`` row, so this never escapes a run's own directory. An
+    absent log file (run hasn't written anything yet) returns an empty list
+    rather than a 404 so the polling UI can stay quiet.
+    """
+    run = db.get(ClaudeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="claude run not found")
+    log_path = Path(run.run_dir) / RUN_LOG_FILENAME
+    lines, truncated = read_recent_log_lines(log_path)
+    return ClaudeRunLogRead(run_id=run.id, lines=lines, truncated=truncated)
 
 
 @router.post("/{run_id}/invoke", response_model=ClaudeRunRead)

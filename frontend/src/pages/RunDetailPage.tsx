@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   getJob,
   getRun,
+  getRunLog,
   importRun,
   invokeRun,
   listResumeVersions,
@@ -12,6 +13,45 @@ import { extractApiDetail } from "../lib/api-errors";
 import { runIsActive, runNeedsImport, runStatusLabel } from "../lib/workflow";
 
 export const RUN_POLL_INTERVAL_MS = 5000;
+export const RUN_LOG_POLL_INTERVAL_MS = 2000;
+export const RUN_LOG_DEFAULT_DISPLAY_LINES = 8;
+
+const ANSI_ESCAPE_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+
+/**
+ * A run is in a terminal state once we should stop live-polling it. The
+ * intermediate `completed` state is non-terminal because the frontend
+ * still needs to drive the import handshake.
+ */
+export function runIsTerminal(status: string): boolean {
+  return status === "imported" || status === "failed";
+}
+
+/**
+ * Sanitize raw run.log lines into a compact, user-readable list:
+ *   - strip ANSI escape codes (in case any leaked through the backend)
+ *   - drop blank/whitespace-only lines
+ *   - collapse adjacent duplicates (Claude tends to repeat spinner ticks)
+ *   - strip the `jobapply: ` prefix so milestones read cleanly
+ *   - keep only the last `maxLines` lines
+ */
+export function sanitizeRunLogLines(
+  lines: string[],
+  maxLines: number = RUN_LOG_DEFAULT_DISPLAY_LINES,
+): string[] {
+  const cleaned: string[] = [];
+  for (const raw of lines) {
+    const stripped = raw.replace(ANSI_ESCAPE_RE, "").trim();
+    if (!stripped) continue;
+    const display = stripped.startsWith("jobapply: ")
+      ? stripped.slice("jobapply: ".length)
+      : stripped;
+    if (cleaned.length > 0 && cleaned[cleaned.length - 1] === display) continue;
+    cleaned.push(display);
+  }
+  if (cleaned.length <= maxLines) return cleaned;
+  return cleaned.slice(cleaned.length - maxLines);
+}
 
 export function runStatusBadge(status: string): {
   label: string;
@@ -145,6 +185,135 @@ export function useRunAutoPolling({
   return { isImporting, importFailed, retryImport };
 }
 
+interface RunLogPollingArgs {
+  runId: string | null;
+  active: boolean;
+  intervalMs?: number;
+}
+
+export interface RunLogPollingState {
+  /** Raw lines (post-sanitization order). May be empty until the worker
+   *  writes the first milestone or while a non-existent log returns []. */
+  lines: string[];
+  /** True for one render after the very first response, regardless of
+   *  whether it was empty — lets callers distinguish "loading" from "no
+   *  activity yet". */
+  hasLoadedOnce: boolean;
+  truncated: boolean;
+}
+
+/**
+ * Poll `GET /runs/{id}/log` while `active`. Polling is cheaper than the
+ * run-row poll because the endpoint reads only the file tail, so we tick
+ * faster (2s vs 5s) — the user wants the activity feed to feel live.
+ *
+ * Stops polling on `runIsTerminal(status)` so a final failed/imported
+ * panel keeps its last lines without spamming the backend.
+ */
+export function useRunLogPolling({
+  runId,
+  active,
+  intervalMs = RUN_LOG_POLL_INTERVAL_MS,
+}: RunLogPollingArgs): RunLogPollingState {
+  const [lines, setLines] = useState<string[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+
+  // Reset when the run we're following changes.
+  useEffect(() => {
+    setLines([]);
+    setTruncated(false);
+    setHasLoadedOnce(false);
+  }, [runId]);
+
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    const tick = () => {
+      getRunLog(runId)
+        .then((res) => {
+          if (cancelled) return;
+          setLines(res.lines);
+          setTruncated(res.truncated);
+          setHasLoadedOnce(true);
+        })
+        .catch(() => {
+          // Swallow polling errors — the activity panel is best-effort.
+        });
+    };
+    tick();
+    if (!active) return () => {
+      cancelled = true;
+    };
+    const id = setInterval(tick, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [runId, active, intervalMs]);
+
+  return { lines, hasLoadedOnce, truncated };
+}
+
+interface RunActivityPanelProps {
+  lines: string[];
+  hasLoadedOnce: boolean;
+  truncated?: boolean;
+  maxLines?: number;
+}
+
+/**
+ * Renders the "Recent activity" list shown on RunDetailPage and as part of
+ * the in-progress card on JobDetailPage. Keeps presentation compact:
+ * de-duplicated `jobapply:`-stripped lines, capped at `maxLines`.
+ */
+export function RunActivityPanel({
+  lines,
+  hasLoadedOnce,
+  truncated = false,
+  maxLines = RUN_LOG_DEFAULT_DISPLAY_LINES,
+}: RunActivityPanelProps) {
+  const display = sanitizeRunLogLines(lines, maxLines);
+  if (!hasLoadedOnce) {
+    return (
+      <div className="run-activity" aria-live="polite">
+        <p className="run-activity-empty">Loading recent activity…</p>
+      </div>
+    );
+  }
+  if (display.length === 0) {
+    return (
+      <div className="run-activity" aria-live="polite">
+        <p className="run-activity-empty">
+          Waiting for the tailoring agent to start…
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="run-activity" aria-live="polite">
+      <p className="run-activity-label">Recent activity</p>
+      <ul className="run-activity-list">
+        {display.map((line, idx) => (
+          <li key={`${idx}:${line}`} className="run-activity-item">
+            {line}
+          </li>
+        ))}
+      </ul>
+      {truncated ? (
+        <p className="run-activity-truncated">
+          Earlier log lines hidden — see Advanced details for the full log.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function isMissingOutputsError(message: string | null): boolean {
+  if (!message) return false;
+  return message.toLowerCase().includes("expected output file missing");
+}
+
 function truncateHash(hash: string | null): string {
   if (!hash) return "—";
   return hash.length > 12 ? `${hash.slice(0, 12)}…` : hash;
@@ -210,6 +379,20 @@ export function RunDetailPage() {
       },
       onImportError: setImportError,
     });
+
+  // Keep streaming the log while the run is still working through the
+  // tailoring + import handshake. After it terminates we still load it
+  // once on mount (the hook's initial tick) so the panel shows the final
+  // recent activity.
+  const logPollingActive = run ? !runIsTerminal(run.status) : false;
+  const {
+    lines: logLines,
+    hasLoadedOnce: logHasLoadedOnce,
+    truncated: logTruncated,
+  } = useRunLogPolling({
+    runId: runId ?? null,
+    active: logPollingActive,
+  });
 
   async function handleStartTailoring() {
     if (!runId || !run || run.status !== "created") return;
@@ -302,6 +485,19 @@ export function RunDetailPage() {
         ) : null}
         <span className="tailoring-progress-label">{statusDisplay}</span>
       </div>
+
+      {run.status === "failed" && isMissingOutputsError(run.error_message) ? (
+        <p className="tailoring-failure-explanation">
+          The tailoring process finished without producing the required
+          output files.
+        </p>
+      ) : null}
+
+      <RunActivityPanel
+        lines={logLines}
+        hasLoadedOnce={logHasLoadedOnce}
+        truncated={logTruncated}
+      />
 
       <dl className="run-meta">
         <dt>Status</dt>

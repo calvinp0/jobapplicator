@@ -193,6 +193,23 @@ The backend validates outputs at two boundaries:
    any that resolve outside the run directory) before creating a
    `ResumeVersion` row and transitioning the run to `imported`.
 
+### Run log
+
+The worker writes a `run.log` file inside `runs/<run_id>/` capturing both:
+
+- the Claude subprocess's stdout/stderr (interleaved), and
+- worker-owned progress milestones prefixed with `jobapply:` (for example
+  `jobapply: launching Claude Code`, `jobapply: validating output files`,
+  `jobapply: missing expected output file: output/tailored_resume.docx`,
+  `jobapply: marking run failed`).
+
+The `jobapply:` lines are written before/after the subprocess so the user can
+see meaningful progress even when Claude Code itself produces sparse output.
+The file is truncated on each invocation. `GET /runs/{id}/log` returns the
+last `N` non-empty lines from this file for the live-progress UI; the
+endpoint reads only the tail and strips ANSI escape sequences, never
+exposing files outside the run directory.
+
 ### Dry-run worker
 
 When `JOBAPPLY_CLAUDE_DRY_RUN=1`, the worker skips the Claude subprocess and

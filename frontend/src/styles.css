@@ -1074,6 +1074,66 @@ button[type="submit"]:disabled,
   }
 }
 
+.run-activity {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(15, 23, 42, 0.03);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.run-activity-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-fg);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 var(--space-1);
+}
+
+.run-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-activity-item {
+  color: var(--content-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.run-activity-item::before {
+  content: "• ";
+  color: var(--muted-fg);
+}
+
+.run-activity-empty {
+  margin: 0;
+  color: var(--muted-fg);
+  font-style: italic;
+  font-size: 13px;
+}
+
+.run-activity-truncated {
+  margin: var(--space-1) 0 0;
+  color: var(--muted-fg);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.tailoring-failure-explanation {
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--content-fg);
+  font-size: 14px;
+}
+
 .import-failure {
   display: flex;
   flex-direction: column;
