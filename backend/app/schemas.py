@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import APPLICATION_STATUSES
+from .models import APPLICATION_STATUSES, REVISION_FEEDBACK_STATUSES
 
 
 class _ORMModel(BaseModel):
@@ -194,3 +194,29 @@ class ResumeVersionRead(_ORMModel):
     source: str
     approved_at: Optional[datetime]
     created_at: datetime
+
+
+# ---- RevisionFeedback ----
+
+# Request body shape for the (future, task 045) endpoint at
+# POST /api/resume-versions/{resume_version_id}/revision-feedback.
+# The source ResumeVersion is supplied via the path, not the body.
+# `structured_flags` is accepted here but not persisted as a column;
+# the endpoint renders it into runs/<run_id>/input/revision_feedback.md
+# as frontmatter, per ADR-008.
+class RevisionFeedbackCreate(BaseModel):
+    feedback_markdown: str = Field(min_length=1)
+    structured_flags: Optional[Dict[str, Any]] = None
+
+
+class RevisionFeedbackRead(_ORMModel):
+    id: str
+    job_id: str
+    source_resume_version_id: str
+    followup_claude_run_id: Optional[str]
+    feedback_markdown: str
+    status: str
+    created_at: datetime
+
+
+REVISION_FEEDBACK_STATUS_SET = set(REVISION_FEEDBACK_STATUSES)

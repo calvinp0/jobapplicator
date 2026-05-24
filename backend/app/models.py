@@ -21,6 +21,7 @@ def _now() -> datetime:
 # Status string constants. Kept as module-level tuples (not Enum) because SQLite
 # stores them as TEXT and we want to keep migrations simple.
 CLAUDE_RUN_STATUSES = ("created", "running", "completed", "failed", "imported")
+REVISION_FEEDBACK_STATUSES = ("created", "used", "superseded")
 APPLICATION_STATUSES = (
     "draft",
     "generated",
@@ -198,6 +199,40 @@ class ApplicationEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
     application: Mapped[Application] = relationship(back_populates="events")
+
+
+class RevisionFeedback(Base):
+    """User feedback on a prior ResumeVersion, joining that draft to a follow-up ClaudeRun.
+
+    See ADR-008. Storage shape is intentionally a join row, not columns on
+    Run or ResumeVersion, so that one draft can collect multiple feedback
+    attempts over time. `followup_claude_run_id` is nullable so the row can
+    be inserted before / independently of its run; status lifecycle is
+    `created -> used | superseded` (run-level failure stays on ClaudeRun,
+    per ADR-008's explicit non-rule).
+    """
+
+    __tablename__ = "revision_feedbacks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    job_id: Mapped[str] = mapped_column(String(36), ForeignKey("jobs.id"), nullable=False)
+    source_resume_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resume_versions.id"), nullable=False
+    )
+    followup_claude_run_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("claude_runs.id"), nullable=True
+    )
+    feedback_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    job: Mapped[Job] = relationship()
+    source_resume_version: Mapped[ResumeVersion] = relationship(
+        foreign_keys=[source_resume_version_id]
+    )
+    followup_claude_run: Mapped[Optional[ClaudeRun]] = relationship(
+        foreign_keys=[followup_claude_run_id]
+    )
 
 
 class EmailLink(Base):
