@@ -224,6 +224,13 @@ __marimo__/
 runs/*
 !runs/.gitkeep
 
+# Local dev SQLite DB
+# backend/app/db.py defaults JOBAPPLY_DATABASE_URL to sqlite:///./jobapply.db,
+# so importing app.main (e.g. via uvicorn) from backend/ materializes a DB
+# there. Tests use a tempfile and never write to this path.
+backend/jobapply.db
+/jobapply.db
+
 # Editor / OS
 .DS_Store
 .idea/
