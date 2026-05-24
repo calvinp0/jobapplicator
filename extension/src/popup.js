@@ -21,6 +21,10 @@ function setStatus(text, kind) {
   el.hidden = false;
 }
 
+function formatChars(n) {
+  return n.toLocaleString("en-US");
+}
+
 function showPreview(payload) {
   $("preview").hidden = false;
   $("f-title").textContent = payload.title ?? "(missing)";
@@ -28,9 +32,22 @@ function showPreview(payload) {
   $("f-location").textContent = payload.location ?? "(missing)";
   $("f-apply").textContent = payload.application_method ?? "(unknown)";
   $("f-url").textContent = payload.external_url ?? "";
+
   const desc = payload.description_text || "";
-  $("f-desc").textContent =
-    desc.length > 600 ? desc.slice(0, 600) + "…" : desc;
+  const descLabel = $("f-desc-label");
+  const descPreview = $("f-desc");
+  if (desc.length > 0) {
+    descLabel.textContent = `Description captured — ${formatChars(desc.length)} chars`;
+    descLabel.className = "label ok";
+    descPreview.hidden = false;
+    descPreview.textContent =
+      desc.length > 600 ? desc.slice(0, 600) + "…" : desc;
+  } else {
+    descLabel.textContent = "Description missing";
+    descLabel.className = "label err";
+    descPreview.hidden = true;
+    descPreview.textContent = "";
+  }
 }
 
 async function getActiveTab() {
