@@ -13,7 +13,8 @@ runs/<run_id>/
 │   ├── skills_inventory.md
 │   ├── tailoring_preferences.md
 │   ├── resume_dos_and_donts.md
-│   └── tailoring_prompt.md
+│   ├── tailoring_prompt.md
+│   └── revision_feedback.md      # only present on follow-up runs
 ├── output/
 │   ├── tailored_resume.docx
 │   ├── tailored_resume.md
@@ -127,6 +128,25 @@ The final rendered runtime prompt given to Claude Code.
 
 It should instruct Claude Code to read all input files and write the required output files.
 
+### `revision_feedback.md`
+
+User-authored feedback on a prior tailored draft, used to drive a follow-up tailoring run.
+
+This file is **only present on follow-up tailoring runs** that were created in response to user feedback on an earlier `ResumeVersion`. First-draft tailoring runs do not have this file in their `input/` directory, and the worker must not assume it exists.
+
+Defined by ADR-008. The backend writes it when creating the follow-up `ClaudeRun`; the runtime prompt instructs the worker to read it as a discrete input rather than splicing its contents into `tailoring_prompt.md`.
+
+Contents:
+
+- the user's free-text feedback as a markdown body
+- an identifier for the source `ResumeVersion` that the feedback targets
+- optionally, structured feedback flags (e.g., common-asks checkboxes from the frontend) rendered as small frontmatter or a short list at the top of the file
+
+Boundaries the worker must respect when reading this file:
+
+- Per ADR-004, feedback does not override evidence constraints. If the user asks for a claim that is not supported by `master_resume.md`, `evidence_bank.md`, or `project_notes.md`, the revised draft must either omit the claim or surface it as a gap in `output/claim_audit.md`. Unsupported claims must never be silently inserted.
+- Per ADR-002, Claude Code may not write to the database or to anything outside the run directory. The feedback file is a read-only input; the worker's only response to it is updated output files in `output/`.
+
 ## Claude Code Read Boundary
 
 Claude Code may read:
@@ -141,7 +161,10 @@ input/skills_inventory.md
 input/tailoring_preferences.md
 input/resume_dos_and_donts.md
 input/tailoring_prompt.md
+input/revision_feedback.md
 ```
+
+`input/revision_feedback.md` is only present on follow-up tailoring runs (see ADR-008); when absent, the worker must treat the run as a first-draft tailoring run.
 
 ## Claude Code Write Boundary
 
