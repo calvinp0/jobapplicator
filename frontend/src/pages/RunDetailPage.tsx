@@ -11,7 +11,12 @@ import {
 } from "../api";
 import type { ClaudeRun, Job, ResumeVersion } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
-import { runIsActive, runNeedsImport, runStatusLabel } from "../lib/workflow";
+import {
+  parseTimestamp,
+  runIsActive,
+  runNeedsImport,
+  runStatusLabel,
+} from "../lib/workflow";
 
 export const RUN_POLL_INTERVAL_MS = 5000;
 export const RUN_LOG_POLL_INTERVAL_MS = 2000;
@@ -404,8 +409,9 @@ function truncateHash(hash: string | null): string {
 }
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "—";
-  return new Date(value).toLocaleString();
+  const parsed = parseTimestamp(value);
+  if (!parsed) return "—";
+  return parsed.toLocaleString();
 }
 
 export function RunDetailPage() {

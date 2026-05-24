@@ -308,7 +308,12 @@ describe("JobDetailPage five-step workspace", () => {
     };
 
     listRunsMock.mockResolvedValue([runningRun]);
-    listResumeVersionsMock.mockResolvedValue([]);
+    // Initial page-load fetch returns empty; the refresh triggered after a
+    // successful auto-import returns the imported version. Matches real
+    // backend behaviour after `POST /runs/{id}/import`.
+    listResumeVersionsMock.mockReset();
+    listResumeVersionsMock.mockResolvedValueOnce([]);
+    listResumeVersionsMock.mockResolvedValue([newVersion]);
     getRunMock.mockReset();
     // First poll returns completed; second (post-import refresh) returns imported.
     getRunMock
@@ -356,6 +361,59 @@ describe("JobDetailPage five-step workspace", () => {
       expect(
         within(step3After).queryByText(/Tailoring in progress/i),
       ).not.toBeInTheDocument();
+
+      // The newly-imported draft must appear in step 4 without the user
+      // refreshing the page. This is the "show Draft 2, Draft 3
+      // automatically" acceptance criterion.
+      const step4 = screen.getByRole("region", {
+        name: /step 4: review and approve drafts/i,
+      });
+      expect(within(step4).getByText(/Draft 1/i)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show a multi-hour elapsed value for a brand-new run with a tz-less created_at", async () => {
+    // Regression for the `3h 0m elapsed` bug. Backend timestamps from
+    // SQLite arrive without a `Z` suffix; the page must treat them as
+    // UTC and read elapsed time in seconds.
+    const justCreatedRun = {
+      id: "run-new",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      evidence_bank_id: null,
+      run_dir: "runs/run-new",
+      status: "running",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      // No `Z` — the SQLite-naive shape.
+      created_at: "2026-05-22T13:00:00",
+      started_at: "2026-05-22T13:00:01",
+      completed_at: null,
+      error_message: null,
+    };
+    listRunsMock.mockResolvedValue([justCreatedRun]);
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    // Freeze "now" three seconds after start. In a TZ != UTC environment
+    // the pre-fix code would have rendered hours of elapsed time.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-22T13:00:04Z"));
+    try {
+      renderJob("job-1");
+
+      await act(async () => {
+        for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      });
+
+      const generateStep = screen.getByRole("region", {
+        name: /step 3: generate a draft/i,
+      });
+      // Within 5s of start → "just now". Definitely NOT `3h` or any hours value.
+      expect(within(generateStep).getByText(/just now/i)).toBeInTheDocument();
+      expect(within(generateStep).queryByText(/\d+h/)).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

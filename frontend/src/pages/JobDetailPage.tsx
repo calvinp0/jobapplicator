@@ -26,8 +26,11 @@ import { extractApiDetail } from "../lib/api-errors";
 import {
   draftLabel,
   draftStatusLabel,
+  formatElapsedSince,
+  parseTimestamp,
   runIsActive,
   runNeedsImport,
+  runStartTimestamp,
 } from "../lib/workflow";
 import {
   RunActivityPanel,
@@ -46,17 +49,9 @@ const STEP_TITLES = [
 ] as const;
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "—";
-  return new Date(value).toLocaleString();
-}
-
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainder}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  const parsed = parseTimestamp(value);
+  if (!parsed) return "—";
+  return parsed.toLocaleString();
 }
 
 function WorkspaceStep({
@@ -178,14 +173,23 @@ export function JobDetailPage() {
     }
     setIsGenerating(true);
     setGenerateError(null);
+    setImportError(null);
     try {
       const run = await createRun({
         job_id: jobId,
         master_resume_id: selectedResumeId,
         evidence_bank_id: selectedBankId || null,
       });
-      await invokeRun(run.id);
-      navigate(`/runs/${run.id}`);
+      // Insert the new run immediately so the workspace flips into its
+      // "tailoring in progress" state without waiting on the invoke
+      // round-trip. The poller takes over from here.
+      setRuns((prev) => (prev ? [...prev, run] : [run]));
+      const invoked = await invokeRun(run.id);
+      setRuns((prev) => {
+        if (!prev) return [invoked];
+        const without = prev.filter((r) => r.id !== invoked.id);
+        return [...without, invoked];
+      });
     } catch (err: unknown) {
       setGenerateError(extractApiDetail(err));
     } finally {
@@ -243,13 +247,26 @@ export function JobDetailPage() {
     });
   }, []);
 
-  const handleVersionImported = useCallback((version: ResumeVersion) => {
-    setResumeVersions((prev) => {
-      if (!prev) return [version];
-      const without = prev.filter((v) => v.id !== version.id);
-      return [...without, version];
-    });
-  }, []);
+  const handleVersionImported = useCallback(
+    (version: ResumeVersion) => {
+      setResumeVersions((prev) => {
+        if (!prev) return [version];
+        const without = prev.filter((v) => v.id !== version.id);
+        return [...without, version];
+      });
+      // Re-fetch in the background so the drafts list reflects any other
+      // versions written since the page loaded (e.g. a sibling run that
+      // finished concurrently). Best-effort: if the request fails, the
+      // inline insert above keeps the new draft visible.
+      if (!jobId) return;
+      void listResumeVersions()
+        .then((rows) => {
+          setResumeVersions(rows.filter((v) => v.job_id === jobId));
+        })
+        .catch(() => {});
+    },
+    [jobId],
+  );
 
   const handleImportError = useCallback((message: string) => {
     setImportError(message);
@@ -396,14 +413,9 @@ export function JobDetailPage() {
     }
   }
 
-  const latestRunStartedAt = latestRun?.started_at ?? latestRun?.created_at ?? null;
-  const elapsedSeconds =
-    latestRunActive && latestRunStartedAt
-      ? Math.max(
-          0,
-          Math.floor((nowTick - new Date(latestRunStartedAt).getTime()) / 1000),
-        )
-      : null;
+  const elapsedLabel = latestRun && latestRunActive
+    ? formatElapsedSince(runStartTimestamp(latestRun), new Date(nowTick))
+    : null;
 
   return (
     <section className="job-detail">
@@ -525,10 +537,13 @@ export function JobDetailPage() {
                 ) : null}
                 <p className="tailoring-progress-meta">
                   Started {formatTimestamp(latestRun.created_at)}
-                  {elapsedSeconds !== null ? (
+                  {elapsedLabel ? (
                     <>
                       {" "}
-                      · {formatElapsed(elapsedSeconds)} elapsed
+                      · {elapsedLabel === "just now" ||
+                        elapsedLabel === "elapsed time unavailable"
+                        ? elapsedLabel
+                        : `${elapsedLabel} elapsed`}
                     </>
                   ) : null}
                 </p>

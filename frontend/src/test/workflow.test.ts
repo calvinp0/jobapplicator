@@ -9,10 +9,13 @@ import {
   computeJobStage,
   draftLabel,
   draftStatusLabel,
+  formatElapsedSince,
   jobStageLabel,
+  parseTimestamp,
   runIsActive,
   runIsComplete,
   runNeedsImport,
+  runStartTimestamp,
   runStatusLabel,
 } from "../lib/workflow";
 
@@ -226,5 +229,164 @@ describe("computeJobStage", () => {
     const job = makeJob();
     const app = makeApp({ status: "draft" });
     expect(computeJobStage(job, [], [], app)).toBe("captured");
+  });
+});
+
+describe("parseTimestamp", () => {
+  it("returns null for missing or empty values", () => {
+    expect(parseTimestamp(null)).toBeNull();
+    expect(parseTimestamp("")).toBeNull();
+    expect(parseTimestamp("   ")).toBeNull();
+    expect(parseTimestamp(undefined)).toBeNull();
+  });
+
+  it("returns null for unparseable values", () => {
+    expect(parseTimestamp("not a date")).toBeNull();
+  });
+
+  it("parses Z-suffixed ISO strings as UTC", () => {
+    const d = parseTimestamp("2026-05-22T12:00:00Z");
+    expect(d).not.toBeNull();
+    expect(d!.toISOString()).toBe("2026-05-22T12:00:00.000Z");
+  });
+
+  it("parses offset-suffixed ISO strings", () => {
+    const d = parseTimestamp("2026-05-22T14:00:00+02:00");
+    expect(d).not.toBeNull();
+    expect(d!.toISOString()).toBe("2026-05-22T12:00:00.000Z");
+  });
+
+  it("treats tz-less ISO strings as UTC (the SQLite-naive backend shape)", () => {
+    // This is the format Pydantic produces when SQLAlchemy returns a naive
+    // datetime from SQLite. Treating it as local time is the elapsed-time
+    // bug we're fixing — it must round-trip as UTC.
+    const d = parseTimestamp("2026-05-24T14:38:01.599305");
+    expect(d).not.toBeNull();
+    expect(d!.toISOString()).toBe("2026-05-24T14:38:01.599Z");
+  });
+
+  it("accepts space-separated timestamps (raw SQLite shape)", () => {
+    const d = parseTimestamp("2026-05-24 14:38:01.599305");
+    expect(d).not.toBeNull();
+    expect(d!.toISOString()).toBe("2026-05-24T14:38:01.599Z");
+  });
+});
+
+describe("runStartTimestamp", () => {
+  it("prefers started_at when present", () => {
+    const run: ClaudeRun = {
+      id: "r",
+      job_id: "j",
+      master_resume_id: "m",
+      evidence_bank_id: null,
+      run_dir: "x",
+      status: "running",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T10:00:00Z",
+      started_at: "2026-05-22T11:00:00Z",
+      completed_at: null,
+      error_message: null,
+    };
+    expect(runStartTimestamp(run)).toBe("2026-05-22T11:00:00Z");
+  });
+
+  it("falls back to created_at when started_at is null", () => {
+    const run: ClaudeRun = {
+      id: "r",
+      job_id: "j",
+      master_resume_id: "m",
+      evidence_bank_id: null,
+      run_dir: "x",
+      status: "created",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T10:00:00Z",
+      started_at: null,
+      completed_at: null,
+      error_message: null,
+    };
+    expect(runStartTimestamp(run)).toBe("2026-05-22T10:00:00Z");
+  });
+});
+
+describe("formatElapsedSince", () => {
+  const start = "2026-05-22T12:00:00Z";
+
+  it("returns `elapsed time unavailable` when the start timestamp is missing", () => {
+    expect(formatElapsedSince(null, new Date(start))).toBe(
+      "elapsed time unavailable",
+    );
+    expect(formatElapsedSince(undefined, new Date(start))).toBe(
+      "elapsed time unavailable",
+    );
+  });
+
+  it("returns `elapsed time unavailable` for unparseable timestamps", () => {
+    expect(formatElapsedSince("garbage", new Date(start))).toBe(
+      "elapsed time unavailable",
+    );
+  });
+
+  it("returns `elapsed time unavailable` for negative durations", () => {
+    // Now is BEFORE start — clock skew or a brand-new run where started_at
+    // is fractionally ahead of the client clock. We must not show a
+    // bogus value.
+    const now = new Date("2026-05-22T11:59:59Z");
+    expect(formatElapsedSince(start, now)).toBe("elapsed time unavailable");
+  });
+
+  it("returns `just now` for durations under 5 seconds", () => {
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:00:00Z")),
+    ).toBe("just now");
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:00:04Z")),
+    ).toBe("just now");
+  });
+
+  it("formats sub-minute durations as `Ns`", () => {
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:00:12Z")),
+    ).toBe("12s");
+  });
+
+  it("formats sub-5-minute durations as `Nm SSs` with zero-padded seconds", () => {
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:01:04Z")),
+    ).toBe("1m 04s");
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:04:30Z")),
+    ).toBe("4m 30s");
+  });
+
+  it("drops seconds once past 5 minutes", () => {
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:05:30Z")),
+    ).toBe("5m");
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T12:42:00Z")),
+    ).toBe("42m");
+  });
+
+  it("formats hours as `Nh MMm`", () => {
+    expect(
+      formatElapsedSince(start, new Date("2026-05-22T13:02:00Z")),
+    ).toBe("1h 02m");
+  });
+
+  it("does NOT show multi-hour elapsed for a tz-less timestamp produced moments ago", () => {
+    // Regression for the elapsed-time bug: a backend timestamp without a
+    // tz designator must be interpreted as UTC, not as local time. If a
+    // run "just started" at, say, 14:38:01 UTC and the client clock is
+    // a few seconds later (also UTC), the elapsed should be measured in
+    // seconds — not hours, regardless of the client's local timezone.
+    const justStarted = "2026-05-22T12:00:00";
+    const sameInstantPlus3s = new Date("2026-05-22T12:00:03Z");
+    expect(formatElapsedSince(justStarted, sameInstantPlus3s)).toBe(
+      "just now",
+    );
   });
 });
