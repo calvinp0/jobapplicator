@@ -1079,3 +1079,20 @@ tasks:
       - "frontend/src/test/**"
       - "agent_tasks/055-job-page-live-tailoring-refresh.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "056-adr-capture-auto-confirm-clarification"
+    title: "Clarify capture auto-confirm ADR semantics"
+    file: "agent_tasks/056-adr-capture-auto-confirm-clarification.md"
+    branch: "agent/056-adr-capture-auto-confirm-clarification"
+    worktree: "agent-056-adr-capture-auto-confirm-clarification"
+    status: "ready"
+    depends_on:
+      - "054-auto-confirm-complete-extension-captures"
+    verification:
+      - "grep -R \"Capture.*Job\\|auto-confirm\\|resume generation\\|application\" -n docs/adr"
+    allowed_paths:
+      - "docs/adr/**"
+      - "docs/product_requirements.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/056-adr-capture-auto-confirm-clarification.md"
+      - "agent_tasks/queue.yaml"
