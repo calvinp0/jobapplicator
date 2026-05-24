@@ -22,14 +22,31 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+const APPLICATION_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  generated: "In progress",
+  approved: "Approved",
+  submitted: "Sent",
+  response_received: "Response received",
+  rejected: "Rejected",
+  interview: "Interview",
+  offer: "Offer",
+  withdrawn: "Withdrawn",
+};
+
+function applicationStatusLabel(status: string): string {
+  return APPLICATION_STATUS_LABELS[status] ?? status;
+}
+
 function gatingReason(
   application: Application,
   version: ResumeVersion | null,
 ): string | null {
-  if (application.status === "submitted") return "Already submitted.";
-  if (!application.resume_version_id) return "Link an approved resume version first.";
+  if (application.status === "submitted") return "Already sent.";
+  if (!application.resume_version_id)
+    return "Pick an approved draft on the job page first.";
   if (!version || !version.approved_at)
-    return "Linked resume version is not yet approved.";
+    return "This draft has not been approved yet. Approve it on the job page first.";
   return null;
 }
 
@@ -94,7 +111,7 @@ export function ApplicationDetailPage() {
       await refreshEvents();
     } catch (err: unknown) {
       const message =
-        err instanceof ApiError ? err.message : "Failed to mark submitted";
+        err instanceof ApiError ? err.message : "Failed to record send";
       setActionError(message);
     } finally {
       setIsSubmitting(false);
@@ -155,10 +172,7 @@ export function ApplicationDetailPage() {
     : "Application";
   const submitted = application.status === "submitted";
   const badge = {
-    label: submitted
-      ? "Submitted"
-      : application.status.charAt(0).toUpperCase() +
-        application.status.slice(1),
+    label: applicationStatusLabel(application.status),
     variant: submitted ? "submitted" : "default",
   };
 
@@ -172,8 +186,8 @@ export function ApplicationDetailPage() {
       </h2>
       <dl className="run-meta">
         <dt>Status</dt>
-        <dd>{application.status}</dd>
-        <dt>Submitted</dt>
+        <dd>{applicationStatusLabel(application.status)}</dd>
+        <dt>Sent at</dt>
         <dd>{formatTimestamp(application.submitted_at)}</dd>
         <dt>Job</dt>
         <dd>
@@ -207,7 +221,7 @@ export function ApplicationDetailPage() {
           onClick={handleMarkSubmitted}
           disabled={submitDisabled}
         >
-          {isSubmitting ? "Submitting…" : "Mark Submitted"}
+          {isSubmitting ? "Recording…" : "I've sent it"}
         </button>
         {reason ? <span className="application-gating">{reason}</span> : null}
       </div>

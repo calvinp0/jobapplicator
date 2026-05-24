@@ -8,17 +8,25 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+const APPLICATION_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  generated: "In progress",
+  approved: "Approved",
+  submitted: "Sent",
+  response_received: "Response received",
+  rejected: "Rejected",
+  interview: "Interview",
+  offer: "Offer",
+  withdrawn: "Withdrawn",
+};
+
 function applicationStatusBadge(status: string): {
   label: string;
   variant: string;
 } {
-  if (status === "submitted") {
-    return { label: "Submitted", variant: "submitted" };
-  }
-  return {
-    label: status.charAt(0).toUpperCase() + status.slice(1),
-    variant: "default",
-  };
+  const label = APPLICATION_STATUS_LABELS[status] ?? status;
+  const variant = status === "submitted" ? "submitted" : "default";
+  return { label, variant };
 }
 
 export function ApplicationsPage() {
@@ -90,10 +98,12 @@ export function ApplicationsPage() {
                 >
                   {badge.label}
                 </span>
-                <span className="application-meta">
-                  {" "}
-                  · submitted {formatTimestamp(app.submitted_at)}
-                </span>
+                {app.submitted_at ? (
+                  <span className="application-meta">
+                    {" "}
+                    · sent {formatTimestamp(app.submitted_at)}
+                  </span>
+                ) : null}
               </li>
             );
           })}
