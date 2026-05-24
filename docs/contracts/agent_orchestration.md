@@ -751,6 +751,250 @@ that path, and leave the change to be implemented under review.
 not accumulate in history. Promote a plan by copying its scoped task files
 into `agent_tasks/` and committing those.
 
+## Next Command
+
+```
+scripts/agentctl.sh next
+```
+
+`next` is a read-only inspector that prints the single recommended next
+operator action — and nothing else. It never invokes Claude, never
+mutates files, branches, queue statuses, or worktrees, and never runs
+verification.
+
+It picks the recommendation in this order:
+
+1. If any non-done task has a latest review verdict of
+   `REQUEST_CHANGES`, the recommendation is
+   `scripts/agentctl.sh fix <task-id>`.
+2. If any non-done task has a latest review verdict of `REJECT`, the
+   command lists those tasks and notes that they require a human
+   decision (no auto-fix).
+3. If any non-done task has a latest review verdict of `BLOCKED`, the
+   command lists those tasks and points at the blocker summary in the
+   review artifact.
+4. If any task worktree (other than the main checkout) has uncommitted
+   changes, the command lists the dirty worktree paths and says to
+   finish, commit, or clean them.
+5. Otherwise, if a `ready` task exists, the recommendation is
+   `scripts/agentctl.sh work <task-id>`.
+6. Otherwise, the command prints `No ready tasks.`
+
+`next` also prints, at the bottom, the (possibly empty) list of tasks
+whose queue-level status is `blocked` so the operator does not lose
+sight of explicitly blocked work.
+
+## Work Command
+
+```
+scripts/agentctl.sh work [<task-id>] [--until-blocked]
+                         [--max-fix-attempts N] [--max-tasks N] [--dry-run]
+scripts/agentctl.sh work --help
+```
+
+`work` is the higher-level orchestration command. It runs the
+`run -> review -> (auto-fix) -> complete` lifecycle for one or more
+ready tasks, capping auto-fixes and writing a per-invocation journal
+file. It exists so the operator does not have to drive every task by
+hand through four separate commands.
+
+### Selection
+
+- `work` with no positional argument selects the first task whose
+  status is `ready` (in queue order). If there are no ready tasks, it
+  prints `No ready tasks.` and exits 0.
+- `work <task-id>` runs the lifecycle for the specified task if it is
+  `ready`; otherwise it prints why and exits non-zero. Numeric
+  shortcuts (`work 033`, `work 33`) resolve the same way as every
+  other task-id argument.
+- `work --until-blocked` loops over ready tasks one at a time. After
+  each task finishes the queue is re-queried so freshly-promoted
+  `planned -> ready` tasks become eligible. The loop stops on the
+  first stop condition (see below).
+
+`--until-blocked` and `<task-id>` are mutually exclusive.
+
+### Lifecycle
+
+For each selected task, `work` runs four stages:
+
+```
+[1/4] Run       scripts/agentctl.sh run <id>
+[2/4] Review    scripts/agentctl.sh review <id>; read verdict
+[3/4] Fix loop  on REQUEST_CHANGES: scripts/agentctl.sh fix <id>;
+                re-review; cap at --max-fix-attempts
+[4/4] Complete  scripts/agentctl.sh complete <id>
+```
+
+After Stage 1, `work` confirms:
+
+- the run subprocess exited 0,
+- the task worktree (for tasks whose `worktree` is not `main`) is
+  clean, and
+- the task branch has at least one commit beyond `main`.
+
+If any of those fail, `work` stops with a clear reason and does not
+proceed to review.
+
+### Auto-fix loop
+
+In Stage 2, `work` reads the structured verdict from
+`.agentctl/reviews/<task-id>.md` (see *Review Command* above).
+Verdict handling:
+
+- `APPROVE` / `APPROVE_WITH_NOTES` — proceed to Stage 4.
+- `REQUEST_CHANGES` — invoke `scripts/agentctl.sh fix <id>`, verify
+  the worktree is still clean afterward, then loop back to Stage 2 for
+  a fresh review. Repeats until `APPROVE` / `APPROVE_WITH_NOTES`,
+  `REJECT`, `BLOCKED`, or `--max-fix-attempts` is reached.
+- `REJECT` — stop. The operator must decide whether to abandon,
+  reset, or rewrite the task. `work` never auto-fixes a `REJECT`.
+- `BLOCKED` — stop. The operator must resolve the blocker (run
+  verification, commit work, clarify spec, etc.) and re-run review.
+  `work` never auto-fixes a `BLOCKED`.
+- missing artifact, malformed verdict, or `review` subprocess
+  non-zero exit — stop with a "review did not produce a structured
+  verdict" reason.
+
+The default `--max-fix-attempts` is `2`. The fix subprocess is invoked
+as a fresh `scripts/agentctl.sh fix <id>` each time so the existing
+fix-gate (verdict must be `REQUEST_CHANGES` / `REJECT` / `BLOCKED`)
+still applies.
+
+### Complete
+
+In Stage 4, `work` invokes `scripts/agentctl.sh complete <id>`. If
+`complete` fails (e.g. verification regression, merge conflict, dirty
+main), `work` stops with the failure reason. On success, `work` prints
+the journal path and the message from `complete` listing newly-ready
+tasks. In `--until-blocked` mode the loop continues with those.
+
+### Stop conditions
+
+`work` stops (and `work --until-blocked` exits the loop) on any of:
+
+```
+no ready tasks
+run subprocess failed
+task worktree dirty after run
+task branch has no commit beyond main after run
+review subprocess failed
+review artifact missing
+review artifact has no recognized verdict
+verdict REJECT
+verdict BLOCKED
+verdict REQUEST_CHANGES after max-fix-attempts
+fix subprocess failed
+task worktree dirty after fix
+complete subprocess failed (verification, merge conflict, dirty main, …)
+--max-tasks reached (--until-blocked only)
+```
+
+Every stop prints:
+
+```
+Stopped: <reason>
+
+Task:
+  <task-id>
+
+Worktree:
+  <path>     # (or "(main checkout)" for tasks whose worktree is main)
+
+Journal:
+  .agentctl/journal/<timestamp>-<task-id>.md
+
+Next:
+  <suggested command>
+```
+
+`work` does NOT auto-resolve merge conflicts. When `complete` hits a
+conflict it prints the standard recovery hint (resolve in main, run
+`complete --continue <id>`); `work` surfaces that failure as a stop
+condition and the operator drives recovery by hand.
+
+### Journal files
+
+Every `work` invocation writes one journal file at:
+
+```
+.agentctl/journal/<timestamp>-<task-id>.md
+```
+
+The file is created in the main checkout (not in the task worktree)
+so all journals live in one place regardless of where the lifecycle
+ran. Each file records:
+
+- task id, task title, task file, branch, worktree name
+- the main commit at start, the invoking command, start/end timestamps
+- the configured `max_fix_attempts` and the `dry_run` flag
+- per-stage results (`PASS`, `FAIL`, dry-run skip)
+- the verdict read from each review iteration
+- the `Required fixes` summary used as input to each fix attempt
+- the final outcome — either `completed normally` or the stop reason,
+  stop slug, and a suggested next command
+
+Journal files are gitignored. The directory itself is anchored in
+git via `.agentctl/journal/.gitkeep`, and `.gitignore` carries:
+
+```
+.agentctl/journal/*
+!.agentctl/journal/.gitkeep
+```
+
+Operators may delete journal files freely; nothing else reads them.
+Keeping them around is useful for after-the-fact post-mortems.
+
+### `--dry-run`
+
+`work --dry-run` runs through the lifecycle without invoking Claude
+and without mutating `queue.yaml`. For each stage it prints what it
+*would* invoke (`(dry-run) would invoke: ... run <id>`, etc.). In
+Stage 2 it peeks at any pre-existing review artifact: if one is
+present it uses that verdict to predict the flow; if none is present
+it assumes `APPROVE` so the operator sees the full would-do sequence.
+When a pre-existing `REQUEST_CHANGES` verdict would trigger auto-fix,
+dry-run stops at that point with a `dry-run-stop-at-fix` reason
+rather than entering a loop with no real fix to apply.
+
+### Safety rules
+
+`work` never:
+
+- pushes anything
+- skips review
+- skips verification (`complete` still runs the task's verification
+  commands)
+- continues after a failed subcommand
+- continues after a dirty task worktree
+- continues after a `REJECT` or `BLOCKED` verdict
+- auto-fixes a `REJECT` or `BLOCKED` verdict
+- auto-resolves merge conflicts
+- deletes a worktree
+- runs `git reset --hard` or a broad `git clean`
+- modifies product code itself (it only invokes the existing
+  subcommands)
+
+### Manual recovery
+
+When `work` stops, every stop block points at a concrete next
+command. Common recoveries:
+
+| Stop reason                                   | Recovery |
+|-----------------------------------------------|----------|
+| `run-failed`                                  | Read the run output, fix the cause, then `scripts/agentctl.sh work <id>` again. |
+| `dirty-after-run` / `dirty-after-fix`         | `cd <worktree> && git status`, then commit, finish, or clean. Re-run `work <id>`. |
+| `no-commit-after-run`                         | The agent did not commit; inspect the worktree and either retry `run` or write the task off. |
+| `review-no-artifact` / `review-invalid-verdict` | Re-run `scripts/agentctl.sh review <id>` (or hand-edit the artifact to a valid verdict). |
+| `verdict-REJECT`                              | Human decision required. Abandon, reset, or rewrite the task. |
+| `verdict-BLOCKED`                             | Resolve the blocker described in the review artifact; re-run review. |
+| `max-fix-attempts`                            | Inspect the latest review; run `scripts/agentctl.sh fix <id>` manually with operator judgment. |
+| `complete-failed` (merge conflict)            | Resolve in main, then `scripts/agentctl.sh complete --continue <id>`. |
+| `complete-failed` (verification regression)   | Fix the regression, then re-run `work <id>` from the top (or run individual subcommands by hand). |
+
+The individual `run`, `review`, `fix`, and `complete` commands remain
+available for any case where the operator wants finer control.
+
 ## Doctor Command
 
 ```
@@ -834,6 +1078,9 @@ bash -n scripts/agentctl.sh
 scripts/agentctl.sh list
 scripts/agentctl.sh status
 scripts/agentctl.sh ready
+scripts/agentctl.sh next
+scripts/agentctl.sh work --help
+scripts/agentctl.sh work --dry-run
 scripts/agentctl.sh doctor
 scripts/agentctl.sh sync <task-id>
 scripts/agentctl.sh review-status <task-id>

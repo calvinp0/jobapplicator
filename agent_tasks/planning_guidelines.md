@@ -282,4 +282,37 @@ task files; it is purely an operator-facing diagnostic. See the Doctor
 Command section in `docs/contracts/agent_orchestration.md` for the
 exact checks performed.
 
+## Normal operator flow
+
+The normal operator dispatch flow is:
+
+```
+scripts/agentctl.sh doctor
+scripts/agentctl.sh next                       # see the recommendation
+scripts/agentctl.sh work --until-blocked       # drive the queue
+```
+
+`work` runs the full `run -> review -> (auto-fix on REQUEST_CHANGES) ->
+complete` lifecycle, with a default cap of two auto-fix attempts per
+task, and writes a journal file under `.agentctl/journal/` for every
+invocation. `--until-blocked` keeps processing freshly-promoted ready
+tasks until a stop condition (REJECT, BLOCKED, max fix attempts, dirty
+worktree, or any subcommand failure) requires human judgment.
+
+The individual commands remain available for manual intervention:
+
+```
+scripts/agentctl.sh run <id>        # builder only
+scripts/agentctl.sh review <id>     # reviewer only
+scripts/agentctl.sh fix <id>        # fixer only
+scripts/agentctl.sh complete <id>   # integration only
+```
+
+Use them when you want to inspect each stage between invocations, when
+recovering from a stop condition (a `REJECT` verdict, a merge conflict,
+a verification regression), or when you do not want the auto-fix loop
+running unattended. See the *Next Command* and *Work Command* sections
+in `docs/contracts/agent_orchestration.md` for the full contract,
+including the stop-condition list and the manual-recovery table.
+
 
