@@ -912,3 +912,25 @@ tasks:
       - "frontend/src/test/**"
       - "agent_tasks/048-tailoring-progress-and-import-failure-ux.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "049-enforce-tailoring-output-contract"
+    title: "Enforce tailoring output contract"
+    file: "agent_tasks/049-enforce-tailoring-output-contract.md"
+    branch: "agent/049-enforce-tailoring-output-contract"
+    worktree: "agent-049-enforce-tailoring-output-contract"
+    status: "ready"
+    depends_on:
+      - "048-tailoring-progress-and-import-failure-ux"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py backend/tests/test_run_import.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_import.py"
+      - "backend/app/run_directory.py"
+      - "backend/app/routers/runs.py"
+      - "backend/tests/test_claude_worker.py"
+      - "backend/tests/test_run_import.py"
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/049-enforce-tailoring-output-contract.md"
+      - "agent_tasks/queue.yaml"
