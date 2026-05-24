@@ -40,6 +40,32 @@ output/change_log.md
 output/claim_audit.md
 ```
 
+## Progress Events
+
+As you work, append short user-facing progress lines to `progress/progress.log`.
+Each line should describe the current phase in plain language.
+Do not include secrets, raw prompts, hashes, or internal file paths.
+Keep each progress line under 120 characters.
+
+Append one line per phase, in order, as you reach each phase:
+
+```text
+Reading job description
+Reviewing master resume
+Reviewing evidence bank
+Planning tailored resume changes
+Drafting tailored resume markdown
+Creating DOCX
+Writing change log
+Writing claim audit
+Validating required outputs
+```
+
+Use plain Append semantics (do not rewrite earlier lines). Progress events are
+informational only — they must not replace any of the required output files.
+A run that writes excellent progress lines but skips a required output file
+is still a failed run.
+
 ## Goal
 
 Tailor the selected master resume to the job description.

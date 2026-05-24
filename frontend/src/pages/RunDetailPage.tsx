@@ -4,6 +4,7 @@ import {
   getJob,
   getRun,
   getRunLog,
+  getRunProgress,
   importRun,
   invokeRun,
   listResumeVersions,
@@ -14,6 +15,7 @@ import { runIsActive, runNeedsImport, runStatusLabel } from "../lib/workflow";
 
 export const RUN_POLL_INTERVAL_MS = 5000;
 export const RUN_LOG_POLL_INTERVAL_MS = 2000;
+export const RUN_PROGRESS_POLL_INTERVAL_MS = 2000;
 export const RUN_LOG_DEFAULT_DISPLAY_LINES = 8;
 
 const ANSI_ESCAPE_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
@@ -255,7 +257,77 @@ export function useRunLogPolling({
   return { lines, hasLoadedOnce, truncated };
 }
 
+interface RunProgressPollingArgs {
+  runId: string | null;
+  active: boolean;
+  intervalMs?: number;
+}
+
+export interface RunProgressPollingState {
+  /** User-facing progress lines from ``progress/progress.log``. Empty until
+   *  the worker writes its first event (or while a non-existent file
+   *  returns []). These are the lines the default UI prefers. */
+  lines: string[];
+  hasLoadedOnce: boolean;
+  truncated: boolean;
+}
+
+/**
+ * Poll `GET /runs/{id}/progress` while `active`. Mirrors `useRunLogPolling`
+ * but targets the user-facing progress feed, which is what the default
+ * `Recent activity` panel displays.
+ */
+export function useRunProgressPolling({
+  runId,
+  active,
+  intervalMs = RUN_PROGRESS_POLL_INTERVAL_MS,
+}: RunProgressPollingArgs): RunProgressPollingState {
+  const [lines, setLines] = useState<string[]>([]);
+  const [truncated, setTruncated] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+
+  useEffect(() => {
+    setLines([]);
+    setTruncated(false);
+    setHasLoadedOnce(false);
+  }, [runId]);
+
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    const tick = () => {
+      getRunProgress(runId)
+        .then((res) => {
+          if (cancelled) return;
+          setLines(res.lines);
+          setTruncated(res.truncated);
+          setHasLoadedOnce(true);
+        })
+        .catch(() => {
+          // Best-effort polling: the activity panel falls back to logs if
+          // this endpoint errors or is unreachable.
+        });
+    };
+    tick();
+    if (!active) return () => {
+      cancelled = true;
+    };
+    const id = setInterval(tick, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [runId, active, intervalMs]);
+
+  return { lines, hasLoadedOnce, truncated };
+}
+
 interface RunActivityPanelProps {
+  /** Plain user-facing progress lines (from /progress). Preferred. */
+  progressLines?: string[];
+  /** Raw run.log lines (from /log) — used as fallback when no progress
+   *  lines exist yet. Kept as the back-compat single source if
+   *  `progressLines` is not supplied. */
   lines: string[];
   hasLoadedOnce: boolean;
   truncated?: boolean;
@@ -264,16 +336,28 @@ interface RunActivityPanelProps {
 
 /**
  * Renders the "Recent activity" list shown on RunDetailPage and as part of
- * the in-progress card on JobDetailPage. Keeps presentation compact:
- * de-duplicated `jobapply:`-stripped lines, capped at `maxLines`.
+ * the in-progress card on JobDetailPage. Prefers user-facing progress
+ * events (one bullet per phase) and only falls back to the technical
+ * run.log stream when no progress events have been written yet.
  */
 export function RunActivityPanel({
+  progressLines,
   lines,
   hasLoadedOnce,
   truncated = false,
   maxLines = RUN_LOG_DEFAULT_DISPLAY_LINES,
 }: RunActivityPanelProps) {
-  const display = sanitizeRunLogLines(lines, maxLines);
+  const sanitizedProgress = (progressLines ?? [])
+    .map((raw) => raw.replace(ANSI_ESCAPE_RE, "").trim())
+    .filter((cleaned) => cleaned.length > 0);
+  const cappedProgress =
+    sanitizedProgress.length <= maxLines
+      ? sanitizedProgress
+      : sanitizedProgress.slice(sanitizedProgress.length - maxLines);
+  const useProgress = cappedProgress.length > 0;
+  const display = useProgress
+    ? cappedProgress
+    : sanitizeRunLogLines(lines, maxLines);
   if (!hasLoadedOnce) {
     return (
       <div className="run-activity" aria-live="polite">
@@ -393,6 +477,20 @@ export function RunDetailPage() {
     runId: runId ?? null,
     active: logPollingActive,
   });
+  const {
+    lines: progressLines,
+    hasLoadedOnce: progressHasLoadedOnce,
+    truncated: progressTruncated,
+  } = useRunProgressPolling({
+    runId: runId ?? null,
+    active: logPollingActive,
+  });
+  // The panel is "loaded" once either feed has responded — the progress
+  // endpoint is the preferred source but the technical log is a valid
+  // fallback while the worker hasn't written any user-facing lines yet.
+  const activityHasLoadedOnce = progressHasLoadedOnce || logHasLoadedOnce;
+  const activityTruncated =
+    progressLines.length > 0 ? progressTruncated : logTruncated;
 
   async function handleStartTailoring() {
     if (!runId || !run || run.status !== "created") return;
@@ -494,9 +592,10 @@ export function RunDetailPage() {
       ) : null}
 
       <RunActivityPanel
+        progressLines={progressLines}
         lines={logLines}
-        hasLoadedOnce={logHasLoadedOnce}
-        truncated={logTruncated}
+        hasLoadedOnce={activityHasLoadedOnce}
+        truncated={activityTruncated}
       />
 
       <dl className="run-meta">
@@ -547,6 +646,29 @@ export function RunDetailPage() {
 
       <details className="advanced-details">
         <summary>Advanced details</summary>
+        {progressLines.length > 0 ? (
+          <>
+            <p className="advanced-section-label">Technical run log</p>
+            {logHasLoadedOnce && sanitizeRunLogLines(logLines).length > 0 ? (
+              <ul className="run-activity-list run-activity-list-technical">
+                {sanitizeRunLogLines(logLines).map((line, idx) => (
+                  <li key={`${idx}:${line}`} className="run-activity-item">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="run-activity-empty">
+                No technical log entries yet.
+              </p>
+            )}
+            {logTruncated ? (
+              <p className="run-activity-truncated">
+                Earlier log lines were truncated.
+              </p>
+            ) : null}
+          </>
+        ) : null}
         <dl className="run-meta">
           <dt>Run id</dt>
           <dd>

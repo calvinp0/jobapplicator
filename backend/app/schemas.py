@@ -192,6 +192,22 @@ class ClaudeRunLogRead(BaseModel):
     truncated: bool
 
 
+class ClaudeRunProgressRead(BaseModel):
+    """Tail of recent user-facing progress events from ``progress/progress.log``.
+
+    Separate from ``ClaudeRunLogRead`` so the UI can show plain-language
+    phase events (and worker heartbeats) as the default ``Recent activity``
+    feed without having to filter the technical ``run.log`` stream. Empty
+    ``lines`` means the worker has not started writing yet — the UI should
+    keep its "waiting" state or fall back to the technical log if it has
+    user-facing material to show.
+    """
+
+    run_id: str
+    lines: list[str]
+    truncated: bool
+
+
 # ---- ResumeVersion ----
 
 class ResumeVersionRead(_ORMModel):
