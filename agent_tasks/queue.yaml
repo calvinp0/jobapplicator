@@ -1038,7 +1038,7 @@ tasks:
     file: "agent_tasks/054-auto-confirm-complete-extension-captures.md"
     branch: "agent/054-auto-confirm-complete-extension-captures"
     worktree: "agent-054-auto-confirm-complete-extension-captures"
-    status: "ready"
+    status: "done"
     depends_on:
       - "053-extension-linkedin-description-extraction"
     verification:
