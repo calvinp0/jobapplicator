@@ -8,6 +8,8 @@ import {
   openResumeVersionFile,
 } from "../api";
 import type { Job, ResumeVersion } from "../api";
+import { draftLabel, draftStatusLabel } from "../lib/workflow";
+import { extractApiDetail } from "../lib/api-errors";
 
 function truncateHash(hash: string | null): string {
   if (!hash) return "—";
@@ -44,7 +46,7 @@ export function ResumeVersionDetailPage() {
       .catch((err: unknown) => {
         if (cancelled) return;
         const message =
-          err instanceof ApiError ? err.message : "Failed to load resume version";
+          err instanceof ApiError ? err.message : "Failed to load resume draft";
         setLoadError(message);
       });
     return () => {
@@ -60,9 +62,7 @@ export function ResumeVersionDetailPage() {
       const updated = await approveResumeVersion(versionId);
       setVersion(updated);
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to approve version";
-      setActionError(message);
+      setActionError(extractApiDetail(err));
     } finally {
       setIsApproving(false);
     }
@@ -75,9 +75,7 @@ export function ResumeVersionDetailPage() {
     try {
       await openResumeVersionFile(versionId);
     } catch (err: unknown) {
-      const message =
-        err instanceof ApiError ? err.message : "Failed to open DOCX";
-      setActionError(message);
+      setActionError(extractApiDetail(err));
     } finally {
       setIsOpening(false);
     }
@@ -104,25 +102,24 @@ export function ResumeVersionDetailPage() {
   }
 
   const approved = version.approved_at !== null;
-  const badge = {
-    label: approved ? "Approved" : "Draft",
-    variant: approved ? "approved" : "draft",
-  };
+  const draftName = draftLabel(version.version_number - 1);
+  const statusLabel = draftStatusLabel(version.approved_at);
+  const badgeVariant = approved ? "approved" : "draft";
   const heading = job
-    ? `Resume draft ${version.version_number} for ${job.title} — ${job.company}`
-    : `Resume draft ${version.version_number}`;
+    ? `${draftName} for ${job.title} — ${job.company}`
+    : draftName;
 
   return (
     <section className="resume-version-detail">
       <h2>
         {heading}
-        <span className={`status-badge status-badge-${badge.variant}`}>
-          {badge.label}
+        <span className={`status-badge status-badge-${badgeVariant}`}>
+          {statusLabel}
         </span>
       </h2>
       <dl className="run-meta">
-        <dt>Version</dt>
-        <dd>{version.version_number}</dd>
+        <dt>Draft</dt>
+        <dd>{draftName}</dd>
         <dt>Job</dt>
         <dd>
           {job ? (
@@ -151,15 +148,21 @@ export function ResumeVersionDetailPage() {
           onClick={handleOpenDocx}
           disabled={!version.docx_path || isOpening}
         >
-          {isOpening ? "Opening…" : "Open DOCX"}
+          {isOpening ? "Opening…" : "Open draft file"}
         </button>
-        <button
-          type="button"
-          onClick={handleApprove}
-          disabled={version.approved_at !== null || isApproving}
-        >
-          {isApproving ? "Approving…" : "Approve"}
-        </button>
+        {approved ? (
+          <span className="approved-indicator" aria-label="Draft approved">
+            Approved ✓
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={isApproving}
+          >
+            {isApproving ? "Approving…" : "Approve draft"}
+          </button>
+        )}
       </div>
 
       {actionError ? (

@@ -102,14 +102,14 @@ describe("ResumeVersionDetailPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders metadata for the resume version", async () => {
+  it("renders metadata for the resume draft", async () => {
     getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
 
     renderVersion("version-1");
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
+        screen.getByRole("heading", { level: 2, name: /^draft 2/i }),
       ).toBeInTheDocument(),
     );
 
@@ -120,18 +120,24 @@ describe("ResumeVersionDetailPage", () => {
       screen.getByRole("link", { name: /senior engineer — acme corp/i }),
     ).toHaveAttribute("href", "/jobs/job-1");
 
-    // Draft badge renders while approved_at is null.
-    expect(screen.getByText("Draft")).toHaveClass("status-badge-draft");
+    // Awaiting review badge renders while approved_at is null.
+    expect(screen.getByText("Awaiting review")).toHaveClass(
+      "status-badge-draft",
+    );
 
     // Once the job loads, the heading includes "Senior Engineer — Acme Corp".
     await waitFor(() =>
       expect(
         screen.getByRole("heading", {
           level: 2,
-          name: /resume draft 2 for senior engineer — acme corp/i,
+          name: /^draft 2 for senior engineer — acme corp/i,
         }),
       ).toBeInTheDocument(),
     );
+
+    // No "Version N" copy leaks into the user-facing surface.
+    expect(screen.queryByText(/^Version 2$/)).toBeNull();
+    expect(screen.queryByText(/^Version$/)).toBeNull();
 
     // DOCX path lives behind the Advanced details disclosure.
     const docxPath = screen.getByText("runs/run-1/output/resume.docx");
@@ -146,12 +152,12 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
+        screen.getByRole("heading", { level: 2, name: /^draft 2/i }),
       ).toBeInTheDocument(),
     );
 
     // Summary fields live outside the disclosure.
-    expect(screen.getByText(/^Version$/).closest("details")).toBeNull();
+    expect(screen.getByText(/^Draft$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Job$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Source$/).closest("details")).toBeNull();
     expect(screen.getByText(/^Created$/).closest("details")).toBeNull();
@@ -185,7 +191,7 @@ describe("ResumeVersionDetailPage", () => {
     expect(detailsEl).toHaveAttribute("open");
   });
 
-  it("approves a pending version and reflects the approved state", async () => {
+  it("approves a pending draft and swaps the button for an Approved indicator", async () => {
     const user = userEvent.setup();
     getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
     approveResumeVersionMock.mockResolvedValue({ ...approvedVersion });
@@ -194,11 +200,11 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
+        screen.getByRole("heading", { level: 2, name: /^draft 2/i }),
       ).toBeInTheDocument(),
     );
 
-    const approveBtn = screen.getByRole("button", { name: /^approve$/i });
+    const approveBtn = screen.getByRole("button", { name: /^approve draft$/i });
     expect(approveBtn).toBeEnabled();
 
     await user.click(approveBtn);
@@ -211,20 +217,21 @@ describe("ResumeVersionDetailPage", () => {
       expect(screen.getByText(/Approved on /i)).toBeInTheDocument(),
     );
 
-    // Badge flips from Draft to Approved.
+    // Badge flips to Approved.
     const approvedBadge = screen
       .getAllByText("Approved")
       .find((el) => el.classList.contains("status-badge"));
     expect(approvedBadge).toBeDefined();
     expect(approvedBadge).toHaveClass("status-badge-approved");
 
+    // The active Approve button is replaced by a read-only indicator.
     expect(
-      screen.getByRole("button", { name: /^approve$/i }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: /approve draft/i }),
+    ).toBeNull();
+    expect(screen.getByText(/Approved ✓/)).toBeInTheDocument();
   });
 
-  it("disables Approve when the version is already approved", async () => {
-    const user = userEvent.setup();
+  it("shows the Approved indicator and no Approve button when already approved", async () => {
     getResumeVersionMock.mockResolvedValue({ ...approvedVersion });
 
     renderVersion("version-1");
@@ -233,12 +240,61 @@ describe("ResumeVersionDetailPage", () => {
       expect(screen.getByText(/Approved on /i)).toBeInTheDocument(),
     );
 
-    const approveBtn = screen.getByRole("button", { name: /^approve$/i });
-    expect(approveBtn).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /approve draft/i }),
+    ).toBeNull();
+    expect(screen.getByText(/Approved ✓/)).toBeInTheDocument();
+  });
+
+  it("renders a parsed detail message when approving fails", async () => {
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    approveResumeVersionMock.mockRejectedValue(
+      new ApiErrorMock("Request to /resume-versions/version-1/approve failed with status 409", 409, {
+        detail: "Cannot approve a draft that was already approved.",
+      }),
+    );
+
+    renderVersion("version-1");
+
+    const approveBtn = await screen.findByRole("button", {
+      name: /^approve draft$/i,
+    });
 
     await user.click(approveBtn);
 
-    expect(approveResumeVersionMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        screen.getByText(/cannot approve a draft that was already approved/i),
+      ).toBeInTheDocument(),
+    );
+    // The raw "Request to /..." string never reaches the user.
+    expect(screen.queryByText(/Request to \//i)).toBeNull();
+  });
+
+  it("renders a parsed detail message when opening the DOCX fails", async () => {
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    openResumeVersionFileMock.mockRejectedValue(
+      new ApiErrorMock("Request to /resume-versions/version-1/open failed with status 500", 500, {
+        detail: "Could not open the draft file on this machine.",
+      }),
+    );
+
+    renderVersion("version-1");
+
+    const openBtn = await screen.findByRole("button", {
+      name: /open draft file/i,
+    });
+
+    await user.click(openBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/could not open the draft file on this machine/i),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Request to \//i)).toBeNull();
   });
 
   it("opens the DOCX exactly once when the button is clicked", async () => {
@@ -250,11 +306,11 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
+        screen.getByRole("heading", { level: 2, name: /^draft 2/i }),
       ).toBeInTheDocument(),
     );
 
-    const openBtn = screen.getByRole("button", { name: /open docx/i });
+    const openBtn = screen.getByRole("button", { name: /open draft file/i });
     expect(openBtn).toBeEnabled();
 
     await user.click(openBtn);
@@ -265,7 +321,7 @@ describe("ResumeVersionDetailPage", () => {
     expect(openResumeVersionFileMock).toHaveBeenCalledTimes(1);
   });
 
-  it("disables Open DOCX when docx_path is null", async () => {
+  it("disables Open draft file when docx_path is null", async () => {
     const user = userEvent.setup();
     getResumeVersionMock.mockResolvedValue({ ...versionWithoutDocx });
 
@@ -273,11 +329,11 @@ describe("ResumeVersionDetailPage", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { level: 2, name: /resume draft 2/i }),
+        screen.getByRole("heading", { level: 2, name: /^draft 2/i }),
       ).toBeInTheDocument(),
     );
 
-    const openBtn = screen.getByRole("button", { name: /open docx/i });
+    const openBtn = screen.getByRole("button", { name: /open draft file/i });
     expect(openBtn).toBeDisabled();
 
     await user.click(openBtn);
