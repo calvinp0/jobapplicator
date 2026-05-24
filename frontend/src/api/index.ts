@@ -14,6 +14,7 @@ import type {
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
+  RunLog,
 } from "./types";
 
 export { API_BASE, ApiError } from "./client";
@@ -32,6 +33,7 @@ export type {
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
+  RunLog,
 };
 
 export function getHealth(): Promise<{ status: string }> {
@@ -98,6 +100,10 @@ export function getRun(runId: string): Promise<ClaudeRun> {
 
 export function invokeRun(runId: string): Promise<ClaudeRun> {
   return apiRequest(`/runs/${runId}/invoke`, { method: "POST" });
+}
+
+export function getRunLog(runId: string): Promise<RunLog> {
+  return apiRequest(`/runs/${runId}/log`);
 }
 
 export function importRun(runId: string): Promise<ResumeVersion> {

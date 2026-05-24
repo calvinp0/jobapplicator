@@ -178,6 +178,20 @@ class ClaudeRunRead(_ORMModel):
     error_message: Optional[str]
 
 
+class ClaudeRunLogRead(BaseModel):
+    """Tail of recent ``run.log`` lines for live progress polling.
+
+    Empty ``lines`` means either the run hasn't started writing yet or the
+    log file does not exist; either way the UI should show its "waiting"
+    state instead of an error. ``truncated`` signals the log is longer than
+    the returned tail.
+    """
+
+    run_id: str
+    lines: list[str]
+    truncated: bool
+
+
 # ---- ResumeVersion ----
 
 class ResumeVersionRead(_ORMModel):

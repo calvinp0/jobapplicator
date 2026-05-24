@@ -76,6 +76,12 @@ export interface ClaudeRun {
   error_message: string | null;
 }
 
+export interface RunLog {
+  run_id: string;
+  lines: string[];
+  truncated: boolean;
+}
+
 export interface ResumeVersion {
   id: string;
   job_id: string;

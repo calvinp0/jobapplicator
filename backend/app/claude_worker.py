@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import subprocess
 import zipfile
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -21,6 +23,53 @@ CLAUDE_EXTRA_ARGS_ENV = "JOBAPPLY_CLAUDE_EXTRA_ARGS"
 RUN_LOG_FILENAME = "run.log"
 PROMPT_RELPATH = Path("input") / "tailoring_prompt.md"
 OUTPUT_DIRNAME = "output"
+
+# Default cap on lines returned by ``read_recent_log_lines`` and on bytes read
+# from the log file. Keeps the response small for the polling UI and bounds
+# memory use if a runaway Claude run produces a giant log.
+DEFAULT_LOG_TAIL_LINES = 40
+LOG_READ_MAX_BYTES = 256 * 1024
+
+# Strip the common subset of ANSI escape codes (CSI/SGR) that Claude's stdout
+# may carry. We intentionally do not parse OSC sequences — the simple regex
+# below is enough to keep recent-activity lines readable in the UI.
+_ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def read_recent_log_lines(
+    log_path: Path,
+    *,
+    max_lines: int = DEFAULT_LOG_TAIL_LINES,
+    max_bytes: int = LOG_READ_MAX_BYTES,
+) -> tuple[list[str], bool]:
+    """Return the last ``max_lines`` non-empty lines from ``log_path``.
+
+    Returns ``([], False)`` when the file does not exist. ``truncated`` is
+    ``True`` when the file is larger than ``max_bytes`` (we only read the
+    tail) or when more than ``max_lines`` non-empty lines exist.
+    """
+    if not log_path.is_file():
+        return [], False
+    size = log_path.stat().st_size
+    truncated = size > max_bytes
+    with log_path.open("rb") as f:
+        if truncated:
+            f.seek(size - max_bytes)
+            # Drop a likely-partial first line after seeking mid-file.
+            f.readline()
+        raw = f.read()
+    text = raw.decode("utf-8", errors="replace")
+    tail: deque[str] = deque(maxlen=max_lines)
+    total_nonempty = 0
+    for line in text.splitlines():
+        cleaned = _ANSI_ESCAPE_RE.sub("", line).rstrip()
+        if not cleaned:
+            continue
+        total_nonempty += 1
+        tail.append(cleaned)
+    if total_nonempty > max_lines:
+        truncated = True
+    return list(tail), truncated
 
 
 class ClaudeWorkerError(RuntimeError):
@@ -124,6 +173,21 @@ def _write_minimal_docx(path: Path) -> None:
     path.write_bytes(buf.getvalue())
 
 
+def _append_progress(log_path: Path, message: str) -> None:
+    """Append a worker-owned progress line to ``run.log``.
+
+    These ``jobapply:`` lines interleave with the raw Claude subprocess output
+    so the frontend can show meaningful progress even when Claude is silent.
+    Failures to write are swallowed — progress logging must not affect run
+    lifecycle.
+    """
+    try:
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"jobapply: {message}\n")
+    except OSError:
+        pass
+
+
 def invoke_claude_run(
     run_id: str,
     db: Session,
@@ -157,6 +221,9 @@ def invoke_claude_run(
         )
 
     log_path = run_dir / RUN_LOG_FILENAME
+    # Truncate any prior log so progress lines start fresh per invocation.
+    log_path.write_text("", encoding="utf-8")
+    _append_progress(log_path, "preparing tailoring inputs")
 
     run.status = "running"
     run.started_at = _now()
@@ -165,12 +232,15 @@ def invoke_claude_run(
     db.commit()
 
     if is_dry_run():
+        _append_progress(log_path, "dry-run mode: skipping Claude subprocess")
         _write_dry_run_outputs(run_dir)
-        log_path.write_text(
-            f"[dry-run] skipped Claude subprocess at {_now().isoformat()}\n"
-            "[dry-run] wrote placeholder output files\n",
-            encoding="utf-8",
-        )
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(
+                f"[dry-run] skipped Claude subprocess at {_now().isoformat()}\n"
+                "[dry-run] wrote placeholder output files\n"
+            )
+        _append_progress(log_path, "validating output files")
+        _append_progress(log_path, "output contract satisfied")
         run.status = "completed"
         run.completed_at = _now()
         db.commit()
@@ -180,12 +250,16 @@ def invoke_claude_run(
     binary = claude_binary or default_claude_binary()
     argv = [binary, str(PROMPT_RELPATH), *_extra_args()]
 
+    _append_progress(log_path, "launching Claude Code")
     try:
-        with log_path.open("w", encoding="utf-8") as log:
+        with log_path.open("a", encoding="utf-8") as log:
             log.write(
                 f"$ {' '.join(argv)}  (cwd={run_dir})\n"
             )
             log.flush()
+            _append_progress(log_path, "Claude Code process started")
+            # The append handle and the milestone helper both append; flushing
+            # before the subprocess starts keeps line ordering stable.
             result = subprocess.run(
                 argv,
                 cwd=str(run_dir),
@@ -195,29 +269,43 @@ def invoke_claude_run(
                 check=False,
             )
     except FileNotFoundError as exc:
+        _append_progress(log_path, f"claude binary not found: {binary}")
+        _append_progress(log_path, "marking run failed")
         return _record_failure(
             db,
             run,
             f"claude binary not found: {binary} ({exc})",
         )
     except OSError as exc:
+        _append_progress(log_path, f"failed to launch claude binary {binary}")
+        _append_progress(log_path, "marking run failed")
         return _record_failure(
             db,
             run,
             f"failed to launch claude binary {binary}: {exc}",
         )
 
+    _append_progress(
+        log_path, f"Claude Code process exited with code {result.returncode}"
+    )
+
     if result.returncode != 0:
+        _append_progress(log_path, "marking run failed")
         run.status = "failed"
         run.error_message = (
             f"claude exited with code {result.returncode}; see {log_path}"
         )
     else:
+        _append_progress(log_path, "validating output files")
         missing = _missing_outputs(run_dir)
         if missing:
+            for path in missing:
+                _append_progress(log_path, f"missing expected output file: {path}")
+            _append_progress(log_path, "marking run failed")
             run.status = "failed"
             run.error_message = "expected output file missing: " + ", ".join(missing)
         else:
+            _append_progress(log_path, "output contract satisfied")
             run.status = "completed"
             run.error_message = None
     run.completed_at = _now()
