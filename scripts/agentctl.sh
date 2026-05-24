@@ -4,9 +4,20 @@
 #
 # Subcommands:
 #   run <task-id>     Start Claude Code on a task in an isolated worktree.
-#   review <task-id>  Start a review-only Claude session for a task.
+#   review <task-id>  Start a review-only Claude session for a task. The
+#                     reviewer writes a structured verdict artifact at
+#                     .agentctl/reviews/<task-id>.md (front matter with
+#                     `verdict:` plus required-fixes / notes sections).
+#   review-status <task-id>
+#                     Print the latest review verdict, artifact path, and
+#                     a short summary of required fixes / optional notes
+#                     for a task. Does not invoke Claude.
+#   fix <task-id>     Launch Claude inside the task worktree to address the
+#                     `Required fixes` from the latest review artifact.
+#                     Refuses if the latest verdict is APPROVE,
+#                     APPROVE_WITH_NOTES, or there is no review artifact.
 #   sync <task-id>    Ensure task worktree exists and is up to date with main.
-#   complete <task-id> [--dry-run] [--clean-shadow-files]
+#   complete <task-id> [--dry-run] [--clean-shadow-files] [--skip-review]
 #                     Run verification, merge the task's worktree branch into
 #                     main, mark the task done, promote unblocked tasks, and
 #                     commit the queue update. --dry-run prints what would
@@ -15,6 +26,12 @@
 #                     whose paths are tracked in the task branch (likely
 #                     leaked from the task worktree). It never runs a broad
 #                     git clean and never touches modified tracked files.
+#                     --skip-review bypasses the review-verdict gate; it
+#                     prints a loud warning and proceeds even if there is
+#                     no review artifact. It does NOT bypass a verdict of
+#                     REQUEST_CHANGES, REJECT, or BLOCKED — those still
+#                     refuse, and must be addressed (e.g. via `fix`) or
+#                     the artifact must be edited/removed by hand.
 #   complete --continue <task-id>
 #                     Resume `complete` after the operator resolved a merge
 #                     conflict by hand. Finishes the merge commit, runs
@@ -39,7 +56,11 @@
 # Configuration via environment variables:
 #   CLAUDE_BIN                       Claude Code executable. Default: claude
 #   CLAUDE_PERMISSION_MODE           Permission mode for run. Default: acceptEdits
-#   CLAUDE_REVIEW_PERMISSION_MODE    Permission mode for review. Default: plan
+#   CLAUDE_REVIEW_PERMISSION_MODE    Permission mode for review. Default: acceptEdits
+#                                    (was 'plan' before structured review
+#                                    artifacts; the reviewer now writes
+#                                    exactly one file, the review artifact.)
+#   CLAUDE_FIX_PERMISSION_MODE       Permission mode for fix. Default: acceptEdits
 #   CLAUDE_PLAN_PERMISSION_MODE      Permission mode for plan. Default: acceptEdits
 #   CLAUDE_PYTHON                    Python interpreter used to parse YAML. Default: python3
 #
@@ -51,7 +72,8 @@ set -euo pipefail
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-acceptEdits}"
-CLAUDE_REVIEW_PERMISSION_MODE="${CLAUDE_REVIEW_PERMISSION_MODE:-plan}"
+CLAUDE_REVIEW_PERMISSION_MODE="${CLAUDE_REVIEW_PERMISSION_MODE:-acceptEdits}"
+CLAUDE_FIX_PERMISSION_MODE="${CLAUDE_FIX_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PLAN_PERMISSION_MODE="${CLAUDE_PLAN_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PYTHON="${CLAUDE_PYTHON:-python3}"
 
@@ -60,6 +82,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 QUEUE_FILE="$REPO_ROOT/agent_tasks/queue.yaml"
 PLANS_DIR="$REPO_ROOT/.agent_plans"
 PLANNING_GUIDELINES="$REPO_ROOT/agent_tasks/planning_guidelines.md"
+
+# Valid review verdicts (matches the documented enum in
+# docs/contracts/agent_orchestration.md). Kept here as a shell-side
+# constant so review-status, complete, and fix can validate against the
+# same list without re-parsing the doc.
+REVIEW_VERDICTS=(APPROVE APPROVE_WITH_NOTES REQUEST_CHANGES REJECT BLOCKED)
 
 err() { printf 'error: %s\n' "$*" >&2; }
 die() { err "$*"; exit 1; }
@@ -496,14 +524,23 @@ EOF
 
 build_review_prompt() {
   local task_id="$1" task_file="$2" worktree_path="${3:-}" main_path="${4:-$REPO_ROOT}"
+  local artifact_path="$5"
   local header
   header="$(build_worktree_header "$worktree_path" "$main_path")"
   cat <<EOF
-You are reviewing agent task ${task_id}. Do not modify files.
+You are reviewing agent task ${task_id}.
 
 ${header}
 
-Check the most recent commit(s) on this worktree and assess:
+Exception to "do not edit main": you MUST write exactly one file — the
+structured review artifact at the absolute path:
+
+  ${artifact_path}
+
+You may not edit any other file anywhere. You may not stage or commit.
+You may not push.
+
+Check the most recent commit(s) on the task branch and assess:
 - Did the implementation stay within the task's scope?
 - Were the task's allowed_paths respected? Flag any files changed outside them.
 - Were the relevant ADRs in docs/adr/ respected?
@@ -511,9 +548,75 @@ Check the most recent commit(s) on this worktree and assess:
 - Was anything overbuilt beyond what the task asked for?
 - Were unrelated files changed?
 - Is the commit message appropriate and matches what the task required?
+- Did verification actually run? Is the task worktree clean? Does the task
+  branch have at least one commit beyond main?
 
-Produce a structured review with sections for: Scope, Allowed Paths, ADR Compliance,
-Tests, Overbuild, Unrelated Changes, Commit Message, and Overall Verdict.
+You must end with exactly one verdict:
+APPROVE, APPROVE_WITH_NOTES, REQUEST_CHANGES, REJECT, or BLOCKED.
+
+Verdict semantics:
+
+  APPROVE              The task satisfies the spec. It may be completed.
+  APPROVE_WITH_NOTES   The task satisfies the spec. Notes are optional
+                       follow-ups and do not block completion.
+  REQUEST_CHANGES      The task is close but misses required behavior,
+                       acceptance criteria, verification, scope, or tests.
+                       It must be fixed before completion.
+  REJECT               The implementation is wrong enough that it should
+                       not be patched casually. The operator should abort,
+                       reset, or rewrite the task.
+  BLOCKED              The review could not make a decision because
+                       verification did not run, the task branch is dirty,
+                       the task spec is ambiguous, dependencies are
+                       missing, or the branch has no commit.
+
+A caveat that violates acceptance criteria is REQUEST_CHANGES, not
+APPROVE_WITH_NOTES.
+A caveat that is purely optional is APPROVE_WITH_NOTES.
+If verification did not run or the branch is dirty, use BLOCKED unless the
+task explicitly allows that state.
+
+Required fixes must be concrete and actionable.
+Optional notes must not block completion.
+Do not use vague verdicts like "conditional pass" — map to one of the
+allowed verdicts above.
+
+Write the artifact in this exact format (front matter + sections):
+
+  ---
+  task_id: "${task_id}"
+  verdict: "<ONE OF: APPROVE | APPROVE_WITH_NOTES | REQUEST_CHANGES | REJECT | BLOCKED>"
+  reviewed_at: "<ISO 8601 UTC timestamp, e.g. 2026-05-24T12:34:56Z>"
+  reviewer: "claude-code"
+  ---
+
+  # Review: ${task_id}
+
+  ## Verdict
+
+  <THE VERDICT AGAIN, ON ITS OWN LINE>
+
+  ## Required fixes
+
+  - <one bullet per concrete fix; required only when verdict is
+    REQUEST_CHANGES, REJECT, or BLOCKED. Use "None." if no required fixes.>
+
+  ## Optional notes
+
+  - <one bullet per optional follow-up. Use "None." if there are none.>
+
+  ## Evidence checked
+
+  - <commits inspected, files inspected, verification output observed>
+
+  ## Scope / allowed-path check
+
+  <free-form summary of whether allowed_paths were respected>
+
+  ## Verification status
+
+  <did the listed verification commands actually run; were they green;
+   was the task worktree clean; did the task branch contain a commit>
 
 Task file: ${task_file}
 
@@ -619,8 +722,12 @@ cmd_review() {
   local launch_dir="$REPO_ROOT"
   [[ -n "$wt_path" ]] && launch_dir="$wt_path"
 
+  ensure_reviews_dir "$task_id"
+  local artifact_path
+  artifact_path="$(review_artifact_path "$task_id")"
+
   local prompt
-  prompt="$(build_review_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT")"
+  prompt="$(build_review_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT" "$artifact_path")"
 
   printf 'Starting Claude Code review for task %s\n' "$task_id"
   printf '  task file: %s\n' "$task_file"
@@ -628,6 +735,7 @@ cmd_review() {
   [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
   printf '  launch dir: %s\n' "$launch_dir"
   printf '  permission-mode: %s\n' "$CLAUDE_REVIEW_PERMISSION_MODE"
+  printf '  review artifact: %s\n' "$artifact_path"
 
   # Launch from inside the task worktree path (see cmd_run for rationale).
   if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
@@ -636,6 +744,25 @@ cmd_review() {
       -p "$prompt" ); then
     die "Claude Code exited with a non-zero status"
   fi
+
+  printf '\nReview session ended.\n'
+  local status
+  status="$(review_artifact_status "$task_id")"
+  case "$status" in
+    missing)
+      err "no review artifact was written at $artifact_path"
+      err "complete will refuse until you re-run review or pass --skip-review."
+      ;;
+    invalid:*)
+      err "review artifact present but ${status#invalid:}"
+      err "Edit the artifact to include a valid verdict before running complete."
+      ;;
+    ok:*)
+      printf '  verdict:  %s\n' "${status#ok:}"
+      printf '  artifact: %s\n' "$artifact_path"
+      printf '\nNext: scripts/agentctl.sh review-status %s\n' "$task_id"
+      ;;
+  esac
 }
 
 cmd_sync() {
@@ -800,6 +927,293 @@ clean_shadow_files() {
       return 1
     fi
   done <<< "$shadow"
+}
+
+# reviews_dir <task-id>
+#
+# Print the absolute path of the .agentctl/reviews/ directory that owns
+# <task-id>'s review artifact. The directory lives inside the task's
+# worktree so that `review` (which runs in the task worktree), `complete`
+# (which runs in main but resolves the task worktree), and `fix` (which
+# runs in the task worktree) all coordinate through one path. For tasks
+# whose `worktree` field is `main`, the directory is in the main
+# checkout. Falls back to the main checkout if the task worktree is not
+# yet registered with git.
+reviews_dir() {
+  local task_id="$1"
+  local worktree wt_path main_wt
+  worktree="$(yaml_query field "$task_id" worktree 2>/dev/null || true)"
+  if [[ -n "$worktree" && "$worktree" != "main" ]]; then
+    wt_path="$(worktree_path "$worktree")"
+    if [[ -n "$wt_path" ]]; then
+      printf '%s/.agentctl/reviews\n' "$wt_path"
+      return 0
+    fi
+  fi
+  main_wt="$(find_main_worktree)" || return 1
+  printf '%s/.agentctl/reviews\n' "$main_wt"
+}
+
+# review_artifact_path <task-id>
+#
+# Print the absolute path of <task-id>'s review artifact. Does not check
+# whether the file exists.
+review_artifact_path() {
+  local task_id="$1" dir
+  dir="$(reviews_dir "$task_id")" || return 1
+  printf '%s/%s.md\n' "$dir" "$task_id"
+}
+
+# ensure_reviews_dir <task-id>
+#
+# Create <task-id>'s .agentctl/reviews/ directory if it does not yet
+# exist. Idempotent; never touches existing files.
+ensure_reviews_dir() {
+  local task_id="$1" dir
+  dir="$(reviews_dir "$task_id")" || return 1
+  mkdir -p "$dir"
+}
+
+# read_review_field <task-id> <field>
+#
+# Parse the YAML front matter of the review artifact and print the value of
+# <field>. Returns empty (exit 0) if the artifact is missing, lacks front
+# matter, or has no such field. Never errors on absence — callers
+# distinguish missing-artifact from missing-field by also checking the file
+# path. The parser is intentionally permissive about quoting so reviewers
+# may write `verdict: APPROVE` or `verdict: "APPROVE"` interchangeably.
+read_review_field() {
+  local task_id="$1" field="$2"
+  local path
+  path="$(review_artifact_path "$task_id" 2>/dev/null)" || return 0
+  [[ -n "$path" ]] || return 0
+  [[ -f "$path" ]] || return 0
+  require_python_yaml
+  CLAUDE_REVIEW_PATH="$path" CLAUDE_REVIEW_FIELD="$field" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os, sys, yaml
+
+path = os.environ["CLAUDE_REVIEW_PATH"]
+field = os.environ["CLAUDE_REVIEW_FIELD"]
+with open(path, "r", encoding="utf-8") as fh:
+    text = fh.read()
+if not text.startswith("---"):
+    sys.exit(0)
+end = text.find("\n---", 3)
+if end < 0:
+    sys.exit(0)
+fm = text[3:end].strip()
+try:
+    data = yaml.safe_load(fm) or {}
+except Exception:
+    sys.exit(0)
+val = data.get(field)
+if val is None:
+    sys.exit(0)
+print(str(val).strip())
+PYEOF
+}
+
+# read_review_section <task-id> <heading>
+#
+# Print the body of a markdown section under "## <heading>" from the
+# review artifact. Stops at the next "## " heading or end of file. Returns
+# empty (exit 0) if the artifact or section is missing.
+read_review_section() {
+  local task_id="$1" heading="$2"
+  local path
+  path="$(review_artifact_path "$task_id" 2>/dev/null)" || return 0
+  [[ -n "$path" ]] || return 0
+  [[ -f "$path" ]] || return 0
+  CLAUDE_REVIEW_PATH="$path" CLAUDE_REVIEW_HEADING="$heading" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os, re, sys
+
+path = os.environ["CLAUDE_REVIEW_PATH"]
+heading = os.environ["CLAUDE_REVIEW_HEADING"]
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+in_section = False
+out = []
+target = f"## {heading}".strip()
+for line in lines:
+    stripped = line.rstrip("\n")
+    if not in_section:
+        if stripped.strip() == target:
+            in_section = True
+        continue
+    if stripped.startswith("## "):
+        break
+    out.append(stripped)
+while out and out[0].strip() == "":
+    out.pop(0)
+while out and out[-1].strip() == "":
+    out.pop()
+print("\n".join(out))
+PYEOF
+}
+
+# is_valid_verdict <verdict>
+#
+# Exit 0 if the given string is one of REVIEW_VERDICTS, non-zero otherwise.
+is_valid_verdict() {
+  local v="$1" allowed
+  for allowed in "${REVIEW_VERDICTS[@]}"; do
+    [[ "$v" == "$allowed" ]] && return 0
+  done
+  return 1
+}
+
+# review_artifact_status <task-id>
+#
+# Print one of:
+#   missing                — no artifact on disk
+#   invalid:<text>         — artifact present but verdict missing or unknown
+#   ok:<verdict>           — artifact present with a recognized verdict
+#
+# Single-line output so callers can split on the first colon. Never reads
+# the artifact body beyond the front matter.
+review_artifact_status() {
+  local task_id="$1"
+  local path
+  path="$(review_artifact_path "$task_id" 2>/dev/null)" || { printf 'missing\n'; return 0; }
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+  local verdict
+  verdict="$(read_review_field "$task_id" verdict)"
+  if [[ -z "$verdict" ]]; then
+    printf 'invalid:no verdict field in front matter\n'
+    return 0
+  fi
+  if ! is_valid_verdict "$verdict"; then
+    printf 'invalid:unknown verdict %q\n' "$verdict"
+    return 0
+  fi
+  printf 'ok:%s\n' "$verdict"
+}
+
+# enforce_review_verdict <task-id> <skip-review-flag>
+#
+# Print a human-readable banner describing the latest review verdict, then
+# return 0 if `complete` may proceed or 1 if it must refuse.
+#
+# Allowed verdicts:
+#   APPROVE              -> proceed
+#   APPROVE_WITH_NOTES   -> proceed (with banner pointing at the notes)
+#
+# Refused verdicts:
+#   REQUEST_CHANGES      -> refuse; print required fixes and hint at `fix`
+#   REJECT               -> refuse; print rejection summary
+#   BLOCKED              -> refuse; print blocker summary
+#   missing artifact     -> refuse, unless <skip-review-flag> is 1
+#   invalid verdict text -> refuse always; --skip-review does not bypass
+#                          a present-but-broken artifact, because that is
+#                          a reviewer or operator typo we want surfaced.
+enforce_review_verdict() {
+  local task_id="$1" skip_review="${2:-0}"
+  local artifact_path status verdict required notes
+  artifact_path="$(review_artifact_path "$task_id")" || return 1
+  status="$(review_artifact_status "$task_id")"
+
+  case "$status" in
+    missing)
+      if [[ "$skip_review" -eq 1 ]]; then
+        printf '\n' >&2
+        printf 'WARNING: no review artifact at %s\n' "$artifact_path" >&2
+        printf 'WARNING: --skip-review was passed; proceeding without a review verdict.\n' >&2
+        printf '\n' >&2
+        return 0
+      fi
+      err "no review artifact at $artifact_path"
+      err "Run 'scripts/agentctl.sh review $task_id' first, or re-run complete with --skip-review."
+      return 1
+      ;;
+    invalid:*)
+      err "review artifact present but ${status#invalid:}"
+      err "Path: $artifact_path"
+      err "Edit the artifact so its front matter contains a valid 'verdict:' field"
+      err "(one of: ${REVIEW_VERDICTS[*]})."
+      err "Note: --skip-review does not bypass a malformed artifact."
+      return 1
+      ;;
+    ok:*)
+      verdict="${status#ok:}"
+      ;;
+    *)
+      err "internal: unrecognized review artifact status '$status'"
+      return 1
+      ;;
+  esac
+
+  case "$verdict" in
+    APPROVE)
+      printf 'Review verdict: APPROVE (%s)\n' "$artifact_path"
+      return 0
+      ;;
+    APPROVE_WITH_NOTES)
+      printf 'Review verdict: APPROVE_WITH_NOTES (%s)\n' "$artifact_path"
+      notes="$(read_review_section "$task_id" "Optional notes")"
+      if [[ -n "$notes" ]]; then
+        printf '  Optional notes (not blocking):\n'
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          printf '    %s\n' "$line"
+        done <<< "$notes"
+      fi
+      return 0
+      ;;
+    REQUEST_CHANGES)
+      err "Review verdict: REQUEST_CHANGES — refusing to complete $task_id."
+      err "Review artifact: $artifact_path"
+      required="$(read_review_section "$task_id" "Required fixes")"
+      if [[ -n "$required" ]]; then
+        printf '\nRequired fixes:\n' >&2
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          printf '  %s\n' "$line" >&2
+        done <<< "$required"
+      fi
+      printf '\nNext: scripts/agentctl.sh fix %s\n' "$task_id" >&2
+      printf '      (or edit the review artifact and re-run complete.)\n' >&2
+      return 1
+      ;;
+    REJECT)
+      err "Review verdict: REJECT — refusing to complete $task_id."
+      err "Review artifact: $artifact_path"
+      required="$(read_review_section "$task_id" "Required fixes")"
+      if [[ -n "$required" ]]; then
+        printf '\nReviewer notes:\n' >&2
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          printf '  %s\n' "$line" >&2
+        done <<< "$required"
+      fi
+      printf '\nA REJECT verdict signals the implementation should not be patched casually.\n' >&2
+      printf 'Consider abandoning the task (write a new task id) or rewriting the branch.\n' >&2
+      return 1
+      ;;
+    BLOCKED)
+      err "Review verdict: BLOCKED — refusing to complete $task_id."
+      err "Review artifact: $artifact_path"
+      required="$(read_review_section "$task_id" "Required fixes")"
+      if [[ -n "$required" ]]; then
+        printf '\nBlocker summary:\n' >&2
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          printf '  %s\n' "$line" >&2
+        done <<< "$required"
+      fi
+      printf '\nResolve the blocker (run verification, commit work, clarify spec, etc.)\n' >&2
+      printf 'and re-run review.\n' >&2
+      return 1
+      ;;
+    *)
+      err "internal: unhandled verdict '$verdict'"
+      return 1
+      ;;
+  esac
 }
 
 # find_main_worktree
@@ -1104,20 +1518,21 @@ complete_continue() {
 }
 
 cmd_complete() {
-  local task_id="" dry_run=0 continue_mode=0 clean_shadow=0
+  local task_id="" dry_run=0 continue_mode=0 clean_shadow=0 skip_review=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) dry_run=1; shift ;;
       --continue) continue_mode=1; shift ;;
       --clean-shadow-files) clean_shadow=1; shift ;;
-      -*) die "usage: agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
+      --skip-review) skip_review=1; shift ;;
+      -*) die "usage: agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files] [--skip-review]
        agentctl.sh complete --continue <task-id>" ;;
       *)
         [[ -z "$task_id" ]] || die "complete: only one task id may be given"
         task_id="$1"; shift ;;
     esac
   done
-  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files] [--skip-review]
        agentctl.sh complete --continue <task-id>"
 
   if [[ "$continue_mode" -eq 1 && "$dry_run" -eq 1 ]]; then
@@ -1125,6 +1540,9 @@ cmd_complete() {
   fi
   if [[ "$continue_mode" -eq 1 && "$clean_shadow" -eq 1 ]]; then
     die "complete: --continue and --clean-shadow-files are mutually exclusive"
+  fi
+  if [[ "$continue_mode" -eq 1 && "$skip_review" -eq 1 ]]; then
+    die "complete: --continue and --skip-review are mutually exclusive"
   fi
 
   require_queue
@@ -1154,6 +1572,15 @@ cmd_complete() {
     branch="worktree-$worktree"
   fi
 
+  # Review verdict gate. Runs before any expensive work so the operator
+  # gets fast feedback. --skip-review allows proceeding when there is no
+  # artifact at all, but never silences a present REQUEST_CHANGES /
+  # REJECT / BLOCKED verdict; those must be addressed (see `fix`) or the
+  # artifact must be edited or removed by hand.
+  if ! enforce_review_verdict "$task_id" "$skip_review"; then
+    exit 1
+  fi
+
   # Optional targeted shadow-file cleanup BEFORE the dirty-main check. Only
   # removes untracked files in main that are tracked in the task branch.
   if [[ "$clean_shadow" -eq 1 && -n "$branch" ]]; then
@@ -1174,7 +1601,12 @@ cmd_complete() {
     fi
   fi
 
-  if [[ -n "$(git -C "$main_wt" status --porcelain)" ]]; then
+  # Untracked review artifacts under .agentctl/reviews/ are harness-owned
+  # and must not block complete. Everything else still counts as dirty.
+  local dirty_after_filter
+  dirty_after_filter="$(git -C "$main_wt" status --porcelain \
+    | grep -v '^?? \.agentctl/reviews/' || true)"
+  if [[ -n "$dirty_after_filter" ]]; then
     report_dirty_main "$main_wt" "$branch"
     exit 1
   fi
@@ -1272,6 +1704,226 @@ EOF
   commit_queue_update "$main_wt"
 
   print_ready_tasks
+}
+
+# --- review-status ----------------------------------------------------------
+
+cmd_review_status() {
+  local task_id="${1:-}"
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh review-status <task-id>"
+  require_queue
+  require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
+
+  local artifact_path status verdict
+  artifact_path="$(review_artifact_path "$task_id")"
+  status="$(review_artifact_status "$task_id")"
+
+  printf 'task id:        %s\n' "$task_id"
+  case "$status" in
+    missing)
+      printf 'latest verdict: (none — no review artifact)\n'
+      printf 'artifact path:  %s (does not exist)\n' "$artifact_path"
+      printf '\nNext: scripts/agentctl.sh review %s\n' "$task_id"
+      return 0
+      ;;
+    invalid:*)
+      printf 'latest verdict: (invalid — %s)\n' "${status#invalid:}"
+      printf 'artifact path:  %s\n' "$artifact_path"
+      printf '\nEdit the artifact so its front matter contains a valid verdict\n'
+      printf '(one of: %s).\n' "${REVIEW_VERDICTS[*]}"
+      return 0
+      ;;
+    ok:*)
+      verdict="${status#ok:}"
+      ;;
+  esac
+
+  printf 'latest verdict: %s\n' "$verdict"
+  printf 'artifact path:  %s\n' "$artifact_path"
+
+  local required notes
+  required="$(read_review_section "$task_id" "Required fixes")"
+  notes="$(read_review_section "$task_id" "Optional notes")"
+
+  printf '\nRequired fixes:\n'
+  if [[ -z "$required" ]]; then
+    printf '  (section missing)\n'
+  else
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      printf '  %s\n' "$line"
+    done <<< "$required"
+  fi
+
+  printf '\nOptional notes:\n'
+  if [[ -z "$notes" ]]; then
+    printf '  (section missing)\n'
+  else
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      printf '  %s\n' "$line"
+    done <<< "$notes"
+  fi
+}
+
+# --- fix --------------------------------------------------------------------
+
+# build_fix_prompt <task-id> <task-file> <worktree-path> <main-path> <artifact-path>
+#
+# Build the Claude prompt for `fix`. The prompt explicitly limits the agent
+# to addressing the latest review's `Required fixes`, refuses scope
+# expansion, requires verification, and asks the agent to amend the
+# existing task commit when safe to do so.
+build_fix_prompt() {
+  local task_id="$1" task_file="$2" worktree_path="${3:-}" main_path="${4:-$REPO_ROOT}"
+  local artifact_path="$5"
+  local header
+  header="$(build_worktree_header "$worktree_path" "$main_path")"
+  cat <<EOF
+You are fixing agent task ${task_id} based ONLY on the latest review.
+
+${header}
+
+Read the review artifact first:
+
+  ${artifact_path}
+
+Address every item under "## Required fixes". Do not implement optional
+notes unless they are trivial and clearly in-scope for this task.
+
+Stay strictly within the task's stated scope and allowed_paths. Do not
+expand scope. Do not refactor adjacent code. Do not edit files outside
+allowed_paths.
+
+After making the fix:
+
+1. Run every command in the task's verification list.
+2. If verification passes, prefer to amend the existing task commit so
+   the branch keeps a single coherent commit per the original task:
+
+     git add -A
+     git commit --amend --no-edit
+
+   If amending is not safe (for example, the original commit was already
+   merged into another branch, or the fix is significant enough that an
+   amend would hide important history), make a small follow-up commit
+   with a short message that references the review.
+
+3. Do NOT push.
+
+For your reference, the task file follows.
+
+Task file: ${task_file}
+
+----- BEGIN TASK FILE -----
+$(cat "$task_file")
+----- END TASK FILE -----
+
+For your reference, the review artifact follows.
+
+----- BEGIN REVIEW ARTIFACT -----
+$(cat "$artifact_path")
+----- END REVIEW ARTIFACT -----
+EOF
+}
+
+cmd_fix() {
+  local task_id="${1:-}"
+  [[ -n "$task_id" ]] || die "usage: agentctl.sh fix <task-id>"
+  require_queue
+  require_python_yaml
+  task_id="$(resolve_task_id "$task_id")"
+
+  local status task_file worktree
+  status="$(yaml_query status_of "$task_id")"
+  task_file="$(yaml_query field "$task_id" file)"
+  worktree="$(yaml_query field "$task_id" worktree)"
+
+  [[ -n "$task_file" ]] || die "task '$task_id' has no 'file' field"
+  [[ -n "$worktree" ]] || die "task '$task_id' has no 'worktree' field"
+
+  local abs_task_file="$REPO_ROOT/$task_file"
+  [[ -f "$abs_task_file" ]] || die "task file not found: $abs_task_file"
+
+  if [[ "$status" == "done" ]]; then
+    err "task '$task_id' is already marked done; refusing to run fix."
+    exit 1
+  fi
+
+  local artifact_status verdict artifact_path
+  artifact_path="$(review_artifact_path "$task_id")"
+  artifact_status="$(review_artifact_status "$task_id")"
+  case "$artifact_status" in
+    missing)
+      err "no review artifact at $artifact_path"
+      err "Run 'scripts/agentctl.sh review $task_id' first."
+      exit 1
+      ;;
+    invalid:*)
+      err "review artifact present but ${artifact_status#invalid:}"
+      err "Path: $artifact_path"
+      err "Edit the artifact so its front matter contains a valid 'verdict:' field"
+      err "(one of: ${REVIEW_VERDICTS[*]}) before running fix."
+      exit 1
+      ;;
+    ok:*)
+      verdict="${artifact_status#ok:}"
+      ;;
+  esac
+
+  case "$verdict" in
+    APPROVE|APPROVE_WITH_NOTES)
+      err "latest review verdict for $task_id is $verdict; nothing to fix."
+      err "Run 'scripts/agentctl.sh complete $task_id' instead."
+      exit 1
+      ;;
+    REQUEST_CHANGES|REJECT|BLOCKED)
+      :  # proceed
+      ;;
+    *)
+      err "internal: unhandled verdict '$verdict'"
+      exit 1
+      ;;
+  esac
+
+  local wt_path=""
+  if [[ "$worktree" != "main" ]]; then
+    wt_path="$(worktree_path "$worktree")"
+    if [[ -z "$wt_path" ]]; then
+      err "task worktree '$worktree' does not exist; cannot fix."
+      err "Create or restore it with: scripts/agentctl.sh sync $task_id"
+      exit 1
+    fi
+    propagate_claude_permissions "$wt_path"
+  fi
+
+  local launch_dir="$REPO_ROOT"
+  [[ -n "$wt_path" ]] && launch_dir="$wt_path"
+
+  local prompt
+  prompt="$(build_fix_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT" "$artifact_path")"
+
+  printf 'Starting Claude Code fix session for task %s\n' "$task_id"
+  printf '  task file:       %s\n' "$task_file"
+  printf '  worktree:        %s\n' "$worktree"
+  [[ -n "$wt_path" ]] && printf '  worktree-path:   %s\n' "$wt_path"
+  printf '  launch dir:      %s\n' "$launch_dir"
+  printf '  permission-mode: %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+  printf '  review artifact: %s (verdict: %s)\n' "$artifact_path" "$verdict"
+
+  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
+      --worktree "$worktree" \
+      --permission-mode "$CLAUDE_FIX_PERMISSION_MODE" \
+      -p "$prompt" ); then
+    die "Claude Code exited with a non-zero status"
+  fi
+
+  printf '\nFix session ended. Recent commits:\n'
+  git -C "$launch_dir" log --oneline -5
+  printf '\nGit status:\n'
+  git -C "$launch_dir" status --short
+  printf '\nNext: scripts/agentctl.sh review %s\n' "$task_id"
 }
 
 # --- doctor -----------------------------------------------------------------
@@ -1716,8 +2368,10 @@ Usage:
   scripts/agentctl.sh run <task-id>
   scripts/agentctl.sh run-interactive <task-id>
   scripts/agentctl.sh review <task-id>
+  scripts/agentctl.sh review-status <task-id>
+  scripts/agentctl.sh fix <task-id>
   scripts/agentctl.sh sync <task-id>
-  scripts/agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
+  scripts/agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files] [--skip-review]
   scripts/agentctl.sh complete --continue <task-id>
   scripts/agentctl.sh status
   scripts/agentctl.sh list
@@ -1727,7 +2381,9 @@ Usage:
   scripts/agentctl.sh plan --ultraplan "<high-level goal>"
   scripts/agentctl.sh plan --help
 
-See docs/contracts/agent_orchestration.md for the full contract.
+See docs/contracts/agent_orchestration.md for the full contract,
+including the review verdict enum (APPROVE / APPROVE_WITH_NOTES /
+REQUEST_CHANGES / REJECT / BLOCKED) and the review/fix/complete flow.
 EOF
 }
 
@@ -2091,6 +2747,8 @@ main() {
     run)    cmd_run "$@" ;;
     run-interactive) cmd_run_interactive "$@" ;;
     review) cmd_review "$@" ;;
+    review-status) cmd_review_status "$@" ;;
+    fix)    cmd_fix "$@" ;;
     sync)   cmd_sync "$@" ;;
     complete) cmd_complete "$@" ;;
     status) cmd_status "$@" ;;

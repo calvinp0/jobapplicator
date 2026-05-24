@@ -198,12 +198,15 @@ that adjusting the invocation is straightforward.
 
 ```
 scripts/agentctl.sh review <task-id>
+scripts/agentctl.sh review-status <task-id>
 ```
 
 The review command starts a separate Claude Code session focused on reviewing
 the work the run command produced. It uses
-`CLAUDE_REVIEW_PERMISSION_MODE` (default `plan`) so the reviewer does not
-write to disk by default.
+`CLAUDE_REVIEW_PERMISSION_MODE` (default `acceptEdits`) — the reviewer
+needs to write exactly one file, the structured review artifact (see
+below). The review prompt explicitly forbids editing anything else and
+forbids staging, committing, or pushing.
 
 The review prompt asks the reviewer to assess:
 
@@ -214,6 +217,124 @@ The review prompt asks the reviewer to assess:
 - whether anything was overbuilt
 - whether unrelated files were changed
 - whether the commit message is appropriate
+- whether verification actually ran, the task worktree is clean, and the
+  task branch has at least one commit beyond `main`
+
+### Review verdicts
+
+Every review must end with exactly one verdict:
+
+```
+APPROVE              The task satisfies the spec. It may be completed.
+APPROVE_WITH_NOTES   The task satisfies the spec. Notes are optional
+                     follow-ups and do not block completion.
+REQUEST_CHANGES      The task is close but misses required behavior,
+                     acceptance criteria, verification, scope, or tests.
+                     Must be fixed before completion.
+REJECT               The implementation is wrong enough that it should
+                     not be patched casually. The operator should abort,
+                     reset, or rewrite the task.
+BLOCKED              The review could not make a decision because
+                     verification did not run, the task branch is dirty,
+                     the task spec is ambiguous, dependencies are
+                     missing, or the branch has no commit.
+```
+
+Mapping rules the reviewer is instructed to follow:
+
+- A caveat that violates acceptance criteria is `REQUEST_CHANGES`, not
+  `APPROVE_WITH_NOTES`.
+- A caveat that is purely optional is `APPROVE_WITH_NOTES`.
+- If verification did not run or the branch is dirty, the verdict is
+  `BLOCKED` unless the task explicitly allows that state (e.g. a
+  planning-only task with no code commits).
+- "Conditional pass" or other vague phrasing is not allowed; the
+  reviewer must pick one of the five verdicts.
+
+### Review artifact
+
+The reviewer writes the artifact to:
+
+```
+<task-worktree>/.agentctl/reviews/<task-id>.md
+```
+
+The file lives inside the task's worktree so the three sessions that
+care about it — `review` (running in the task worktree), `complete`
+(running in main but resolving the task worktree to read the file), and
+`fix` (running in the task worktree) — coordinate through one path.
+For tasks whose `worktree` is `main`, the artifact lives in the main
+checkout at the same relative path. The artifact starts with YAML
+front matter and a fixed set of sections:
+
+```yaml
+---
+task_id: "033-frontend-workflow-language"
+verdict: "REQUEST_CHANGES"
+reviewed_at: "2026-05-23T12:34:56Z"
+reviewer: "claude-code"
+---
+```
+
+```markdown
+# Review: <task-id>
+
+## Verdict
+
+REQUEST_CHANGES
+
+## Required fixes
+
+- ...                    (or "None.")
+
+## Optional notes
+
+- ...                    (or "None.")
+
+## Evidence checked
+
+- ...
+
+## Scope / allowed-path check
+
+...
+
+## Verification status
+
+...
+```
+
+`Required fixes` is the contract for the `fix` command: every bullet
+listed there must be addressed before the task can be approved.
+`Optional notes` are non-blocking follow-ups; `complete` may proceed
+when the verdict is `APPROVE_WITH_NOTES` even if optional notes are
+present.
+
+Review artifacts are written into `.agentctl/reviews/` inside the task
+worktree (or the main checkout for `worktree: main` tasks) but are not
+required to be committed. The directory itself is tracked via
+`.agentctl/reviews/.gitkeep`. For `worktree: main` tasks the artifact
+ends up in the main checkout's `.agentctl/reviews/`; `complete` filters
+untracked `.agentctl/reviews/*.md` files out of its dirty-main check so
+those leftover artifacts do not block integration.
+
+### Review-status command
+
+```
+scripts/agentctl.sh review-status <task-id>
+```
+
+`review-status` is a read-only inspector that prints, for one task:
+
+- the resolved task id
+- the latest verdict (or `(none — no review artifact)` if missing, or
+  `(invalid — ...)` if the front matter is malformed)
+- the artifact path on disk
+- a summary of the `Required fixes` section
+- a summary of the `Optional notes` section
+
+It never invokes Claude. Use it before running `complete` or `fix` to
+double-check the verdict.
 
 ## Sync Command
 
@@ -237,18 +358,90 @@ Refreshes the task's worktree without invoking Claude:
 Use `sync` to keep a long-running task's worktree current with `main` in
 between `run` invocations.
 
+## Fix Command
+
+```
+scripts/agentctl.sh fix <task-id>
+```
+
+`fix` launches a Claude Code session in the existing task worktree
+focused on addressing the latest review's `Required fixes`. It exists
+so the operator does not have to hand-craft a follow-up prompt when a
+review returns `REQUEST_CHANGES`, `REJECT`, or `BLOCKED`.
+
+The command:
+
+1. Resolves the task id and loads its metadata.
+2. Refuses if the task is already `done`.
+3. Reads the latest review artifact at `.agentctl/reviews/<task-id>.md`.
+   Refuses if the artifact is missing or its front matter has no valid
+   `verdict`.
+4. Refuses if the latest verdict is `APPROVE` or `APPROVE_WITH_NOTES`
+   (there is nothing to fix; run `complete` instead).
+5. Confirms the task worktree exists, propagates Claude permission
+   settings into it, and launches Claude with the working directory set
+   to the worktree path.
+6. Uses permission mode `CLAUDE_FIX_PERMISSION_MODE` (default
+   `acceptEdits`).
+7. Embeds both the task file and the full review artifact in the prompt
+   and instructs the agent to:
+   - read the review artifact and address only `Required fixes`
+   - stay within the task's `allowed_paths`
+   - not expand scope (no refactors, no optional-note implementation
+     unless trivially in-scope)
+   - run the task's verification commands
+   - prefer `git commit --amend --no-edit` so the task branch keeps one
+     coherent commit; fall back to a small follow-up commit if amending
+     is unsafe
+   - not push
+
+After the session ends, `fix` prints recent commits and `git status`,
+and points the operator at `scripts/agentctl.sh review <task-id>` so
+the reviewer can rate the fix.
+
+`fix` never:
+
+- pushes
+- modifies `agent_tasks/queue.yaml`
+- changes the verdict in the existing review artifact (the next review
+  writes a new one)
+- runs on a task that is already `done`
+
 ## Complete Command
 
 ```
-scripts/agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files]
+scripts/agentctl.sh complete <task-id> [--dry-run] [--clean-shadow-files] [--skip-review]
 scripts/agentctl.sh complete --continue <task-id>
 ```
 
 The `complete` command performs the full integration workflow for a
-finished task: it runs verification, merges the task's worktree branch
-into `main`, marks the task `done`, promotes any newly-unblocked tasks
-from `planned` to `ready`, and commits the queue-status update with the
-message `Update agent task statuses`.
+finished task: it checks the review verdict, runs verification, merges
+the task's worktree branch into `main`, marks the task `done`, promotes
+any newly-unblocked tasks from `planned` to `ready`, and commits the
+queue-status update with the message `Update agent task statuses`.
+
+### Review verdict gate
+
+`complete` reads `.agentctl/reviews/<task-id>.md` before doing anything
+expensive. Based on the verdict in its front matter:
+
+- `APPROVE` — proceed.
+- `APPROVE_WITH_NOTES` — proceed, printing the optional notes for the
+  operator's awareness.
+- `REQUEST_CHANGES` — refuse; print the `Required fixes` section and
+  point at `scripts/agentctl.sh fix <task-id>`.
+- `REJECT` — refuse; print the reviewer's notes and explain that a
+  REJECT means the task should not be patched casually.
+- `BLOCKED` — refuse; print the blocker summary and ask the operator
+  to resolve the blocker and re-run review.
+- missing artifact — refuse by default; pass `--skip-review` to
+  bypass.
+- malformed artifact (no recognized verdict in front matter) — refuse
+  always. `--skip-review` does NOT bypass a malformed artifact; that
+  case is treated as a reviewer or operator typo and surfaced loudly.
+
+This gate runs before the dirty-main check, the merge, and verification,
+so a bad verdict fails fast.
 
 ### Normal flow
 
@@ -256,20 +449,24 @@ message `Update agent task statuses`.
 2. Loads the task metadata from `queue.yaml`. If `status` is already
    `done`, prints `Task <id> is already done.` and exits successfully
    without committing anything.
-3. Locates the worktree whose checked-out branch is `main` (via
+3. Runs the review verdict gate (see above).
+5. Locates the worktree whose checked-out branch is `main` (via
    `git worktree list --porcelain`) and refuses to proceed if that
-   worktree has uncommitted changes. The dirty-main report is grouped
-   into "Tracked changes", "Untracked files", and — when the task
-   branch exists — "Possible shadow files from task branch", which
-   lists untracked files in main whose paths are already tracked in
-   `worktree-<worktree>`. These are likely files that should only have
-   lived on the task branch and leaked into the main checkout. The
-   report prints a targeted `git clean -f -- <paths>` command for those
-   files, and also points at the `--clean-shadow-files` flag (see
-   below). The harness never auto-runs cleanup at this point.
-4. Confirms the task worktree exists. For tasks whose `worktree` is
+   worktree has uncommitted changes. Untracked files under
+   `.agentctl/reviews/` are filtered out of this check because review
+   artifacts are harness-owned and not required to be committed. The
+   dirty-main report is grouped into "Tracked changes", "Untracked
+   files", and — when the task branch exists — "Possible shadow files
+   from task branch", which lists untracked files in main whose paths
+   are already tracked in `worktree-<worktree>`. These are likely
+   files that should only have lived on the task branch and leaked into
+   the main checkout. The report prints a targeted `git clean -f -- <paths>`
+   command for those files, and also points at the
+   `--clean-shadow-files` flag (see below). The harness never auto-runs
+   cleanup at this point.
+6. Confirms the task worktree exists. For tasks whose `worktree` is
    `main`, this step is a no-op (the task ran in place).
-5. Prepares known package workspaces if the task's verification commands
+7. Prepares known package workspaces if the task's verification commands
    reference them. If any verification command references `frontend` and
    the task worktree has no `frontend/node_modules/.bin/vitest`, the
    harness runs `npm install` inside `frontend/`. The same rule applies
@@ -278,28 +475,28 @@ message `Update agent task statuses`.
    actually mention, never installs globally, and never touches
    unrelated directories. If `npm install` fails, the task is **not**
    marked done.
-6. Runs every command in the task's `verification` list inside the task
+8. Runs every command in the task's `verification` list inside the task
    worktree. If any command fails, the task is **not** marked done and
    nothing is merged or committed.
-7. Determines whether the task branch (`worktree-<worktree>`) is already
+9. Determines whether the task branch (`worktree-<worktree>`) is already
    reachable from `main`. If so, the merge step is skipped. Otherwise
    the command requires the branch to have at least one commit beyond
    `main`; a branch that is identical to `main` is treated as "nothing
    to integrate" and `complete` exits with an error explaining that the
    agent has not committed any work yet.
-8. If a merge is needed, runs `git merge --no-ff --no-edit
-   worktree-<worktree>` in the main worktree. On conflict, the merge is
-   **not** aborted: `complete` stops, leaves the conflicted merge in
-   place, and prints recovery instructions that direct the operator to
-   resolve the conflicts and run `complete --continue <task-id>`.
-   `queue.yaml` is not modified in this case.
-9. Rewrites the completing task's `status` line to `"done"` and, in the
-   same pass, promotes every `planned` task whose dependencies are all
-   `done` to `ready`. The in-place text edit preserves YAML comments and
-   quoting.
-10. Stages and commits `agent_tasks/queue.yaml` with the message
+10. If a merge is needed, runs `git merge --no-ff --no-edit
+    worktree-<worktree>` in the main worktree. On conflict, the merge is
+    **not** aborted: `complete` stops, leaves the conflicted merge in
+    place, and prints recovery instructions that direct the operator to
+    resolve the conflicts and run `complete --continue <task-id>`.
+    `queue.yaml` is not modified in this case.
+11. Rewrites the completing task's `status` line to `"done"` and, in the
+    same pass, promotes every `planned` task whose dependencies are all
+    `done` to `ready`. The in-place text edit preserves YAML comments and
+    quoting.
+12. Stages and commits `agent_tasks/queue.yaml` with the message
     `Update agent task statuses`.
-11. Prints the remaining list of tasks with status `ready`.
+13. Prints the remaining list of tasks with status `ready`.
 
 ### `--dry-run`
 
@@ -325,6 +522,25 @@ would commit queue update
 For an already-done task, dry-run prints `Task <id> is already done.`
 and exits successfully. For a branch whose tip already matches `main`,
 dry-run prints `would skip merge (...)` in place of the merge line.
+
+### `--skip-review`
+
+`complete <task-id> --skip-review` is an explicit bypass for the review
+verdict gate. It only matters when there is no review artifact at all
+(`.agentctl/reviews/<task-id>.md` does not exist) — in that case, the
+flag prints a loud warning and lets `complete` proceed as if the verdict
+were `APPROVE`.
+
+The flag **does not** bypass a present verdict of `REQUEST_CHANGES`,
+`REJECT`, or `BLOCKED`. To override one of those verdicts the operator
+must delete or edit the review artifact themselves; the harness will
+not silently complete a task the reviewer rejected.
+
+The flag also does not bypass a malformed artifact (front matter
+present but no recognized verdict). That case is treated as a reviewer
+or operator typo and surfaced loudly so it can be corrected.
+
+`--skip-review` is mutually exclusive with `--continue`.
 
 ### `--clean-shadow-files`
 
@@ -383,8 +599,14 @@ operator has resolved a merge conflict by hand:
 
 - pushes anything
 - deletes a worktree
-- runs `git reset --hard` or `git clean`
+- runs `git reset --hard` or `git clean` (except the narrow
+  `--clean-shadow-files` flag, which removes only the exact untracked
+  files reported as shadow files)
 - auto-resolves merge conflicts
+- marks a task `done` when the review verdict is `REQUEST_CHANGES`,
+  `REJECT`, or `BLOCKED`
+- marks a task `done` when there is no review artifact and
+  `--skip-review` was not passed
 - marks a task `done` when verification or the merge has failed
 - modifies `queue.yaml` when the merge has failed
 
@@ -614,6 +836,7 @@ scripts/agentctl.sh status
 scripts/agentctl.sh ready
 scripts/agentctl.sh doctor
 scripts/agentctl.sh sync <task-id>
+scripts/agentctl.sh review-status <task-id>
 scripts/agentctl.sh complete <task-id> --dry-run
 scripts/agentctl.sh complete --continue <task-id>
 scripts/agentctl.sh plan --help
@@ -645,14 +868,17 @@ the operator can dial autonomy up or down without editing the script:
 |-----------------------------------|----------------|---------|
 | `CLAUDE_BIN`                      | `claude`       | Claude Code executable. |
 | `CLAUDE_PERMISSION_MODE`          | `acceptEdits`  | Permission mode for `run`. |
-| `CLAUDE_REVIEW_PERMISSION_MODE`   | `plan`         | Permission mode for `review`. |
+| `CLAUDE_REVIEW_PERMISSION_MODE`   | `acceptEdits`  | Permission mode for `review`. The reviewer writes exactly one file (the review artifact); the prompt forbids editing anything else. |
+| `CLAUDE_FIX_PERMISSION_MODE`      | `acceptEdits`  | Permission mode for `fix`. |
 | `CLAUDE_PLAN_PERMISSION_MODE`     | `acceptEdits`  | Permission mode for `plan` (local planner). |
 | `CLAUDE_PYTHON`                   | `python3`      | Python interpreter used to parse the queue file. |
 
-`acceptEdits` lets the agent write files in the worktree without prompting per
-edit but still surfaces other tool calls. `plan` keeps the reviewer read-only.
-Stricter modes (`default`, `dontAsk`) and looser modes (`bypassPermissions`)
-are available via the same variable.
+`acceptEdits` lets the agent write files in the worktree without
+prompting per edit but still surfaces other tool calls. Stricter modes
+(`default`, `dontAsk`) and looser modes (`bypassPermissions`) are
+available via the same variable. The reviewer used to default to `plan`
+(read-only); it now defaults to `acceptEdits` so it can write the
+structured review artifact, with the prompt narrowing what it may write.
 
 ## Dependencies
 
