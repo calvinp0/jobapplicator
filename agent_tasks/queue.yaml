@@ -1022,7 +1022,7 @@ tasks:
     file: "agent_tasks/053-extension-linkedin-description-extraction.md"
     branch: "agent/053-extension-linkedin-description-extraction"
     worktree: "agent-053-extension-linkedin-description-extraction"
-    status: "ready"
+    status: "done"
     depends_on:
       - "005-extension-capture"
     verification:
