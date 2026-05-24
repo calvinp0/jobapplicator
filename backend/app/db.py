@@ -30,3 +30,17 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def init_db() -> None:
+    """Create every table declared on Base.metadata for a fresh local DB.
+
+    Importing app.models registers all model classes (including
+    RevisionFeedback, added in task 044) on Base.metadata before create_all
+    runs, so a fresh SQLite file initialized via this function contains the
+    revision-feedback storage from ADR-008 without a manual migration step.
+    """
+
+    from . import models  # noqa: F401  (side-effect: registers tables)
+
+    Base.metadata.create_all(bind=engine)
