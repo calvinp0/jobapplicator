@@ -1056,3 +1056,26 @@ tasks:
       - "frontend/src/test/**"
       - "agent_tasks/054-auto-confirm-complete-extension-captures.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "055-job-page-live-tailoring-refresh"
+    title: "Make job page tailoring refresh live"
+    file: "agent_tasks/055-job-page-live-tailoring-refresh.md"
+    branch: "agent/055-job-page-live-tailoring-refresh"
+    worktree: "agent-055-job-page-live-tailoring-refresh"
+    status: "ready"
+    depends_on:
+      - "052-tailoring-progress-events"
+    verification:
+      - "cd frontend && npm test"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/JobDetailPage.tsx"
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/lib/workflow.ts"
+      - "frontend/src/lib/api-errors.ts"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/**"
+      - "agent_tasks/055-job-page-live-tailoring-refresh.md"
+      - "agent_tasks/queue.yaml"
