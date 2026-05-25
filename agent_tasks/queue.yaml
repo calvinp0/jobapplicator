@@ -1505,3 +1505,21 @@ tasks:
       - "docs/office_word_mcp_setup.md"
       - "agent_tasks/075-add-claude-code-office-word-mcp-support.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "076-improve-applications-dashboard-status-tracking"
+    title: "Improve Applications dashboard status tracking"
+    file: "agent_tasks/076-improve-applications-dashboard-status-tracking.md"
+    branch: "agent/076-improve-applications-dashboard-status-tracking"
+    worktree: "agent-076-improve-applications-dashboard-status-tracking"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/**"
+      - "agent_tasks/076-improve-applications-dashboard-status-tracking.md"
+      - "agent_tasks/queue.yaml"
