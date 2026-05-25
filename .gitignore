@@ -263,3 +263,7 @@ backend/jobapply.db
 # in git via .agentctl/journal/.gitkeep.
 .agentctl/journal/*
 !.agentctl/journal/.gitkeep
+
+# Word stuff
+*.docx
+*.doc
