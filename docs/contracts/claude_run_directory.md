@@ -354,6 +354,7 @@ without invoking Claude.
   "prompt_hash": "...",
   "input_hash": "...",
   "tailoring_method": "auto",
+  "llm_provider": "claude_code",
   "status": "created"
 }
 ```
@@ -371,6 +372,30 @@ Allowed values:
 Backwards compatibility: runs created before this field existed have no
 `tailoring_method` key. Readers must treat a missing or null value as
 `auto`, since that was the only behavior the system supported.
+
+### `llm_provider`
+
+Identifies which CLI tool produced the run's artifacts. This field is
+orthogonal to `tailoring_method`: it disambiguates which `auto`-flow
+worker ran, and on `word_handoff` runs it carries a descriptive sentinel
+so the key is never absent from `metadata.json`.
+
+Recognized values:
+
+- `claude_code` — the Claude Code CLI worker (the default `auto`
+  provider).
+- `codex` — the Codex CLI worker.
+- `gemini` — the Gemini CLI worker.
+- `claude_for_word` — sentinel used on runs whose `tailoring_method`
+  is `word_handoff`, where no backend CLI is invoked but the field
+  must still be present.
+
+Provider ids must be stable, lowercase, and snake_case. Adding a new
+provider does not change the required output filenames under `output/`:
+every provider satisfies the same read and write boundaries documented
+above. See ADR-009 for the decision record covering provider selection,
+the cross-provider invariants reasserted from ADR-002 and ADR-004, and
+the rationale for keeping this field orthogonal to `tailoring_method`.
 
 ### `status`
 
