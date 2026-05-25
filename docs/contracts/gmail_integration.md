@@ -743,3 +743,268 @@ remains the final reviewer.
 - Rate-limiting is not implemented; the endpoint is user-triggered and
   capped at `max_results=10` per call, so abuse risk is low for the
   local-first workload.
+
+## Application Email Classification (task 084)
+
+Task 084 adds a deterministic, evidence-based classifier that turns a
+candidate email (already returned by the task-083 search endpoint) into
+one of the contract-pinned classifier labels and, where appropriate,
+into an `EmailLink` row + application status change. It is the first
+step that may move `Application.status` based on inbound mail; all
+other safety guarantees (read-only Gmail, no send/archive/delete/label,
+no full bodies, no background polling) remain in force.
+
+### Scope
+
+- Classifies one candidate at a time via
+  `POST /applications/{application_id}/gmail/classify`.
+- Pure-Python deterministic phrase matching — no LLM, no network, no
+  google libraries imported.
+- Uses safe metadata only (`subject`, `from`, `snippet`); the
+  classifier dataclass intentionally has no `body`/`html` field so a
+  caller cannot leak full content.
+- Writes at most one `EmailLink` per call. Re-classifying the same
+  `(application_id, gmail_message_id)` is a no-op.
+- Surfaces every classification with its evidence; nothing is changed
+  silently.
+
+### Deterministic phrase matching
+
+`backend/app/gmail_application_classifier.py` keeps a per-label tuple of
+short lower-case phrases. For each candidate, the classifier scans the
+lowered `subject`, `snippet`, and `from` fields for substring hits and
+records `(field, phrase)` evidence pairs. The phrase tables (shape, not
+exact values) live in code:
+
+```python
+_PHRASES = {
+    "rejection":               ("not moving forward", "will not be moving forward",
+                                "decided not to proceed", "not selected",
+                                "pursue other candidates", "unable to offer",
+                                "position has been filled", "role has been filled",
+                                "application was unsuccessful", "we regret to inform",
+                                "unfortunately", ...),
+    "interview_request":       ("schedule an interview", "schedule a call",
+                                "phone screen", "technical interview",
+                                "interview availability", "meet with", "next step",
+                                "speak with", "chat with our team",
+                                "reschedule your interview", ...),
+    "assessment":              ("coding challenge", "take-home", "take home",
+                                "technical exercise", "assignment", "questionnaire",
+                                "hackerrank", "codesignal",
+                                "complete the assessment", ...),
+    "submission_confirmation": ("application received", "thank you for applying",
+                                "we received your application",
+                                "your application has been submitted",
+                                "successfully submitted", ...),
+    "offer":                   ("pleased to offer", "would like to extend",
+                                "extend an offer", "selected for the role",
+                                "congratulations", "offer letter"),
+    "application_update":      ("under review", "reviewing your application",
+                                "still reviewing", "update on your application",
+                                "we will be in touch", ...),
+    "recruiter_followup":      ("wanted to follow up", "following up on your application",
+                                "circling back", "checking in", "touching base", ...),
+    "newsletter_or_unrelated": ("unsubscribe", "view in browser", "newsletter",
+                                "weekly digest", "marketing preferences", ...),
+}
+```
+
+The classifier never inspects full email bodies and never escalates
+beyond substring matching.
+
+### Confidence scoring
+
+Confidence is deterministic — there is no learned component. For the
+winning label:
+
+```
+confidence = min(_MAX_CONFIDENCE,
+                 _BASE_CONFIDENCE + _PER_EVIDENCE_BONUS * (len(evidence) - 1))
+```
+
+with `_BASE_CONFIDENCE = 0.55`, `_PER_EVIDENCE_BONUS = 0.18`, and
+`_MAX_CONFIDENCE = 0.95`. A single matched phrase already yields the
+floor (`0.55`); additional independent hits raise confidence up to the
+cap. The numbers are deliberately coarse so a reviewer can see at a
+glance how strong a match must be to flip the application's status.
+
+### Precedence rule (ambiguity handling)
+
+When several labels accumulate evidence on the same message, the
+winner is chosen by this fixed precedence (highest first):
+
+```
+offer
+interview_request
+assessment
+rejection
+submission_confirmation
+recruiter_followup
+application_update
+newsletter_or_unrelated
+unknown
+```
+
+This is what protects against the canonical false-positive
+`"Unfortunately, we need to reschedule your interview"`: the word
+*unfortunately* hits the rejection table, but
+*reschedule your interview* simultaneously hits the
+`interview_request` table, and `interview_request` outranks
+`rejection`. Tests pin this case so the rule does not regress.
+
+### Evidence format
+
+Every non-`unknown` classification carries an `evidence` array. Each
+entry is small on purpose: the field name, a short quote, and a one-line
+reason. Quotes are window-trimmed to ≤ 80 characters and centered on the
+matched phrase so the user can see *exactly* why a label fired without
+the response containing the full email:
+
+```jsonc
+{
+  "classification": "rejection",
+  "confidence": 0.73,
+  "evidence": [
+    {
+      "field": "snippet",
+      "text": "…we will not be moving forward with your application.",
+      "reason": "contains rejection phrase"
+    }
+  ],
+  "reason": "Matched rejection phrase in email snippet"
+}
+```
+
+`field` is always one of `subject`, `from`, or `snippet`. Bodies,
+HTML, and attachments are never accepted as evidence inputs and never
+appear in the response.
+
+### Mapping to EmailLink and application_status
+
+The classifier produces a label from the richer 9-value vocabulary; the
+persisted `EmailLink.classified_status` keeps the smaller 5-value set
+already pinned by `application_status.md`. The endpoint writes at most
+one row using this mapping (re-using the existing `_EMAIL_SIDE_EFFECTS`
+rules so terminal-status protection stays in one place):
+
+| Classifier label | `email_status` (response) | `EmailLink.classified_status` (persisted) | `Application.status` target |
+|---|---|---|---|
+| `submission_confirmation` | `confirmation_found` | `confirmation` | unchanged |
+| `rejection` | `classified_rejection` | `rejection` | `rejected` *(unless `withdrawn`)* |
+| `interview_request` | `classified_interview` | `next_step` | `interview` *(unless `rejected`/`withdrawn`/`offer`)* |
+| `recruiter_followup` | `classified_interview` | `next_step` | `interview` *(same blockers)* |
+| `assessment` | `classified_assessment` | `next_step` *(today)* | unchanged main status; `next_action` indicates "Complete assessment" |
+| `offer` | `classified_offer` | `offer` | `offer` *(unless `withdrawn`)* |
+| `application_update` | `classified_neutral` | `other` | unchanged |
+| `newsletter_or_unrelated` | `needs_review` | *(none — no row)* | unchanged |
+| `unknown` | `needs_review` | *(none — no row)* | unchanged |
+
+`assessment → next_step` is the same compromise documented in the
+"Classification Labels" section above: a future task may split
+`assessment` into its own `EmailLink.classified_status` once the
+manual-entry UI grows the matching choice. Until then the persisted
+`EmailLink` uses `next_step` and the response `email_status` is
+`classified_assessment`, which is the value the dashboard should
+surface.
+
+`withdrawn` is sticky: the classify endpoint short-circuits to
+"persist nothing, propose no status change" when the application is
+already `withdrawn`, even if the classifier's evidence is unambiguous.
+The response still carries the classifier label / confidence /
+evidence so the user sees what was detected.
+
+### API endpoint
+
+```
+POST /applications/{application_id}/gmail/classify
+```
+
+Request body:
+
+```jsonc
+{
+  // Required. The same shape returned by the task-083 search endpoint;
+  // extra keys are ignored.
+  "candidate": {
+    "message_id": "...",     // gmail message id
+    "thread_id":  "...",
+    "subject":    "...",
+    "from":       "...",
+    "date":       "...",
+    "snippet":    "..."
+  },
+  // Reserved for a future task that persists search candidates.
+  // Passing it without ``candidate`` returns 400.
+  "message_id": null,
+  "classify_top_candidate": false
+}
+```
+
+Today the project does not persist Gmail search candidates, so the
+`message_id` / `classify_top_candidate` short-circuits are not honored
+on their own; the frontend (or `curl` user) must hand the candidate
+metadata directly to this endpoint. A future task may persist
+candidates and lift this restriction without changing the wire shape.
+
+Response:
+
+```jsonc
+{
+  "application_id": "...",
+  "message_id":    "...",
+  "classification": "rejection",
+  "confidence":    0.73,
+  "email_status":  "classified_rejection",
+  "application_status": "rejected",
+  "application_status_changed": true,
+  "email_link_id": "...",
+  "evidence": [
+    {
+      "field":  "snippet",
+      "text":   "…we will not be moving forward with your application.",
+      "reason": "contains rejection phrase"
+    }
+  ],
+  "reason": "Matched rejection phrase in email snippet"
+}
+```
+
+`application_status_changed` is `false` when the application was
+already in a terminal state (`withdrawn`, `rejected`, etc.) or when the
+classifier label does not propose a status change.
+
+### Privacy and safety
+
+- Read-only Gmail scope only — the classifier never opens a Gmail
+  connection of its own, the calling endpoint never touches the
+  mailbox.
+- No send / archive / delete / label / modify routes are added.
+- Full email bodies and HTML are never accepted (`CandidateEmail`
+  has no field for them) and never persisted; evidence quotes are
+  ≤ 80 characters cut from the safe-metadata fields.
+- Background polling is not implemented; classification is strictly
+  user-triggered.
+- Every automatic `Application.status` change is auditable — the
+  endpoint reuses the existing `_EMAIL_SIDE_EFFECTS` rules which
+  append an `ApplicationEvent` for every state transition.
+- Confidence below the floor downgrades the classification to
+  `unknown` with `needs_review` so the user reviews uncertain matches
+  before any status change.
+
+### Known limitations
+
+- The classifier inspects only `subject`, `from`, and `snippet`. Gmail's
+  snippet is itself short (~200 chars) and may not contain the
+  decisive phrase for every email; the dashboard should display the
+  candidate's metadata + classifier verdict + an "open in Gmail" link
+  rather than pretending the snippet is the whole message.
+- The phrase tables are intentionally narrow. They will miss legitimate
+  signals expressed in unusual phrasing; the user remains the final
+  reviewer.
+- No bulk-classify endpoint is shipped in this task. The classify route
+  takes one candidate at a time; a future task may add a bulk variant
+  if needed.
+- An optional LLM-assisted backstop is documented but not implemented;
+  any future LLM step must keep the deterministic phrase matcher as
+  the *primary* signal so behavior remains explainable.

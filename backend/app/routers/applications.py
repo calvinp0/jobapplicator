@@ -780,3 +780,202 @@ def search_application_gmail(
         count=len(candidates),
         candidates=candidates,
     )
+
+
+# ---- Gmail application classification (task 084) ----------------------
+
+# The classifier itself lives in :mod:`app.gmail_application_classifier`
+# and only sees the safe-metadata fields (subject / from / date /
+# snippet). Persisting an EmailLink from a classification result reuses
+# the existing ``_EMAIL_SIDE_EFFECTS`` rules so terminal-status
+# protection (``withdrawn`` is sticky, ``rejected`` blocks ``next_step``,
+# etc.) stays in one place.
+
+
+class GmailCandidateInput(BaseModel):
+    """Safe-metadata view of a Gmail candidate.
+
+    Mirrors the candidate shape returned by the task-083 search endpoint
+    so the frontend (and ``curl``) can hand the same payload to the
+    classify endpoint without reshaping it. Extra keys are ignored at
+    the schema layer; full bodies are not accepted.
+    """
+
+    message_id: str | None = None
+    thread_id: str | None = None
+    subject: str | None = None
+    from_: str | None = Field(default=None, alias="from")
+    date: str | None = None
+    snippet: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class GmailClassifyRequest(BaseModel):
+    """Request body for ``POST /applications/{id}/gmail/classify``.
+
+    Exactly one of ``candidate`` or ``message_id`` must be provided. The
+    ``message_id`` form is reserved for a future task that persists
+    candidates; today the endpoint short-circuits with a clear error
+    because no candidates are stored.
+    """
+
+    message_id: str | None = None
+    candidate: GmailCandidateInput | None = None
+    classify_top_candidate: bool = False
+
+
+class EvidenceRead(BaseModel):
+    field_: str = Field(alias="field")
+    text: str
+    reason: str
+
+    model_config = {"populate_by_name": True}
+
+
+class GmailClassifyResponse(BaseModel):
+    application_id: str
+    message_id: str | None
+    classification: str
+    confidence: float
+    email_status: str
+    application_status: str
+    evidence: list[EvidenceRead] = Field(default_factory=list)
+    reason: str
+    application_status_changed: bool = False
+    email_link_id: str | None = None
+
+
+@router.post(
+    "/{application_id}/gmail/classify",
+    response_model=GmailClassifyResponse,
+)
+def classify_application_gmail(
+    application_id: str,
+    payload: GmailClassifyRequest,
+    db: Session = Depends(get_db),
+) -> GmailClassifyResponse:
+    """Classify a Gmail candidate email against ``application_id``.
+
+    The classifier is deterministic (phrase tables + precedence) and
+    only inspects the safe-metadata fields the contract allows. When a
+    classification results in a ``classified_status`` that maps onto the
+    smaller ``EmailLink`` vocabulary, the endpoint writes an EmailLink
+    row so the existing side-effect rules in
+    ``application_status.md`` apply (and so ``withdrawn`` stays sticky).
+    """
+    from ..gmail_application_classifier import (
+        LABEL_TO_APPLICATION_STATUS,
+        LABEL_TO_EMAIL_LINK_STATUS,
+        LABEL_TO_EMAIL_STATUS,
+        candidate_from_metadata,
+        classify_candidate,
+    )
+
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    if payload.candidate is None:
+        # Task 083 does not persist candidates today, so ``message_id``
+        # and ``classify_top_candidate`` cannot be honored without a
+        # candidate payload. Surface a clear error rather than guessing.
+        if payload.message_id or payload.classify_top_candidate:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Candidate metadata is required; the project does not "
+                    "persist Gmail search candidates yet. Run "
+                    "POST /applications/{id}/gmail/search and pass the "
+                    "candidate metadata to this endpoint."
+                ),
+            )
+        raise HTTPException(
+            status_code=422,
+            detail="missing 'candidate' metadata",
+        )
+
+    candidate_meta = payload.candidate.model_dump(by_alias=True)
+    candidate = candidate_from_metadata(candidate_meta)
+    result = classify_candidate(candidate)
+
+    classification = result.classification
+    email_status_label = LABEL_TO_EMAIL_STATUS[classification]
+    email_link_status = LABEL_TO_EMAIL_LINK_STATUS[classification]
+    proposed_app_status = LABEL_TO_APPLICATION_STATUS[classification]
+
+    application_status_changed = False
+    email_link_row_id: str | None = None
+    pre_status = app_obj.status
+
+    # ``withdrawn`` is sticky regardless of classifier output.
+    if app_obj.status == "withdrawn":
+        email_link_status = None
+        proposed_app_status = None
+
+    if email_link_status is not None and payload.candidate.message_id:
+        # Reuse the existing EmailLink side-effect rules so terminal
+        # statuses behave consistently with the manual-entry flow.
+        rules = _EMAIL_SIDE_EFFECTS[email_link_status]
+        existing = _find_existing_email_link(
+            db, application_id, payload.candidate.message_id
+        )
+        if existing is None:
+            link = EmailLink(
+                application_id=app_obj.id,
+                gmail_message_id=payload.candidate.message_id,
+                gmail_thread_id=payload.candidate.thread_id,
+                subject=payload.candidate.subject,
+                sender=payload.candidate.from_,
+                received_at=None,
+                classified_status=email_link_status,
+                confidence=result.confidence,
+            )
+            db.add(link)
+            target_status = rules["target_status"]
+            if (
+                target_status is not None
+                and app_obj.status not in rules["blocked_by"]
+            ):
+                app_obj.status = target_status
+            db.add(
+                ApplicationEvent(
+                    application_id=app_obj.id,
+                    event_type=rules["event_type"],
+                    source="email",
+                    notes=f"classifier:{classification}",
+                )
+            )
+            db.flush()
+            email_link_row_id = link.id
+        else:
+            email_link_row_id = existing.id
+
+    app_obj.last_gmail_check_at = _utcnow()
+    db.commit()
+    db.refresh(app_obj)
+
+    if app_obj.status != pre_status:
+        application_status_changed = True
+
+    # Surface the email_status the classifier *intends*. The persisted
+    # ``derive_email_status`` may be coarser (e.g. ``classified_interview``
+    # vs ``classified_assessment``) until the contract grows additional
+    # ``EmailLink.classified_status`` values; the response uses the
+    # contract's full vocabulary so the UI / curl user sees the
+    # classifier's actual intent.
+    return GmailClassifyResponse(
+        application_id=app_obj.id,
+        message_id=payload.candidate.message_id,
+        classification=classification,
+        confidence=round(result.confidence, 4),
+        email_status=email_status_label,
+        application_status=app_obj.status,
+        evidence=[
+            EvidenceRead(field=e.field, text=e.text, reason=e.reason)
+            for e in result.evidence
+        ],
+        reason=result.reason,
+        application_status_changed=application_status_changed,
+        email_link_id=email_link_row_id,
+    )
