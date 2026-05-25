@@ -12,6 +12,10 @@ const {
   createApplicationEventMock,
   listApplicationEmailLinksMock,
   createApplicationEmailLinkMock,
+  getGmailStatusMock,
+  getGmailAuthUrlMock,
+  searchApplicationGmailMock,
+  classifyApplicationGmailMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -33,6 +37,10 @@ const {
     createApplicationEventMock: vi.fn(),
     listApplicationEmailLinksMock: vi.fn(),
     createApplicationEmailLinkMock: vi.fn(),
+    getGmailStatusMock: vi.fn(),
+    getGmailAuthUrlMock: vi.fn(),
+    searchApplicationGmailMock: vi.fn(),
+    classifyApplicationGmailMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -46,6 +54,10 @@ vi.mock("../api", () => ({
   createApplicationEvent: createApplicationEventMock,
   listApplicationEmailLinks: listApplicationEmailLinksMock,
   createApplicationEmailLink: createApplicationEmailLinkMock,
+  getGmailStatus: getGmailStatusMock,
+  getGmailAuthUrl: getGmailAuthUrlMock,
+  searchApplicationGmail: searchApplicationGmailMock,
+  classifyApplicationGmail: classifyApplicationGmailMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -145,6 +157,42 @@ describe("ApplicationDetailPage", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
     listApplicationEmailLinksMock.mockResolvedValue([]);
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+    getGmailAuthUrlMock.mockResolvedValue({
+      auth_url: "https://accounts.google.com/o/oauth2/auth?fake=1",
+      scope: "https://www.googleapis.com/auth/gmail.readonly",
+    });
+    searchApplicationGmailMock.mockResolvedValue({
+      application_id: "app-1",
+      gmail_connected: true,
+      gmail_query: "(\"Acme Corp\") newer_than:180d",
+      count: 0,
+      candidates: [],
+    });
+    classifyApplicationGmailMock.mockResolvedValue({
+      application_id: "app-1",
+      message_id: "msg-1",
+      classification: "rejection",
+      confidence: 0.86,
+      email_status: "classified_rejection",
+      application_status: "rejected",
+      evidence: [
+        {
+          field: "snippet",
+          text: "we will not be moving forward with your application",
+          reason: "contains rejection phrase",
+        },
+      ],
+      reason: "Matched rejection phrase in email snippet",
+      application_status_changed: true,
+      email_link_id: "el-new",
+    });
   });
 
   afterEach(() => {

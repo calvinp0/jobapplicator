@@ -212,7 +212,28 @@ const EMAIL_CLASSIFICATION_LABELS: Record<string, string> = {
   next_step: "Next step",
   offer: "Offer",
   other: "Email",
+  // Richer classifier labels surfaced by the Gmail classify endpoint.
+  // The EmailLink-side vocabulary above is the persisted subset; these
+  // are the inputs returned in classification responses (see
+  // docs/contracts/gmail_integration.md).
+  submission_confirmation: "Submission confirmation",
+  interview_request: "Interview request",
+  recruiter_followup: "Recruiter follow-up",
+  assessment: "Assessment",
+  application_update: "Application update",
+  newsletter_or_unrelated: "Unrelated",
+  unknown: "Needs review",
 };
+
+/**
+ * Human label for a classifier or EmailLink ``classified_status`` value.
+ * Returns the raw value when no mapping exists so the UI never silently
+ * hides an unrecognized label.
+ */
+export function classificationLabel(value: string | null | undefined): string {
+  if (!value) return "Unclassified";
+  return EMAIL_CLASSIFICATION_LABELS[value] ?? value;
+}
 
 function formatEmailRelative(
   value: string | null | undefined,
@@ -245,10 +266,16 @@ const EMAIL_STATUS_LABELS: Record<string, string> = {
   not_watching: "Not watching yet",
   watching: "Waiting for email",
   email_received: "Email received",
+  confirmation_found: "Confirmation received",
   classified_positive: "Positive response",
   classified_rejection: "Rejection detected",
+  classified_interview: "Interview detected",
+  classified_assessment: "Assessment detected",
+  classified_offer: "Offer detected",
   classified_neutral: "Confirmation received",
   needs_review: "Email needs review",
+  no_match: "No related emails found",
+  error: "Gmail check failed",
 };
 
 export function emailStatusLabel(value: string): string {

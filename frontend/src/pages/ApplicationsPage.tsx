@@ -13,11 +13,25 @@ import {
   applicationUpdatedLabel,
   emailStatusLabel,
   lastEmailSummary,
+  parseTimestamp,
   runStatusLabel,
   submissionStatusLabel,
   timelineStageLabel,
   timelineStageVariant,
 } from "../lib/workflow";
+
+function formatChecked(value: string | null | undefined): string | null {
+  const then = parseTimestamp(value ?? null);
+  if (!then) return null;
+  const diff = Date.now() - then.getTime();
+  const minutes = Math.round(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
@@ -122,6 +136,10 @@ export function ApplicationsPage() {
                 ? `Submission: Submitted ${formatDate(app.submitted_at)}`
                 : `Submission: ${submissionLabel}`;
             const emailLine = `Email: ${emailStatusLabel(app.email_status)}`;
+            const gmailCheckedAgo = formatChecked(app.last_gmail_check_at);
+            const gmailCheckedLine = gmailCheckedAgo
+              ? `Gmail checked: ${gmailCheckedAgo}`
+              : null;
             const latestRunLine = app.latest_run_status
               ? `Latest run: ${runStatusLabel(app.latest_run_status)}`
               : null;
@@ -147,6 +165,9 @@ export function ApplicationsPage() {
                 </div>
                 <span className="application-meta">{submittedLine}</span>
                 <span className="application-meta">{emailLine}</span>
+                {gmailCheckedLine ? (
+                  <span className="application-meta">{gmailCheckedLine}</span>
+                ) : null}
                 {latestRunLine ? (
                   <span className="application-meta">{latestRunLine}</span>
                 ) : null}

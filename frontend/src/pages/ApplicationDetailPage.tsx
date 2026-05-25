@@ -24,6 +24,7 @@ import {
   timelineStageLabel,
   timelineStageVariant,
 } from "../lib/workflow";
+import { GmailEvidence } from "../components/GmailEvidence";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
@@ -346,6 +347,11 @@ export function ApplicationDetailPage() {
           {actionError}
         </p>
       ) : null}
+
+      <GmailEvidence
+        application={application}
+        onApplicationChanged={(updated) => setApplication(updated)}
+      />
 
       <h3>Email evidence</h3>
       {emailListError ? (
