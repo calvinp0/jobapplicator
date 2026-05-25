@@ -374,3 +374,177 @@ intentionally split across small, reviewable tasks:
 
 Each task is gated on this contract; none of them require changes to
 this document so long as the wire shape and vocabulary above hold.
+
+## Read-Only OAuth Connection (task 082)
+
+Task 082 lands the first piece of the future-task list above: the
+Gmail read-only OAuth flow and a safe test-search surface. It adds
+**no** classification, matching, polling, archiving, sending, or
+mailbox mutation; all of those remain future work.
+
+### Scope
+
+The OAuth flow requests exactly one scope:
+
+```
+https://www.googleapis.com/auth/gmail.readonly
+```
+
+`backend/app/gmail_client.py` exposes `GMAIL_SCOPES = (GMAIL_READONLY_SCOPE,)`
+and a `FORBIDDEN_SCOPES` frozenset that includes `gmail.send`,
+`gmail.modify`, `gmail.compose`, `gmail.labels`, `mail.google.com`,
+etc. The helper `assert_readonly_scope(scopes)` is called whenever the
+backend builds an auth URL or loads a stored token; any forbidden
+scope raises `GmailScopeError` and the token is treated as
+disconnected.
+
+### Configuration
+
+The Gmail integration reads four environment variables:
+
+```
+GOOGLE_CLIENT_ID        OAuth client id from Google Cloud.
+GOOGLE_CLIENT_SECRET    OAuth client secret from Google Cloud.
+GOOGLE_REDIRECT_URI     Redirect URI registered with Google.
+                        Default: http://localhost:8000/gmail/oauth/callback
+GMAIL_TOKEN_PATH        Local path for the stored token blob.
+                        Default: candidate_context/gmail/token.json
+```
+
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are required for any OAuth
+operation; if either is missing the `/gmail/auth-url` endpoint returns
+`400` and `/gmail/status` reports `connected: false`. The other two
+variables have sensible local-dev defaults.
+
+### Token storage
+
+Tokens live in a single JSON file at the configured `GMAIL_TOKEN_PATH`.
+The file is created on first successful OAuth exchange and contains:
+
+```
+token, refresh_token, token_uri, client_id, client_secret,
+scopes (must include only gmail.readonly), expiry, saved_at, email
+```
+
+`email` is captured opportunistically via `users.getProfile` (allowed
+by `gmail.readonly`) so the dashboard can render the connected
+mailbox without an extra round trip. If the profile call fails the
+field is `null`.
+
+This is **development-grade** storage. The file holds a refresh token
+in plain text and is excluded from git via `.gitignore`:
+
+```
+candidate_context/gmail/token.json
+candidate_context/gmail/*.json
+```
+
+Production-grade secret management (OS keychain, encrypted store) is
+out of scope.
+
+### Backend endpoints
+
+All four routes live in `backend/app/routers/gmail.py` and follow the
+existing router convention (no `/api` prefix; same style as
+`/applications`, `/jobs`, `/settings`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/gmail/status` | Connection state + connected email. |
+| GET | `/gmail/auth-url` | Returns the Google consent URL + scope. |
+| GET | `/gmail/oauth/callback` | Handles the OAuth redirect. |
+| POST | `/gmail/test-search` | Runs a read-only Gmail query (capped). |
+
+Response shapes:
+
+```jsonc
+// GET /gmail/status (disconnected)
+{
+  "connected": false,
+  "email": null,
+  "scopes": [],
+  "token_path_configured": true,
+  "last_checked_at": null
+}
+
+// GET /gmail/status (connected)
+{
+  "connected": true,
+  "email": "user@example.com",
+  "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+  "token_path_configured": true,
+  "last_checked_at": "2026-05-25T12:00:00+00:00"
+}
+
+// GET /gmail/auth-url
+{
+  "auth_url": "https://accounts.google.com/o/oauth2/auth?...",
+  "scope": "https://www.googleapis.com/auth/gmail.readonly"
+}
+
+// POST /gmail/test-search request
+{ "query": "newer_than:7d", "max_results": 5 }
+
+// POST /gmail/test-search response
+{
+  "connected": true,
+  "query": "newer_than:7d",
+  "count": 1,
+  "messages": [
+    {
+      "id": "<gmail-message-id>",
+      "thread_id": "<gmail-thread-id>",
+      "subject": "Thanks for applying",
+      "from": "talent@example.com",
+      "date": "Mon, 25 May 2026 12:00:00 +0000",
+      "snippet": "We received your application..."
+    }
+  ]
+}
+```
+
+`max_results` is clamped to `MAX_TEST_SEARCH_RESULTS = 10`. Only
+metadata + Gmail's own snippet is returned; **no body, no html, no
+attachments**. Returned messages are not persisted to the database in
+this task.
+
+### Manual verification
+
+1. Create an OAuth 2.0 "Web application" client in Google Cloud
+   Console. Add the redirect URI that matches `GOOGLE_REDIRECT_URI`
+   (default `http://localhost:8000/gmail/oauth/callback`).
+2. Export the four env vars above.
+3. Install the optional gmail extras:
+
+   ```bash
+   cd backend && pip install -e .[gmail]
+   ```
+
+4. Start the backend (`uvicorn app.main:app --reload`).
+5. `GET http://localhost:8000/gmail/status` — confirm `connected: false`.
+6. `GET http://localhost:8000/gmail/auth-url` — open the returned
+   `auth_url` in a browser.
+7. Complete Google consent. The browser will redirect to
+   `/gmail/oauth/callback` and a token file will be written.
+8. `GET /gmail/status` should now show `connected: true` and the
+   connected email.
+9. Run a test search:
+
+   ```bash
+   curl -X POST http://localhost:8000/gmail/test-search \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"newer_than:7d","max_results":5}'
+   ```
+
+   The response must include only metadata + snippets — no body.
+
+### Known limitations
+
+- The token file holds a refresh token in plain text. Use a dedicated
+  Google account for local development if you are concerned.
+- There is no automatic background poll yet. Future tasks (poll +
+  classifier) will use the same `GmailClient` plumbing.
+- No frontend UI is shipped in this task; verification is via
+  `curl`/the FastAPI docs page. A future settings-page card is
+  on the roadmap.
+- The connection is single-account. Multi-account is not modeled.

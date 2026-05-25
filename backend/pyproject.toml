@@ -17,6 +17,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8", "httpx>=0.27"]
+# Optional Gmail integration (task 082). Install with:
+#     pip install -e .[gmail]
+# Imports are lazy inside backend/app/gmail_client.py so the rest of the
+# backend boots without these wheels present.
+gmail = [
+  "google-auth>=2.29",
+  "google-auth-oauthlib>=1.2",
+  "google-api-python-client>=2.130",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
