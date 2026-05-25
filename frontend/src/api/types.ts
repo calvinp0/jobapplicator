@@ -154,6 +154,69 @@ export interface Application {
   latest_run_id: string | null;
   latest_run_status: string | null;
   last_email_at: string | null;
+  // Gmail tracking surface (docs/contracts/gmail_integration.md).
+  gmail_query?: string | null;
+  last_gmail_check_at?: string | null;
+  last_matched_email_at?: string | null;
+  matched_email_count?: number;
+  latest_email_subject?: string | null;
+  latest_email_from?: string | null;
+  latest_email_snippet?: string | null;
+  latest_email_classification?: string | null;
+  latest_email_confidence?: number | null;
+  latest_email_evidence?: string | null;
+}
+
+export interface GmailStatusResponse {
+  connected: boolean;
+  email: string | null;
+  scopes: string[];
+  token_path_configured: boolean;
+  last_checked_at: string | null;
+}
+
+export interface GmailAuthUrlResponse {
+  auth_url: string;
+  scope: string;
+}
+
+export interface GmailCandidateEmail {
+  message_id: string | null;
+  thread_id: string | null;
+  subject: string | null;
+  from: string | null;
+  date: string | null;
+  snippet: string | null;
+  matched_signals: string[];
+  match_score: number;
+}
+
+export interface GmailSearchResponse {
+  application_id: string;
+  gmail_connected: boolean;
+  gmail_query: string | null;
+  count: number;
+  candidates: GmailCandidateEmail[];
+  message?: string | null;
+}
+
+export interface GmailEvidenceItem {
+  field: string;
+  text: string;
+  reason: string;
+}
+
+export interface GmailClassificationResponse {
+  application_id: string;
+  message_id: string | null;
+  classification: string;
+  confidence: number;
+  email_status: string;
+  application_status: string;
+  evidence: GmailEvidenceItem[];
+  reason: string;
+  application_status_changed: boolean;
+  email_link_id: string | null;
 }
 
 export interface ApplicationCreate {

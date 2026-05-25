@@ -1008,3 +1008,115 @@ classifier label does not propose a status change.
 - An optional LLM-assisted backstop is documented but not implemented;
   any future LLM step must keep the deterministic phrase matcher as
   the *primary* signal so behavior remains explainable.
+
+## Frontend Gmail Evidence UI (task 085)
+
+Task 085 wires the Gmail tracking surface above into the React UI. It
+does **not** add any new backend endpoint, change classification logic,
+or grow the privacy surface — it only renders the existing read-only
+data and re-uses the task-082/083/084 endpoints exactly as documented.
+
+### User actions surfaced in the UI
+
+The Applications detail page (`frontend/src/components/GmailEvidence.tsx`)
+exposes exactly these actions. All of them call existing endpoints; no
+new write-side surface is introduced.
+
+| UI action | Endpoint called | Purpose |
+|---|---|---|
+| Connect Gmail | `GET /gmail/auth-url` | Opens the returned `auth_url` in a new tab so the user can complete OAuth. |
+| Check Gmail | `POST /applications/{id}/gmail/search` | Triggers the task-083 search. After the response the page re-fetches the application so `email_status` / `last_gmail_check_at` reflect the persisted summary. |
+| Classify | `POST /applications/{id}/gmail/classify` | Sends one candidate's safe metadata. After the response the page re-fetches the application so `Application.status` and the dashboard reflect any side-effect change. |
+
+The previous send/archive/delete/label hazards are still absent: there
+is no button, link, or hidden affordance for any write-side Gmail
+operation anywhere in the UI.
+
+### Displayed fields
+
+The detail-page Gmail card renders these read-only fields when
+available, sourced from `ApplicationRead` (existing wire format — no
+new fields are added):
+
+```
+email_status              → mapped to a human label via
+                            ``emailStatusLabel`` (see
+                            ``frontend/src/lib/workflow.ts``).
+matched_email_count       → "N emails" decoration in the list row.
+latest_email_subject      → "Latest email" line.
+latest_email_from         → "from <sender>" continuation.
+latest_email_classification → "Latest classification" line, via
+                              ``classificationLabel``.
+latest_email_confidence   → "confidence 0.NN" continuation.
+latest_email_evidence     → "Latest evidence" line (reserved / null
+                            today; the wire format already exists so
+                            the UI is forward-compatible).
+last_gmail_check_at       → "Checked: N minutes ago".
+```
+
+Each candidate returned by `POST /applications/{id}/gmail/search` is
+rendered as a compact card showing **subject, sender, date, snippet,
+matched signals, match score, and a Classify button**. Full bodies,
+HTML, and attachments are never requested or rendered — the
+`GmailCandidateEmail` TypeScript type intentionally has no `body` /
+`html` field so a future regression cannot smuggle full content into
+the UI surface.
+
+After classification, the result panel renders:
+
+```
+Classification: <label>      (explicit text, not color-only)
+Confidence: 86%
+Reason: <one-line reason from the classifier>
+Evidence:
+  - <field>: "<quoted ≤80-char snippet>"
+"Application status updated to <new status>." (only when the backend
+                                                 reports
+                                                 application_status_changed)
+```
+
+### Manual review behavior
+
+When the classifier returns `unknown` or
+`newsletter_or_unrelated` the response carries
+`email_status = "needs_review"` and no `EmailLink` row is persisted by
+the backend. The UI renders the label *Needs review* / *Unrelated*
+explicitly (text label, not color) so the user knows they remain the
+final reviewer. No automatic `Application.status` change happens for
+those labels — this matches the manual-review safety rule from the
+*Privacy and Safety Rules* section above.
+
+### Privacy note in the UI
+
+The Gmail card renders a short, always-visible note:
+
+> Gmail is used read-only for application tracking. JobApplicator does
+> not send, delete, archive, or label emails.
+
+This text is a UI mirror of the contract's *Privacy and Safety Rules*
+list and exists so a non-technical reviewer can see the safety scope
+without reading this document. The note is rendered above the
+action buttons so it is on screen whenever the user is about to
+trigger any Gmail call.
+
+### Accessibility / label-only display
+
+The classification result, the candidate signals, and the status line
+all render their meaning as **explicit text** (e.g. "Classification:
+Rejection" rather than a red dot). Color is only used as a decoration
+on the timeline-stage badge in the applications list, which already
+has a text label. This keeps the surface usable for screen readers and
+keeps the per-application story understandable without color.
+
+### Error surfaces
+
+`GmailEvidence` renders an inline alert (`role="alert"`) when any of
+these conditions occur, so the user gets a useful message without the
+UI crashing:
+
+| Condition | Message |
+|---|---|
+| Gmail not connected during search | "Connect Gmail before searching for application emails." (forwarded from the backend response) |
+| `GET /gmail/auth-url` failure | "Could not get Gmail auth URL. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the backend first." |
+| Search fails | Forwarded `ApiError` message (e.g. "Request to /applications/X/gmail/search failed with status 500"). |
+| Classification fails | Forwarded `ApiError` message or "Could not classify this email. Try again or review manually." |

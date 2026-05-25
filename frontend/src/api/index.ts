@@ -9,6 +9,12 @@ import type {
   EmailLinkCreatePayload,
   EvidenceBank,
   EvidenceBankCreate,
+  GmailAuthUrlResponse,
+  GmailCandidateEmail,
+  GmailClassificationResponse,
+  GmailEvidenceItem,
+  GmailSearchResponse,
+  GmailStatusResponse,
   Job,
   JobCapture,
   LlmProvider,
@@ -36,6 +42,12 @@ export type {
   EmailLinkCreatePayload,
   EvidenceBank,
   EvidenceBankCreate,
+  GmailAuthUrlResponse,
+  GmailCandidateEmail,
+  GmailClassificationResponse,
+  GmailEvidenceItem,
+  GmailSearchResponse,
+  GmailStatusResponse,
   Job,
   JobCapture,
   LlmProvider,
@@ -260,6 +272,48 @@ export function createApplicationEvent(
   return apiRequest(`/applications/${applicationId}/events`, {
     method: "POST",
     body: payload,
+  });
+}
+
+export function getGmailStatus(): Promise<GmailStatusResponse> {
+  return apiRequest("/gmail/status");
+}
+
+export function getGmailAuthUrl(): Promise<GmailAuthUrlResponse> {
+  return apiRequest("/gmail/auth-url");
+}
+
+export interface SearchApplicationGmailPayload {
+  max_results?: number;
+  extra_terms?: string[];
+  include_ats_terms?: boolean;
+}
+
+export function searchApplicationGmail(
+  applicationId: string,
+  payload: SearchApplicationGmailPayload = {},
+): Promise<GmailSearchResponse> {
+  const body = {
+    max_results: payload.max_results ?? 10,
+    include_ats_terms:
+      payload.include_ats_terms === undefined
+        ? true
+        : payload.include_ats_terms,
+    extra_terms: payload.extra_terms ?? [],
+  };
+  return apiRequest(`/applications/${applicationId}/gmail/search`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function classifyApplicationGmail(
+  applicationId: string,
+  candidate: GmailCandidateEmail,
+): Promise<GmailClassificationResponse> {
+  return apiRequest(`/applications/${applicationId}/gmail/classify`, {
+    method: "POST",
+    body: { candidate },
   });
 }
 
