@@ -66,20 +66,30 @@ version. Try, in order, whichever your build supports:
 ## What the worker does
 
 The backend worker (`backend/app/claude_worker.py`) does not attempt to
-prove that the skill is installed. It logs that DOCX skill usage was
-requested:
+prove that the skill is installed. As of task 075, it logs that
+Word/DOCX tooling was requested and that both the Office Word MCP
+server and the DOCX skill were requested *if available*:
 
 ```text
-jobapply: DOCX skill requested for Word output generation
+jobapply: Word/DOCX tooling requested for DOCX generation
+jobapply: Office Word MCP server requested if available
+jobapply: DOCX skill requested if available
+jobapply: Office Word MCP availability unknown
 jobapply: DOCX skill availability unknown
 ```
 
 The runtime prompt (`runtime_prompts/resume_tailoring.md`) instructs
-Claude to use the DOCX / Word document skill *if available*, and to
-still produce the other three required outputs (`tailored_resume.md`,
-`change_log.md`, `claim_audit.md`) and explain any DOCX failure in
-`claim_audit.md` if generation fails.
+Claude to prefer the Office Word MCP server
+(`word-document-server`) first, then the DOCX / Word document skill,
+then existing fallback DOCX generation. It must still produce the other
+three required outputs (`tailored_resume.md`, `change_log.md`,
+`claim_audit.md`) and explain any DOCX failure in `claim_audit.md` if
+generation fails.
 
-If the skill is not installed, runs still attempt normal DOCX generation
-through the existing Claude Code path; the worker's output validation is
-what ultimately decides whether the run completed.
+If neither the MCP nor the skill is installed, runs still attempt
+normal DOCX generation through the existing Claude Code path; the
+worker's output validation is what ultimately decides whether the run
+completed.
+
+For the Office Word MCP setup details, see
+[`docs/office_word_mcp_setup.md`](office_word_mcp_setup.md).

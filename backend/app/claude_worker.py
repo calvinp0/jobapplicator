@@ -445,13 +445,17 @@ def invoke_claude_run(
     _append_progress(log_path, f"launching Claude Code with cwd={run_dir}")
     _append_progress(log_path, f"permission mode={permission_mode}")
     _append_progress(log_path, f"output directory={output_dir}")
-    # The runtime prompt asks Claude to use the DOCX / Word document skill
-    # when generating output/tailored_resume.docx. The worker has no stable
-    # way to verify a skill is actually installed across Claude Code
-    # versions, so it records that usage was requested and leaves
-    # availability as ``unknown``. Output validation (post-invocation) is
-    # what ultimately decides whether the run produced a valid DOCX.
-    _append_progress(log_path, "DOCX skill requested for Word output generation")
+    # The runtime prompt asks Claude to use the Office Word MCP server
+    # (word-document-server) and/or the DOCX / Word document skill when
+    # generating output/tailored_resume.docx. The worker has no stable
+    # cross-version way to verify either capability is actually installed,
+    # so it records that usage was requested and leaves availability as
+    # ``unknown``. Output validation (post-invocation) is what ultimately
+    # decides whether the run produced a valid DOCX.
+    _append_progress(log_path, "Word/DOCX tooling requested for DOCX generation")
+    _append_progress(log_path, "Office Word MCP server requested if available")
+    _append_progress(log_path, "DOCX skill requested if available")
+    _append_progress(log_path, "Office Word MCP availability unknown")
     _append_progress(log_path, "DOCX skill availability unknown")
     heartbeat_interval = _heartbeat_interval_seconds()
     heartbeat_stop = threading.Event()
