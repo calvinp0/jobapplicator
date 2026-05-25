@@ -172,6 +172,14 @@ ANTHROPIC_API_KEY
 API_HOST / API_PORT / WEB_HOST / WEB_PORT
     Recognized by scripts/dev.sh to override the default hosts/ports
     when starting both services together.
+
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+GOOGLE_REDIRECT_URI
+GMAIL_TOKEN_PATH
+    Optional Gmail read-only OAuth integration (task 082).
+    See section 11 (Optional Gmail Read-Only Connection) below and
+    docs/contracts/gmail_integration.md for the full contract.
 ```
 
 There is currently no `.env.example` in this repo; the variables
@@ -591,3 +599,96 @@ Manual:
 - Set frontend env vars with `$env:VITE_API_BASE="..."` before
   running `npm run dev`.
 ```
+
+## 11. Optional Gmail Read-Only Connection
+
+The backend ships an optional read-only Gmail integration (task 082)
+that lets the cockpit check whether Gmail is connected and run a
+small, capped test search. **No** email is ever sent, archived,
+deleted, labeled, or otherwise modified — see
+[`docs/contracts/gmail_integration.md`](contracts/gmail_integration.md)
+for the full contract and safety rules.
+
+If you do not want Gmail integration, skip this section entirely;
+nothing else in the backend depends on it.
+
+### Install the optional extras
+
+The google client libraries are an optional extras group so the
+default install stays small:
+
+```bash
+cd backend
+source .venv/bin/activate
+pip install -e .[gmail]
+```
+
+### Create a Google OAuth client
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create (or reuse) a project, then go to **APIs & Services →
+   Credentials**.
+3. Create an **OAuth client ID** of type **Web application**.
+4. Under **Authorized redirect URIs**, add the URI that matches the
+   `GOOGLE_REDIRECT_URI` env var you will set below. The default is:
+
+   ```
+   http://localhost:8000/gmail/oauth/callback
+   ```
+
+5. Enable the **Gmail API** for the project under **APIs &
+   Services → Library**.
+
+### Set the env vars
+
+```bash
+export GOOGLE_CLIENT_ID="<your client id>.apps.googleusercontent.com"
+export GOOGLE_CLIENT_SECRET="<your client secret>"
+export GOOGLE_REDIRECT_URI="http://localhost:8000/gmail/oauth/callback"
+# Optional; defaults to candidate_context/gmail/token.json
+export GMAIL_TOKEN_PATH="$PWD/candidate_context/gmail/token.json"
+```
+
+The token file is excluded from git via `.gitignore` and holds a
+plain-text refresh token — treat it as a secret.
+
+### Connect and verify
+
+1. Start the backend:
+
+   ```bash
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   ```
+
+2. Confirm disconnected:
+
+   ```bash
+   curl http://localhost:8000/gmail/status
+   ```
+
+3. Get the consent URL:
+
+   ```bash
+   curl http://localhost:8000/gmail/auth-url
+   ```
+
+4. Open the returned `auth_url` in a browser, complete Google
+   consent, and let the browser follow the redirect back to
+   `/gmail/oauth/callback`.
+
+5. Confirm connected:
+
+   ```bash
+   curl http://localhost:8000/gmail/status
+   ```
+
+6. Run a safe test search:
+
+   ```bash
+   curl -X POST http://localhost:8000/gmail/test-search \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"newer_than:7d","max_results":5}'
+   ```
+
+   The response includes only message metadata (id, subject, from,
+   date, snippet) — no body, no html, no attachments.

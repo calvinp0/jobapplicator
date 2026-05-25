@@ -267,3 +267,11 @@ backend/jobapply.db
 # Word stuff
 *.docx
 *.doc
+
+# Local Gmail OAuth tokens (task 082)
+# backend/app/gmail_client.py defaults the token path to
+# candidate_context/gmail/token.json. The file holds a refresh token in
+# plain text and must never be committed. The directory is created on
+# first connect; the token blob itself is what we keep out of git.
+candidate_context/gmail/token.json
+candidate_context/gmail/*.json
