@@ -1540,3 +1540,28 @@ tasks:
       - "docs/office_word_mcp_setup.md"
       - "agent_tasks/077-add-cross-platform-install-readme.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "078-extract-master-resume-docx-before-tailoring"
+    title: "Extract master resume DOCX before tailoring"
+    file: "agent_tasks/078-extract-master-resume-docx-before-tailoring.md"
+    branch: "agent/078-extract-master-resume-docx-before-tailoring"
+    worktree: "agent-078-extract-master-resume-docx-before-tailoring"
+    status: "ready"
+    depends_on:
+      - "075-add-claude-code-office-word-mcp-support"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_directory.py"
+      - "backend/app/**"
+      - "backend/tests/test_claude_worker.py"
+      - "backend/tests/test_run_directory.py"
+      - "backend/tests/**"
+      - "runtime_prompts/resume_tailoring.md"
+      - "docs/contracts/claude_run_directory.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/078-extract-master-resume-docx-before-tailoring.md"
+      - "agent_tasks/queue.yaml"
