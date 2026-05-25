@@ -846,6 +846,20 @@ button[type="submit"]:disabled,
   align-items: center;
 }
 
+.settings-helper {
+  margin: 0;
+  color: var(--muted-fg);
+  font-size: 13px;
+  max-width: 640px;
+}
+
+.settings-success {
+  margin: 0;
+  color: #1f6a2a;
+  font-weight: 500;
+  font-size: 13px;
+}
+
 .settings-empty {
   background: var(--card-bg);
   border: 1px dashed var(--border-strong);

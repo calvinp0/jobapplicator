@@ -9,6 +9,8 @@ import type {
   EvidenceBankCreate,
   Job,
   JobCapture,
+  LlmProvider,
+  LlmProviderSetting,
   MasterResume,
   MasterResumeCreate,
   ResumeVersion,
@@ -32,6 +34,8 @@ export type {
   EvidenceBankCreate,
   Job,
   JobCapture,
+  LlmProvider,
+  LlmProviderSetting,
   MasterResume,
   MasterResumeCreate,
   ResumeVersion,
@@ -181,6 +185,23 @@ export function importWordResult(
   runId: string,
 ): Promise<WordResultImportResponse> {
   return apiRequest(`/runs/${runId}/import-word-result`, { method: "POST" });
+}
+
+export function listLlmProviders(): Promise<LlmProvider[]> {
+  return apiRequest("/llm-providers");
+}
+
+export function getLlmProviderSetting(): Promise<LlmProviderSetting> {
+  return apiRequest("/settings/llm-provider");
+}
+
+export function setLlmProviderSetting(
+  defaultProvider: string,
+): Promise<LlmProviderSetting> {
+  return apiRequest("/settings/llm-provider", {
+    method: "PUT",
+    body: { default_provider: defaultProvider },
+  });
 }
 
 export function listApplications(): Promise<Application[]> {

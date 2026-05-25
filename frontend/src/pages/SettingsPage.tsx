@@ -2,10 +2,16 @@ import { useEffect, useState } from "react";
 import {
   createEvidenceBank,
   createMasterResume,
+  getLlmProviderSetting,
   listEvidenceBanks,
   listMasterResumes,
+  setLlmProviderSetting,
 } from "../api";
-import type { EvidenceBank, MasterResume } from "../api";
+import type {
+  EvidenceBank,
+  LlmProvider,
+  MasterResume,
+} from "../api";
 import { extractApiDetail } from "../lib/api-errors";
 
 interface SeedEntity {
@@ -170,6 +176,114 @@ function SeedCard<T extends SeedEntity>({
   );
 }
 
+function LlmProviderCard() {
+  const [providers, setProviders] = useState<LlmProvider[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [savedId, setSavedId] = useState<string>("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLlmProviderSetting()
+      .then((data) => {
+        if (cancelled) return;
+        setProviders(data.available);
+        setSelectedId(data.default_provider);
+        setSavedId(data.default_provider);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(extractApiDetail(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedId || selectedId === savedId) return;
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      const updated = await setLlmProviderSetting(selectedId);
+      setProviders(updated.available);
+      setSavedId(updated.default_provider);
+      setSelectedId(updated.default_provider);
+      setSaveSuccess("Saved.");
+    } catch (err: unknown) {
+      setSaveError(extractApiDetail(err));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const isDirty = selectedId !== "" && selectedId !== savedId;
+
+  return (
+    <section className="settings-card">
+      <header className="settings-card-header">
+        <h3>Tailoring LLM</h3>
+      </header>
+
+      <p className="settings-helper">
+        Controls which CLI-based LLM the "Generate Automatically" flow
+        invokes for new runs. The Claude for Word handoff is unaffected.
+      </p>
+
+      {loadError ? (
+        <p role="alert" className="error">
+          {loadError}
+        </p>
+      ) : providers === null ? (
+        <p>Loading…</p>
+      ) : (
+        <form onSubmit={handleSubmit} noValidate className="settings-card-form">
+          <label className="field">
+            <span>Default provider</span>
+            <select
+              value={selectedId}
+              onChange={(e) => {
+                setSelectedId(e.target.value);
+                setSaveSuccess(null);
+                setSaveError(null);
+              }}
+              disabled={isSaving}
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {`${p.display_name} (${p.id})`}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {saveError ? (
+            <p role="alert" className="error">
+              {saveError}
+            </p>
+          ) : null}
+          {saveSuccess ? (
+            <p role="status" className="settings-success">
+              {saveSuccess}
+            </p>
+          ) : null}
+
+          <div className="settings-card-form-actions">
+            <button type="submit" disabled={isSaving || !isDirty}>
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const [resumes, setResumes] = useState<MasterResume[] | null>(null);
   const [evidenceBanks, setEvidenceBanks] = useState<EvidenceBank[] | null>(
@@ -228,6 +342,8 @@ export function SettingsPage() {
         }
         contentLabel="Content (markdown)"
       />
+
+      <LlmProviderCard />
     </section>
   );
 }
