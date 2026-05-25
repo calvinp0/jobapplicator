@@ -1298,7 +1298,7 @@ tasks:
     file: "agent_tasks/066-backend-llm-provider-default-setting.md"
     branch: "agent/066-backend-llm-provider-default-setting"
     worktree: "agent-066-backend-llm-provider-default-setting"
-    status: "ready"
+    status: "done"
     depends_on:
       - "065-backend-llm-provider-registry"
     verification:
@@ -1320,7 +1320,7 @@ tasks:
     file: "agent_tasks/067-frontend-settings-llm-provider-card.md"
     branch: "agent/067-frontend-settings-llm-provider-card"
     worktree: "agent-067-frontend-settings-llm-provider-card"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "066-backend-llm-provider-default-setting"
     verification:
