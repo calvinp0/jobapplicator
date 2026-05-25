@@ -1169,7 +1169,7 @@ tasks:
     file: "agent_tasks/060-add-word-handoff-api-endpoints.md"
     branch: "agent/060-add-word-handoff-api-endpoints"
     worktree: "agent-060-add-word-handoff-api-endpoints"
-    status: "ready"
+    status: "done"
     depends_on:
       - "059-create-claude-word-handoff-package"
     verification:
