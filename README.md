@@ -12,6 +12,10 @@ See `docs/product_requirements.md` and `docs/architecture.md` for the
 full specification, and `docs/adr/` for the architectural decisions
 that constrain how the system is allowed to behave.
 
+For local setup on Linux, macOS, or Windows — including Claude Code,
+the Anthropic DOCX skill, and the Office Word MCP server — see
+[`docs/install.md`](docs/install.md).
+
 ## MVP Workflow
 
 1. User opens a job posting in their browser.
