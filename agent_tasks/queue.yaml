@@ -1607,3 +1607,25 @@ tasks:
       - "docs/contracts/**"
       - "agent_tasks/080-add-gmail-integration-design-and-email-status-model.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "081-discover-master-resumes-from-candidate-context"
+    title: "Discover master resumes from candidate context"
+    file: "agent_tasks/081-discover-master-resumes-from-candidate-context.md"
+    branch: "agent/081-discover-master-resumes-from-candidate-context"
+    worktree: "agent-081-discover-master-resumes-from-candidate-context"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "pytest backend/tests/test_master_resumes.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest backend/tests/test_api.py"
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "scripts/seed_demo_data.py"
+      - "docs/contracts/**"
+      - "agent_tasks/081-discover-master-resumes-from-candidate-context.md"
+      - "agent_tasks/queue.yaml"
