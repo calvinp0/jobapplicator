@@ -1589,3 +1589,21 @@ tasks:
       - "README_INSTALL.md"
       - "agent_tasks/079-harden-word-mcp-python-env-and-claude-permissions.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "080-add-gmail-integration-design-and-email-status-model"
+    title: "Add Gmail integration design and email status model"
+    file: "agent_tasks/080-add-gmail-integration-design-and-email-status-model.md"
+    branch: "agent/080-add-gmail-integration-design-and-email-status-model"
+    worktree: "agent-080-add-gmail-integration-design-and-email-status-model"
+    status: "ready"
+    depends_on:
+      - "076-improve-applications-dashboard-status-tracking"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/contracts/**"
+      - "agent_tasks/080-add-gmail-integration-design-and-email-status-model.md"
+      - "agent_tasks/queue.yaml"
