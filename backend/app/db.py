@@ -66,14 +66,31 @@ def ensure_runtime_columns() -> None:
     from sqlalchemy import inspect, text
 
     inspector = inspect(engine)
-    if "claude_runs" not in inspector.get_table_names():
-        return
-    existing = {col["name"] for col in inspector.get_columns("claude_runs")}
-    if "llm_provider" not in existing:
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE claude_runs ADD COLUMN llm_provider "
-                    "VARCHAR(32) NOT NULL DEFAULT 'claude_code'"
+    table_names = set(inspector.get_table_names())
+    if "claude_runs" in table_names:
+        existing = {col["name"] for col in inspector.get_columns("claude_runs")}
+        if "llm_provider" not in existing:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE claude_runs ADD COLUMN llm_provider "
+                        "VARCHAR(32) NOT NULL DEFAULT 'claude_code'"
+                    )
                 )
-            )
+    if "applications" in table_names:
+        existing_app_cols = {col["name"] for col in inspector.get_columns("applications")}
+        # Backfill for task 080. New columns are nullable so pre-existing
+        # rows load without further work; see docs/contracts/gmail_integration.md.
+        if "gmail_query" not in existing_app_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE applications ADD COLUMN gmail_query TEXT")
+                )
+        if "last_gmail_check_at" not in existing_app_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE applications "
+                        "ADD COLUMN last_gmail_check_at DATETIME"
+                    )
+                )

@@ -18,6 +18,7 @@ from ..models import (
 from ..schemas import (
     APPLICATION_STATUS_SET,
     EMAIL_CLASSIFIED_STATUS_SET,
+    EMAIL_STATUS_SET,
     ApplicationCreate,
     ApplicationEventCreate,
     ApplicationEventRead,
@@ -110,34 +111,45 @@ def _derive_submission_status(application: Application) -> str:
 
 
 # Mapping from EmailLink.classified_status to the dashboard email state.
+# The vocabulary is pinned by docs/contracts/gmail_integration.md.
 _EMAIL_CLASSIFICATION_TO_STATE = {
-    "confirmation": "classified_neutral",
+    "confirmation": "confirmation_found",
     "rejection": "classified_rejection",
-    "next_step": "classified_positive",
-    "offer": "classified_positive",
+    "next_step": "classified_interview",
+    "offer": "classified_offer",
     "other": "classified_neutral",
 }
 
 
-def _derive_email_status(
+def derive_email_status(
     application: Application, sorted_links: list[EmailLink]
 ) -> str:
+    """Return one of ``EMAIL_STATUSES`` for ``application``.
+
+    The contract for this derivation lives in
+    ``docs/contracts/gmail_integration.md``. Only the manual-entry subset
+    of the vocabulary is emitted today; ``no_match`` and ``error`` are
+    reserved for the future Gmail-poll path.
+    """
     if sorted_links:
         latest = sorted_links[0]
         classification = latest.classified_status
         if classification is None:
             return "needs_review"
         return _EMAIL_CLASSIFICATION_TO_STATE.get(classification, "email_received")
-    # No emails attached yet. If we know the user submitted, we're "watching"
-    # for a response; otherwise we are not watching yet.
     if application.submitted_at is not None or application.status == "submitted":
         return "watching"
     return "not_watching"
 
 
-def _derive_next_action(
+def derive_next_action(
     application: Application, sorted_links: list[EmailLink]
 ) -> str:
+    """Return the dashboard "next action" hint for ``application``.
+
+    The wording is Gmail-aware so the dashboard can communicate
+    ``email_status`` without the user having to read the raw state.
+    """
     status = application.status
     if status == "withdrawn":
         return "Withdrawn"
@@ -153,18 +165,52 @@ def _derive_next_action(
         if sorted_links:
             latest = sorted_links[0]
             classification = latest.classified_status
-            if classification in {"rejection", "next_step", "offer"}:
+            if classification is None:
                 return "Review detected email"
             if classification == "confirmation":
                 return "Waiting for response"
+            # Non-confirmation classified links indicate a decision-bearing
+            # email that the user should triage.
             return "Review detected email"
         return "Waiting for email"
     if status == "approved":
         return "Ready to submit"
     if status == "generated":
         return "Review draft"
-    # draft and any unexpected status fall through here.
     return "Generate draft"
+
+
+def build_default_gmail_tracking_state() -> dict:
+    """Return the default-shaped Gmail-tracking dict for a new application.
+
+    Mirrors the field list pinned by
+    ``docs/contracts/gmail_integration.md``. Used by tests and any caller
+    that wants to know the wire-shape default without touching the DB.
+    """
+    return {
+        "email_status": "not_watching",
+        "gmail_query": None,
+        "last_gmail_check_at": None,
+        "last_matched_email_at": None,
+        "matched_email_count": 0,
+        "latest_email_subject": None,
+        "latest_email_from": None,
+        "latest_email_snippet": None,
+        "latest_email_classification": None,
+        "latest_email_confidence": None,
+        "latest_email_evidence": None,
+    }
+
+
+def is_valid_email_status(value: str) -> bool:
+    """True iff ``value`` is one of ``EMAIL_STATUSES``."""
+    return value in EMAIL_STATUS_SET
+
+
+# Internal aliases kept for module callers that still reference the older
+# private names. Public names above are the contract-stable surface.
+_derive_email_status = derive_email_status
+_derive_next_action = derive_next_action
 
 
 def _latest_run_for_application(
@@ -192,9 +238,10 @@ def _build_application_read(
     application: Application, db: Optional[Session] = None
 ) -> ApplicationRead:
     sorted_links = _sorted_email_links(application.email_links)
+    latest_link = sorted_links[0] if sorted_links else None
     last_email_at = None
-    if sorted_links:
-        last_email_at = sorted_links[0].received_at or sorted_links[0].created_at
+    if latest_link is not None:
+        last_email_at = latest_link.received_at or latest_link.created_at
     latest_run = (
         _latest_run_for_application(application, db) if db is not None else None
     )
@@ -208,15 +255,30 @@ def _build_application_read(
         updated_at=application.updated_at,
         timeline_stage=compute_timeline_stage(application, application.email_links),
         last_email_link=(
-            EmailLinkRead.model_validate(sorted_links[0]) if sorted_links else None
+            EmailLinkRead.model_validate(latest_link) if latest_link else None
         ),
         email_link_count=len(application.email_links),
         submission_status=_derive_submission_status(application),
-        email_status=_derive_email_status(application, sorted_links),
-        next_action=_derive_next_action(application, sorted_links),
+        email_status=derive_email_status(application, sorted_links),
+        next_action=derive_next_action(application, sorted_links),
         latest_run_id=latest_run.id if latest_run is not None else None,
         latest_run_status=latest_run.status if latest_run is not None else None,
         last_email_at=last_email_at,
+        # Gmail tracking fields (docs/contracts/gmail_integration.md).
+        gmail_query=application.gmail_query,
+        last_gmail_check_at=application.last_gmail_check_at,
+        last_matched_email_at=last_email_at,
+        matched_email_count=len(application.email_links),
+        latest_email_subject=latest_link.subject if latest_link else None,
+        latest_email_from=latest_link.sender if latest_link else None,
+        # ``snippet`` and ``evidence`` are reserved for the future Gmail
+        # poll path; the EmailLink model does not persist them yet.
+        latest_email_snippet=None,
+        latest_email_classification=(
+            latest_link.classified_status if latest_link else None
+        ),
+        latest_email_confidence=latest_link.confidence if latest_link else None,
+        latest_email_evidence=None,
     )
 
 

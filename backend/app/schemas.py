@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .models import (
     APPLICATION_STATUSES,
     EMAIL_CLASSIFIED_STATUSES,
+    EMAIL_STATUSES,
     REVISION_FEEDBACK_STATUSES,
 )
 
@@ -179,10 +180,27 @@ class ApplicationRead(_ORMModel):
     latest_run_id: Optional[str] = None
     latest_run_status: Optional[str] = None
     last_email_at: Optional[datetime] = None
+    # Gmail tracking surface. See docs/contracts/gmail_integration.md.
+    # ``gmail_query`` and ``last_gmail_check_at`` mirror persisted columns
+    # on Application; the rest are derived from the most recent attached
+    # EmailLink (``latest_email_snippet`` and ``latest_email_evidence``
+    # are reserved for the future Gmail-poll path and are always null
+    # today).
+    gmail_query: Optional[str] = None
+    last_gmail_check_at: Optional[datetime] = None
+    last_matched_email_at: Optional[datetime] = None
+    matched_email_count: int = 0
+    latest_email_subject: Optional[str] = None
+    latest_email_from: Optional[str] = None
+    latest_email_snippet: Optional[str] = None
+    latest_email_classification: Optional[str] = None
+    latest_email_confidence: Optional[float] = None
+    latest_email_evidence: Optional[str] = None
 
 
 APPLICATION_STATUS_SET = set(APPLICATION_STATUSES)
 EMAIL_CLASSIFIED_STATUS_SET = set(EMAIL_CLASSIFIED_STATUSES)
+EMAIL_STATUS_SET = frozenset(EMAIL_STATUSES)
 
 
 # ---- ApplicationEvent ----
