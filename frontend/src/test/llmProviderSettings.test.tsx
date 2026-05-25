@@ -10,6 +10,8 @@ const {
   createEvidenceBankMock,
   getLlmProviderSettingMock,
   setLlmProviderSettingMock,
+  getGmailStatusMock,
+  getGmailAuthUrlMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -29,6 +31,8 @@ const {
     createEvidenceBankMock: vi.fn(),
     getLlmProviderSettingMock: vi.fn(),
     setLlmProviderSettingMock: vi.fn(),
+    getGmailStatusMock: vi.fn(),
+    getGmailAuthUrlMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -40,6 +44,8 @@ vi.mock("../api", () => ({
   createEvidenceBank: createEvidenceBankMock,
   getLlmProviderSetting: getLlmProviderSettingMock,
   setLlmProviderSetting: setLlmProviderSettingMock,
+  getGmailStatus: getGmailStatusMock,
+  getGmailAuthUrl: getGmailAuthUrlMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -84,6 +90,15 @@ describe("SettingsPage – Tailoring LLM card", () => {
   beforeEach(() => {
     listMasterResumesMock.mockResolvedValue([]);
     listEvidenceBanksMock.mockResolvedValue([]);
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: true,
+      missing_config: [],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
   });
 
   afterEach(() => {

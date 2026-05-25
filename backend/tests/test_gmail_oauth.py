@@ -110,6 +110,8 @@ def test_status_reports_disconnected_when_no_token(gmail_client_app):
     body = r.json()
     assert body == {
         "connected": False,
+        "configured": True,
+        "missing_config": [],
         "email": None,
         "scopes": [],
         "token_path_configured": True,
@@ -132,10 +134,40 @@ def test_status_reports_connected_when_valid_token_exists(gmail_client_app):
     )
     body = client.get("/gmail/status").json()
     assert body["connected"] is True
+    assert body["configured"] is True
+    assert body["missing_config"] == []
     assert body["email"] == "calvin@example.com"
     assert body["scopes"] == [gmail_client.GMAIL_READONLY_SCOPE]
     assert body["token_path_configured"] is True
     assert body["last_checked_at"] is not None
+
+
+def test_status_reports_not_configured_when_oauth_env_missing(
+    gmail_client_app, monkeypatch
+):
+    client, _ = gmail_client_app
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
+    body = client.get("/gmail/status").json()
+    assert body["connected"] is False
+    assert body["configured"] is False
+    assert body["missing_config"] == [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+    ]
+
+
+def test_status_reports_configured_when_required_env_present(
+    gmail_client_app,
+):
+    # ``gmail_client_app`` already sets all three env vars; no token saved.
+    client, _ = gmail_client_app
+    body = client.get("/gmail/status").json()
+    assert body["configured"] is True
+    assert body["missing_config"] == []
+    assert body["connected"] is False
 
 
 def test_status_rejects_stored_token_with_forbidden_scope(gmail_client_app):
@@ -176,8 +208,30 @@ def test_auth_url_returns_400_when_oauth_not_configured(gmail_client_app, monkey
     client, _ = gmail_client_app
     monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
     r = client.get("/gmail/auth-url")
     assert r.status_code == 400
+
+
+def test_auth_url_returns_structured_error_when_config_missing(
+    gmail_client_app, monkeypatch
+):
+    client, _ = gmail_client_app
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
+    r = client.get("/gmail/auth-url")
+    assert r.status_code == 400
+    body = r.json()
+    detail = body["detail"]
+    assert isinstance(detail, dict)
+    assert detail["error"] == "gmail_oauth_not_configured"
+    assert "GOOGLE_CLIENT_ID" in detail["message"]
+    assert detail["missing"] == [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+    ]
 
 
 # ---- /gmail/oauth/callback -------------------------------------------

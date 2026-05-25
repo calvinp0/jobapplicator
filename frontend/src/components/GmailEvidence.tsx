@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ApiError,
   classifyApplicationGmail,
   getApplication,
-  getGmailAuthUrl,
   getGmailStatus,
   searchApplicationGmail,
 } from "../api";
@@ -42,6 +42,7 @@ function describeStatusLine(
   application: Application,
   status: GmailStatusResponse | null,
 ): string {
+  if (status && !status.configured) return "Gmail: Not configured";
   if (status && !status.connected) return "Gmail: Not connected";
   const emailStatus = application.email_status;
   if (emailStatus === "not_watching") {
@@ -64,8 +65,6 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
   const [pendingClassifyId, setPendingClassifyId] = useState<string | null>(
     null,
   );
@@ -93,23 +92,6 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
       cancelled = true;
     };
   }, []);
-
-  async function handleConnect() {
-    setIsConnecting(true);
-    setConnectError(null);
-    try {
-      const payload = await getGmailAuthUrl();
-      window.open(payload.auth_url, "_blank", "noopener,noreferrer");
-    } catch (err: unknown) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Could not get Gmail auth URL. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the backend first.";
-      setConnectError(message);
-    } finally {
-      setIsConnecting(false);
-    }
-  }
 
   async function handleSearch() {
     setIsSearching(true);
@@ -179,6 +161,7 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
   }
 
   const isConnected = status?.connected === true;
+  const isConfigured = status?.configured !== false;
   const statusLine = describeStatusLine(application, status);
   const lastChecked = application.last_gmail_check_at
     ? `Checked: ${formatRelative(application.last_gmail_check_at)}`
@@ -244,14 +227,22 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
       ) : null}
 
       <div className="gmail-evidence-actions">
-        {!isConnected ? (
-          <button
-            type="button"
-            onClick={handleConnect}
-            disabled={isConnecting}
+        {!isConfigured ? (
+          <p
+            className="gmail-connect-hint"
+            data-testid="gmail-connect-hint"
           >
-            {isConnecting ? "Opening…" : "Connect Gmail"}
-          </button>
+            Gmail OAuth is not configured.{" "}
+            <Link to="/settings">Configure it in Settings</Link> first.
+          </p>
+        ) : !isConnected ? (
+          <p
+            className="gmail-connect-hint"
+            data-testid="gmail-connect-hint"
+          >
+            <Link to="/settings">Connect Gmail in Settings</Link> to check
+            application emails.
+          </p>
         ) : (
           <button
             type="button"
@@ -268,11 +259,6 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
         )}
       </div>
 
-      {connectError ? (
-        <p role="alert" className="error">
-          {connectError}
-        </p>
-      ) : null}
       {searchError ? (
         <p role="alert" className="error">
           {searchError}

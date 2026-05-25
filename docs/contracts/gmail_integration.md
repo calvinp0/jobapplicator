@@ -412,8 +412,10 @@ GMAIL_TOKEN_PATH        Local path for the stored token blob.
 ```
 
 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are required for any OAuth
-operation; if either is missing the `/gmail/auth-url` endpoint returns
-`400` and `/gmail/status` reports `connected: false`. The other two
+operation; if either is missing the `/gmail/auth-url` endpoint returns a
+structured `400` (see *Configuration error reporting* below) and
+`/gmail/status` reports `connected: false`, `configured: false`, and the
+list of unset env var names in `missing_config`. The other two
 variables have sensible local-dev defaults.
 
 ### Token storage
@@ -458,9 +460,26 @@ existing router convention (no `/api` prefix; same style as
 Response shapes:
 
 ```jsonc
-// GET /gmail/status (disconnected)
+// GET /gmail/status (not configured — env vars missing)
 {
   "connected": false,
+  "configured": false,
+  "missing_config": [
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REDIRECT_URI"
+  ],
+  "email": null,
+  "scopes": [],
+  "token_path_configured": true,
+  "last_checked_at": null
+}
+
+// GET /gmail/status (configured but no token)
+{
+  "connected": false,
+  "configured": true,
+  "missing_config": [],
   "email": null,
   "scopes": [],
   "token_path_configured": true,
@@ -470,6 +489,8 @@ Response shapes:
 // GET /gmail/status (connected)
 {
   "connected": true,
+  "configured": true,
+  "missing_config": [],
   "email": "user@example.com",
   "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
   "token_path_configured": true,
@@ -1361,3 +1382,72 @@ proven stable on representative mail.
 - No bulk "Sync N applications now" affordance beyond the single
   button. Adjusting `max_applications` requires a request override
   (curl / a future settings field).
+
+## Settings-Owned Connection + Actionable Config Errors (task 087)
+
+Task 087 moves the Gmail connect/disconnect affordance into the
+Settings page and replaces the generic
+`Request to /gmail/auth-url failed with status 400` error with an
+actionable, structured response. The privacy / scope rules above are
+unchanged.
+
+### UI placement
+
+| Surface | Affordance |
+|---|---|
+| Settings → Gmail integration card | "Connect Gmail" (when configured but no token), connection status, privacy note, listing of any `missing_config` env vars |
+| Applications page | "Sync Gmail" button; an inline hint that links to Settings when Gmail is not configured/connected |
+| Application detail / `GmailEvidence` | "Check Gmail" for that application (only when connected); an inline hint linking to Settings when Gmail is not configured/connected. **Never** a "Connect Gmail" button, and **never** a direct call to `/gmail/auth-url` |
+
+The single source of truth for the OAuth handshake is the Settings page.
+Application cards and the application detail must not call
+`/gmail/auth-url` and must not surface their own Connect Gmail button.
+
+### `/gmail/status` shape
+
+`/gmail/status` carries two extra fields so the UI can render
+not-configured / configured / connected without separately probing the
+backend env vars:
+
+```jsonc
+{
+  "connected": false,
+  "configured": false,
+  "missing_config": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"],
+  "email": null,
+  "scopes": [],
+  "token_path_configured": true,
+  "last_checked_at": null
+}
+```
+
+`configured` is `true` iff both `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` are set. `missing_config` is empty when
+`configured` is true; otherwise it lists every unset env var among
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`
+(the redirect URI has a default but is included in the install-time
+trio so the UI can name what to set).
+
+### `/gmail/auth-url` structured error
+
+When the OAuth credentials are missing, `/gmail/auth-url` returns
+`HTTP 400` with a JSON `detail` object instead of a bare string:
+
+```jsonc
+{
+  "detail": {
+    "error": "gmail_oauth_not_configured",
+    "message": "Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI.",
+    "missing": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"]
+  }
+}
+```
+
+The frontend's `extractApiDetail` helper renders `detail.message`
+verbatim so the user sees, e.g.:
+
+> Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID,
+> GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI.
+
+Set the missing environment variables and restart the backend to clear
+the error.

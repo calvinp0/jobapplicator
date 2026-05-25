@@ -654,41 +654,89 @@ plain-text refresh token — treat it as a secret.
 
 ### Connect and verify
 
+The cockpit owns the Gmail connection from one place — the **Settings
+page**. The Applications page and per-application detail only use the
+existing connection; they never start OAuth and never prompt for
+credentials.
+
 1. Start the backend:
 
    ```bash
    uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
    ```
 
-2. Confirm disconnected:
+2. Open the cockpit at `http://localhost:5173` and go to **Settings →
+   Gmail integration**.
 
-   ```bash
-   curl http://localhost:8000/gmail/status
-   ```
+3. The card shows one of three states:
+   - **Not configured** — the OAuth env vars above are not set. The
+     card lists which ones are missing (`GOOGLE_CLIENT_ID`,
+     `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`). Set them in the
+     backend environment and restart the backend.
+   - **Not connected** — env vars are set but there is no token. Click
+     **Connect Gmail** to start the Google consent flow.
+   - **Connected** — shows the connected mailbox (when available) and
+     the granted scopes.
 
-3. Get the consent URL:
+4. After Connect Gmail, complete Google consent in the new tab; the
+   browser will redirect to `/gmail/oauth/callback` and the Settings
+   card will show *Connected* on next load.
 
-   ```bash
-   curl http://localhost:8000/gmail/auth-url
-   ```
+5. Use the **Sync Gmail** button on the Applications page to scan all
+   relevant applications, or open one application and use **Check
+   Gmail** for a single application. Both surfaces show a Settings
+   link instead of a Connect button if Gmail is disconnected.
 
-4. Open the returned `auth_url` in a browser, complete Google
-   consent, and let the browser follow the redirect back to
-   `/gmail/oauth/callback`.
+### Equivalent `curl` checks
 
-5. Confirm connected:
+The same surfaces are reachable from the command line for scripting and
+debugging:
 
-   ```bash
-   curl http://localhost:8000/gmail/status
-   ```
+```bash
+# Status — now reports `configured` and (when not configured)
+# the unset env var names in `missing_config`.
+curl http://localhost:8000/gmail/status
 
-6. Run a safe test search:
+# Auth URL — returns the Google consent URL when configured.
+curl http://localhost:8000/gmail/auth-url
 
-   ```bash
-   curl -X POST http://localhost:8000/gmail/test-search \
-     -H 'Content-Type: application/json' \
-     -d '{"query":"newer_than:7d","max_results":5}'
-   ```
+# Safe test search — returns only metadata + snippets (no body).
+curl -X POST http://localhost:8000/gmail/test-search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"newer_than:7d","max_results":5}'
+```
 
-   The response includes only message metadata (id, subject, from,
-   date, snippet) — no body, no html, no attachments.
+### Troubleshooting: actionable config error
+
+If you previously saw the generic error
+
+```text
+Request to /gmail/auth-url failed with status 400
+```
+
+the cockpit now surfaces an actionable message instead, e.g.:
+
+```text
+Gmail OAuth is not configured.
+Missing: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
+```
+
+The backend's response shape is structured:
+
+```json
+{
+  "detail": {
+    "error": "gmail_oauth_not_configured",
+    "message": "Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI.",
+    "missing": [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_REDIRECT_URI"
+    ]
+  }
+}
+```
+
+Set the listed env vars (see "Set the env vars" above) and restart the
+backend. The Settings card refreshes to *Not connected* once the
+credentials are present.
