@@ -1653,4 +1653,29 @@ tasks:
       - "pyproject.toml"
       - "agent_tasks/082-add-gmail-readonly-oauth-connection.md"
       - "agent_tasks/queue.yaml"
+  - id: "083-search-gmail-for-application-emails"
+    title: "Search Gmail for application-related emails"
+    file: "agent_tasks/083-search-gmail-for-application-emails.md"
+    branch: "agent/083-search-gmail-for-application-emails"
+    worktree: "agent-083-search-gmail-for-application-emails"
+    status: "ready"
+    depends_on:
+      - "082-add-gmail-readonly-oauth-connection"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - ".env.example"
+      - ".gitignore"
+      - "requirements.txt"
+      - "backend/requirements.txt"
+      - "pyproject.toml"
+      - "agent_tasks/083-search-gmail-for-application-emails.md"
+      - "agent_tasks/queue.yaml"
+
 
