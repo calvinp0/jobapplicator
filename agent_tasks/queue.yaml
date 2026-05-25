@@ -1163,3 +1163,26 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/059-create-claude-word-handoff-package.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "060-add-word-handoff-api-endpoints"
+    title: "Add Word handoff API endpoints"
+    file: "agent_tasks/060-add-word-handoff-api-endpoints.md"
+    branch: "agent/060-add-word-handoff-api-endpoints"
+    worktree: "agent-060-add-word-handoff-api-endpoints"
+    status: "ready"
+    depends_on:
+      - "059-create-claude-word-handoff-package"
+    verification:
+      - "pytest backend/tests/test_word_handoff.py"
+      - "pytest backend/tests/test_api.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/main.py"
+      - "backend/app/run_directory.py"
+      - "backend/app/word_handoff.py"
+      - "backend/tests/test_word_handoff.py"
+      - "backend/tests/test_api.py"
+      - "docs/contracts/claude_run_directory.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/060-add-word-handoff-api-endpoints.md"
+      - "agent_tasks/queue.yaml"
