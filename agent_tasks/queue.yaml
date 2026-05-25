@@ -1765,3 +1765,26 @@ tasks:
       - ".gitignore"
       - "agent_tasks/087-move-gmail-auth-to-settings-and-improve-config-errors.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "088-store-gmail-oauth-config-in-settings"
+    title: "Store Gmail OAuth config in Settings"
+    file: "agent_tasks/088-store-gmail-oauth-config-in-settings.md"
+    branch: "agent/088-store-gmail-oauth-config-in-settings"
+    worktree: "agent-088-store-gmail-oauth-config-in-settings"
+    status: "ready"
+    depends_on:
+      - "087-move-gmail-auth-to-settings-and-improve-config-errors"
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - ".env.example"
+      - ".gitignore"
+      - "agent_tasks/088-store-gmail-oauth-config-in-settings.md"
+      - "agent_tasks/queue.yaml"
