@@ -14,7 +14,10 @@ runs/<run_id>/
 │   ├── tailoring_preferences.md
 │   ├── resume_dos_and_donts.md
 │   ├── tailoring_prompt.md
-│   └── revision_feedback.md      # only present on follow-up runs
+│   ├── revision_feedback.md      # only present on follow-up runs
+│   ├── master_resume.docx        # optional source DOCX (any accepted name)
+│   ├── master_resume_extracted.md           # written by the backend when a DOCX is present
+│   └── master_resume_extraction_error.md    # written instead if extraction fails
 ├── output/
 │   ├── tailored_resume.docx
 │   ├── tailored_resume.md
@@ -210,6 +213,31 @@ Boundaries the worker must respect when reading this file:
 - Per ADR-004, feedback does not override evidence constraints. If the user asks for a claim that is not supported by `master_resume.md`, `evidence_bank.md`, or `project_notes.md`, the revised draft must either omit the claim or surface it as a gap in `output/claim_audit.md`. Unsupported claims must never be silently inserted.
 - Per ADR-002, Claude Code may not write to the database or to anything outside the run directory. The feedback file is a read-only input; the worker's only response to it is updated output files in `output/`.
 
+### `master_resume.docx` (optional)
+
+A source resume provided as a Word document. Accepted under the same
+filename list used by the word-handoff path:
+
+```text
+input/master_resume.docx
+input/resume.docx
+input/base_resume.docx
+input/original_resume.docx
+```
+
+When present, the backend extracts visible text and basic structure to
+`input/master_resume_extracted.md` *before* the Claude Code subprocess
+launches. The runtime prompt instructs Claude to treat the DOCX as the
+formatting/layout source and the extracted markdown as the reliable
+evidence source for claims.
+
+If extraction fails, the backend writes
+`input/master_resume_extraction_error.md` (recording the DOCX path and
+the failure reason) instead of the extracted markdown. The run is
+failed loudly when extraction fails *and* no accepted markdown resume
+(`master_resume.md`, `resume.md`, `base_resume.md`,
+`original_resume.md`) is present in `input/`.
+
 ## Claude Code Read Boundary
 
 Claude Code may read:
@@ -225,6 +253,9 @@ input/tailoring_preferences.md
 input/resume_dos_and_donts.md
 input/tailoring_prompt.md
 input/revision_feedback.md
+input/master_resume.docx
+input/master_resume_extracted.md
+input/master_resume_extraction_error.md
 ```
 
 `input/revision_feedback.md` is only present on follow-up tailoring runs (see ADR-008); when absent, the worker must treat the run as a first-draft tailoring run.

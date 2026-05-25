@@ -12,6 +12,7 @@ dependencies = [
   "sqlalchemy>=2.0",
   "pydantic>=2",
   "uvicorn[standard]",
+  "python-docx>=1.0",
 ]
 
 [project.optional-dependencies]
