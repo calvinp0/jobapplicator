@@ -1214,7 +1214,7 @@ tasks:
     file: "agent_tasks/062-add-frontend-tailoring-method-controls.md"
     branch: "agent/062-add-frontend-tailoring-method-controls"
     worktree: "agent-062-add-frontend-tailoring-method-controls"
-    status: "ready"
+    status: "done"
     depends_on:
       - "061-import-claude-word-result"
     verification:
