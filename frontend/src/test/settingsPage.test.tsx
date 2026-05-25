@@ -11,6 +11,8 @@ const {
   listCapturesMock,
   getLlmProviderSettingMock,
   setLlmProviderSettingMock,
+  getGmailStatusMock,
+  getGmailAuthUrlMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -31,6 +33,8 @@ const {
     listCapturesMock: vi.fn(),
     getLlmProviderSettingMock: vi.fn(),
     setLlmProviderSettingMock: vi.fn(),
+    getGmailStatusMock: vi.fn(),
+    getGmailAuthUrlMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -43,6 +47,8 @@ vi.mock("../api", () => ({
   listCaptures: listCapturesMock,
   getLlmProviderSetting: getLlmProviderSettingMock,
   setLlmProviderSetting: setLlmProviderSettingMock,
+  getGmailStatus: getGmailStatusMock,
+  getGmailAuthUrl: getGmailAuthUrlMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -83,6 +89,19 @@ describe("SettingsPage", () => {
           binary_env_var: "JOBAPPLY_CLAUDE_BINARY",
         },
       ],
+    });
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: true,
+      missing_config: [],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+    getGmailAuthUrlMock.mockResolvedValue({
+      auth_url: "https://accounts.google.com/o/oauth2/auth?fake=1",
+      scope: "https://www.googleapis.com/auth/gmail.readonly",
     });
   });
 
@@ -406,6 +425,149 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
     expect(
       within(resumeCard).queryByText(/request to/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the Gmail integration card and the privacy note", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 3, name: /gmail integration/i }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.getByText(
+        /gmail is used read-only for application tracking\. jobapplicator does not send, delete, archive, or label emails\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the not-configured state with missing env vars and hides Connect Gmail", async () => {
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: false,
+      missing_config: [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+      ],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("gmail-settings-status"),
+      ).toHaveTextContent(/not configured/i),
+    );
+    expect(screen.getByTestId("gmail-not-configured")).toHaveTextContent(
+      /GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI/,
+    );
+    expect(
+      screen.queryByTestId("gmail-connect-button"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Connect Gmail action when configured but disconnected", async () => {
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: true,
+      missing_config: [],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("gmail-settings-status"),
+      ).toHaveTextContent(/not connected/i),
+    );
+    expect(screen.getByTestId("gmail-connect-button")).toBeInTheDocument();
+  });
+
+  it("opens the Gmail auth URL when Connect Gmail is clicked from Settings", async () => {
+    const originalOpen = window.open;
+    window.open = vi.fn();
+    try {
+      getGmailStatusMock.mockResolvedValue({
+        connected: false,
+        configured: true,
+        missing_config: [],
+        email: null,
+        scopes: [],
+        token_path_configured: true,
+        last_checked_at: null,
+      });
+
+      const user = userEvent.setup();
+      renderPage();
+
+      const button = await screen.findByTestId("gmail-connect-button");
+      await user.click(button);
+
+      await waitFor(() =>
+        expect(getGmailAuthUrlMock).toHaveBeenCalledTimes(1),
+      );
+      expect(window.open).toHaveBeenCalledWith(
+        "https://accounts.google.com/o/oauth2/auth?fake=1",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    } finally {
+      window.open = originalOpen;
+    }
+  });
+
+  it("surfaces a structured 400 from /gmail/auth-url with actionable text", async () => {
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: true,
+      missing_config: [],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+    getGmailAuthUrlMock.mockRejectedValue(
+      new ApiErrorMock("Request failed", 400, {
+        detail: {
+          error: "gmail_oauth_not_configured",
+          message:
+            "Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI.",
+          missing: [
+            "GOOGLE_CLIENT_ID",
+            "GOOGLE_CLIENT_SECRET",
+            "GOOGLE_REDIRECT_URI",
+          ],
+        },
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    const button = await screen.findByTestId("gmail-connect-button");
+    await user.click(button);
+
+    expect(
+      await screen.findByText(
+        /gmail oauth is not configured\. set google_client_id/i,
+      ),
+    ).toBeInTheDocument();
+    // The user never sees the raw "Request to /... failed with status 400"
+    // string surfaced as an error.
+    expect(
+      screen.queryByText(/request to .* failed with status 400/i),
     ).not.toBeInTheDocument();
   });
 });

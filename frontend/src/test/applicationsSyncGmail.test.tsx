@@ -10,6 +10,8 @@ const {
   markApplicationInterviewMock,
   submitApplicationMock,
   syncApplicationsGmailMock,
+  getGmailStatusMock,
+  getGmailAuthUrlMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -29,6 +31,8 @@ const {
     markApplicationInterviewMock: vi.fn(),
     submitApplicationMock: vi.fn(),
     syncApplicationsGmailMock: vi.fn(),
+    getGmailStatusMock: vi.fn(),
+    getGmailAuthUrlMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -40,6 +44,8 @@ vi.mock("../api", () => ({
   markApplicationInterview: markApplicationInterviewMock,
   submitApplication: submitApplicationMock,
   syncApplicationsGmail: syncApplicationsGmailMock,
+  getGmailStatus: getGmailStatusMock,
+  getGmailAuthUrl: getGmailAuthUrlMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -93,10 +99,70 @@ describe("ApplicationsPage Sync Gmail", () => {
   beforeEach(() => {
     listApplicationsMock.mockResolvedValue([application]);
     listJobsMock.mockResolvedValue([job]);
+    getGmailStatusMock.mockResolvedValue({
+      connected: true,
+      configured: true,
+      missing_config: [],
+      email: "user@example.com",
+      scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("shows a 'Connect Gmail in Settings' hint when Gmail is configured but not connected", async () => {
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: true,
+      missing_config: [],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("sync-gmail-hint")).toHaveTextContent(
+        /connect gmail in settings/i,
+      ),
+    );
+    expect(getGmailAuthUrlMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a 'not configured / open Settings' hint when Gmail OAuth env vars are missing", async () => {
+    getGmailStatusMock.mockResolvedValue({
+      connected: false,
+      configured: false,
+      missing_config: [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+      ],
+      email: null,
+      scopes: [],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("sync-gmail-hint")).toHaveTextContent(
+        /not configured.*open settings/i,
+      ),
+    );
   });
 
   it("renders a Sync Gmail button", async () => {

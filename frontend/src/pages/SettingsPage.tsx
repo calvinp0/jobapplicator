@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   createEvidenceBank,
   createMasterResume,
+  getGmailAuthUrl,
+  getGmailStatus,
   getLlmProviderSetting,
   listEvidenceBanks,
   listMasterResumes,
@@ -9,6 +11,7 @@ import {
 } from "../api";
 import type {
   EvidenceBank,
+  GmailStatusResponse,
   LlmProvider,
   MasterResume,
 } from "../api";
@@ -284,6 +287,117 @@ function LlmProviderCard() {
   );
 }
 
+function GmailIntegrationCard() {
+  const [status, setStatus] = useState<GmailStatusResponse | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getGmailStatus()
+      .then((s) => {
+        if (cancelled) return;
+        setStatus(s);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(extractApiDetail(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleConnect() {
+    setIsConnecting(true);
+    setConnectError(null);
+    try {
+      const payload = await getGmailAuthUrl();
+      window.open(payload.auth_url, "_blank", "noopener,noreferrer");
+    } catch (err: unknown) {
+      setConnectError(extractApiDetail(err));
+    } finally {
+      setIsConnecting(false);
+    }
+  }
+
+  let statusText = "Loading…";
+  if (status) {
+    if (!status.configured) statusText = "Not configured";
+    else if (!status.connected) statusText = "Not connected";
+    else statusText = status.email ? `Connected as ${status.email}` : "Connected";
+  }
+
+  return (
+    <section className="settings-card" data-testid="gmail-integration-card">
+      <header className="settings-card-header">
+        <h3>Gmail integration</h3>
+      </header>
+
+      <p className="settings-helper">
+        Gmail is used read-only for application tracking. JobApplicator does
+        not send, delete, archive, or label emails.
+      </p>
+
+      {loadError ? (
+        <p role="alert" className="error">
+          {loadError}
+        </p>
+      ) : null}
+
+      <dl className="run-meta">
+        <dt>Status</dt>
+        <dd data-testid="gmail-settings-status">{statusText}</dd>
+        {status && status.connected && status.scopes.length > 0 ? (
+          <>
+            <dt>Scopes</dt>
+            <dd>{status.scopes.join(", ")}</dd>
+          </>
+        ) : null}
+      </dl>
+
+      {status && !status.configured ? (
+        <div
+          className="settings-empty"
+          data-testid="gmail-not-configured"
+          role="status"
+        >
+          <p>
+            Gmail OAuth is not configured.
+            {status.missing_config.length > 0
+              ? ` Missing: ${status.missing_config.join(", ")}.`
+              : null}
+          </p>
+          <p>
+            See the install docs for setup details (Optional Gmail Read-Only
+            Connection in <code>docs/install.md</code>).
+          </p>
+        </div>
+      ) : null}
+
+      {status && status.configured && !status.connected ? (
+        <div className="settings-card-form-actions">
+          <button
+            type="button"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            data-testid="gmail-connect-button"
+          >
+            {isConnecting ? "Opening…" : "Connect Gmail"}
+          </button>
+        </div>
+      ) : null}
+
+      {connectError ? (
+        <p role="alert" className="error">
+          {connectError}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const [resumes, setResumes] = useState<MasterResume[] | null>(null);
   const [evidenceBanks, setEvidenceBanks] = useState<EvidenceBank[] | null>(
@@ -344,6 +458,8 @@ export function SettingsPage() {
       />
 
       <LlmProviderCard />
+
+      <GmailIntegrationCard />
     </section>
   );
 }

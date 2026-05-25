@@ -62,6 +62,8 @@ SYNC_NEVER_SYNC_STATUSES: frozenset[str] = frozenset(
 
 class GmailStatusRead(BaseModel):
     connected: bool
+    configured: bool
+    missing_config: list[str]
     email: str | None
     scopes: list[str]
     token_path_configured: bool
@@ -110,7 +112,14 @@ def gmail_auth_url() -> GmailAuthUrlRead:
     try:
         payload = gmail_client.build_auth_url()
     except gmail_client.GmailNotConfiguredError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "gmail_oauth_not_configured",
+                "message": str(exc),
+                "missing": list(exc.missing),
+            },
+        ) from exc
     except gmail_client.GmailScopeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except gmail_client.GmailDependencyError as exc:

@@ -9,6 +9,8 @@ const {
   markApplicationRejectedMock,
   markApplicationInterviewMock,
   submitApplicationMock,
+  syncApplicationsGmailMock,
+  getGmailStatusMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -27,6 +29,8 @@ const {
     markApplicationRejectedMock: vi.fn(),
     markApplicationInterviewMock: vi.fn(),
     submitApplicationMock: vi.fn(),
+    syncApplicationsGmailMock: vi.fn(),
+    getGmailStatusMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -37,6 +41,8 @@ vi.mock("../api", () => ({
   markApplicationRejected: markApplicationRejectedMock,
   markApplicationInterview: markApplicationInterviewMock,
   submitApplication: submitApplicationMock,
+  syncApplicationsGmail: syncApplicationsGmailMock,
+  getGmailStatus: getGmailStatusMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -287,6 +293,15 @@ describe("ApplicationsPage", () => {
   beforeEach(() => {
     listApplicationsMock.mockResolvedValue(applications);
     listJobsMock.mockResolvedValue(jobs);
+    getGmailStatusMock.mockResolvedValue({
+      connected: true,
+      configured: true,
+      missing_config: [],
+      email: "user@example.com",
+      scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+      token_path_configured: true,
+      last_checked_at: null,
+    });
   });
 
   afterEach(() => {

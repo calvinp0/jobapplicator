@@ -159,6 +159,8 @@ describe("ApplicationDetailPage", () => {
     listApplicationEmailLinksMock.mockResolvedValue([]);
     getGmailStatusMock.mockResolvedValue({
       connected: false,
+      configured: true,
+      missing_config: [],
       email: null,
       scopes: [],
       token_path_configured: true,

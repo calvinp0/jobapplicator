@@ -66,7 +66,15 @@ FORBIDDEN_SCOPES: frozenset[str] = frozenset(
 
 
 class GmailNotConfiguredError(RuntimeError):
-    """Raised when GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are missing."""
+    """Raised when GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are missing.
+
+    ``missing`` carries the env var names the user still needs to set so
+    the HTTP layer can return a structured, actionable error body.
+    """
+
+    def __init__(self, message: str, missing: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.missing = list(missing or [])
 
 
 class GmailNotConnectedError(RuntimeError):
@@ -81,6 +89,17 @@ class GmailDependencyError(RuntimeError):
     """Raised when the optional google libraries are not installed."""
 
 
+# The Gmail OAuth env vars the user must set, in the order surfaced to
+# the UI. ``GOOGLE_REDIRECT_URI`` has a sensible local default but is
+# still part of the documented setup so it is included here so the UI /
+# install docs can list it; ``configured`` only requires the credentials.
+REQUIRED_OAUTH_ENV_VARS: tuple[str, ...] = (
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REDIRECT_URI",
+)
+
+
 @dataclass(frozen=True)
 class GmailConfig:
     """Resolved Gmail OAuth configuration.
@@ -92,10 +111,32 @@ class GmailConfig:
     client_id: str | None
     client_secret: str | None
     redirect_uri: str
+    redirect_uri_from_env: bool
     token_path: Path
 
     def is_oauth_configured(self) -> bool:
         return bool(self.client_id and self.client_secret)
+
+    def missing_config(self) -> list[str]:
+        """Names of the OAuth env vars the user still needs to set.
+
+        Returns ``[]`` when :meth:`is_oauth_configured` is true so the
+        ``/gmail/status`` and ``/gmail/auth-url`` surfaces can render a
+        clean "ready" state. When the credentials are not set, the
+        redirect URI is included if the user has not explicitly set it,
+        so the install-time instructions match what the UI tells them
+        to set.
+        """
+        if self.is_oauth_configured():
+            return []
+        missing: list[str] = []
+        if not self.client_id:
+            missing.append("GOOGLE_CLIENT_ID")
+        if not self.client_secret:
+            missing.append("GOOGLE_CLIENT_SECRET")
+        if not self.redirect_uri_from_env:
+            missing.append("GOOGLE_REDIRECT_URI")
+        return missing
 
 
 def _repo_root() -> Path:
@@ -120,10 +161,12 @@ def get_gmail_config() -> GmailConfig:
     """
     token_path_env = os.environ.get("GMAIL_TOKEN_PATH")
     token_path = Path(token_path_env) if token_path_env else _default_token_path()
+    redirect_uri_env = os.environ.get("GOOGLE_REDIRECT_URI") or None
     return GmailConfig(
         client_id=os.environ.get("GOOGLE_CLIENT_ID") or None,
         client_secret=os.environ.get("GOOGLE_CLIENT_SECRET") or None,
-        redirect_uri=os.environ.get("GOOGLE_REDIRECT_URI") or _default_redirect_uri(),
+        redirect_uri=redirect_uri_env or _default_redirect_uri(),
+        redirect_uri_from_env=redirect_uri_env is not None,
         token_path=token_path,
     )
 
@@ -141,9 +184,11 @@ def assert_readonly_scope(scopes: list[str] | tuple[str, ...]) -> None:
 def _require_configured() -> GmailConfig:
     cfg = get_gmail_config()
     if not cfg.is_oauth_configured():
+        missing = cfg.missing_config()
         raise GmailNotConfiguredError(
-            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set to use "
-            "the Gmail integration"
+            "Gmail OAuth is not configured. Set "
+            + ", ".join(missing) + ".",
+            missing=missing,
         )
     return cfg
 
@@ -293,10 +338,14 @@ def _fetch_profile_email(creds) -> str | None:
 def get_status() -> dict[str, Any]:
     """Return the connection-state surface consumed by ``GET /gmail/status``."""
     cfg = get_gmail_config()
+    configured = cfg.is_oauth_configured()
+    missing = cfg.missing_config()
     token_blob = load_token()
     if token_blob is None:
         return {
             "connected": False,
+            "configured": configured,
+            "missing_config": missing,
             "email": None,
             "scopes": [],
             "token_path_configured": True,
@@ -308,6 +357,8 @@ def get_status() -> dict[str, Any]:
     except GmailScopeError:
         return {
             "connected": False,
+            "configured": configured,
+            "missing_config": missing,
             "email": None,
             "scopes": scopes,
             "token_path_configured": True,
@@ -315,6 +366,8 @@ def get_status() -> dict[str, Any]:
         }
     return {
         "connected": True,
+        "configured": configured,
+        "missing_config": missing,
         "email": token_blob.get("email"),
         "scopes": scopes,
         "token_path_configured": bool(cfg.token_path),

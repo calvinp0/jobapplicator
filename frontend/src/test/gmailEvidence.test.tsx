@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 
 const {
   getApplicationMock,
   getGmailStatusMock,
-  getGmailAuthUrlMock,
   searchApplicationGmailMock,
   classifyApplicationGmailMock,
   ApiErrorMock,
@@ -23,7 +23,6 @@ const {
   return {
     getApplicationMock: vi.fn(),
     getGmailStatusMock: vi.fn(),
-    getGmailAuthUrlMock: vi.fn(),
     searchApplicationGmailMock: vi.fn(),
     classifyApplicationGmailMock: vi.fn(),
     ApiErrorMock,
@@ -33,7 +32,6 @@ const {
 vi.mock("../api", () => ({
   getApplication: getApplicationMock,
   getGmailStatus: getGmailStatusMock,
-  getGmailAuthUrl: getGmailAuthUrlMock,
   searchApplicationGmail: searchApplicationGmailMock,
   classifyApplicationGmail: classifyApplicationGmailMock,
   ApiError: ApiErrorMock,
@@ -41,6 +39,17 @@ vi.mock("../api", () => ({
 
 import { GmailEvidence } from "../components/GmailEvidence";
 import type { Application } from "../api";
+
+function renderEvidence(
+  application: Application,
+  onChanged: (a: Application) => void,
+) {
+  return render(
+    <MemoryRouter>
+      <GmailEvidence application={application} onApplicationChanged={onChanged} />
+    </MemoryRouter>,
+  );
+}
 
 function baseApp(overrides: Partial<Application> = {}): Application {
   return {
@@ -105,10 +114,6 @@ describe("GmailEvidence", () => {
       application_status_changed: true,
       email_link_id: "el-new",
     });
-    getGmailAuthUrlMock.mockResolvedValue({
-      auth_url: "https://accounts.google.com/o/oauth2/auth?fake=1",
-      scope: "https://www.googleapis.com/auth/gmail.readonly",
-    });
     window.open = vi.fn();
   });
 
@@ -120,13 +125,15 @@ describe("GmailEvidence", () => {
   it("renders the privacy note", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: false,
+      configured: true,
+      missing_config: [],
       email: null,
       scopes: [],
       token_path_configured: true,
       last_checked_at: null,
     });
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
 
     expect(
       screen.getByText(
@@ -135,64 +142,80 @@ describe("GmailEvidence", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Connect Gmail action when not connected", async () => {
+  it("directs the user to Settings when Gmail is configured but not connected", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: false,
+      configured: true,
+      missing_config: [],
       email: null,
       scopes: [],
       token_path_configured: true,
       last_checked_at: null,
     });
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
 
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: /connect gmail/i }),
-      ).toBeInTheDocument(),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("gmail-status-line")).toHaveTextContent(
-        /not connected/i,
+      expect(screen.getByTestId("gmail-connect-hint")).toHaveTextContent(
+        /connect gmail in settings/i,
       ),
+    );
+    // No Connect Gmail button is rendered inside the application detail.
+    expect(
+      screen.queryByRole("button", { name: /connect gmail/i }),
+    ).not.toBeInTheDocument();
+    // And no call is made to the /gmail/auth-url endpoint from here.
+    const settingsLink = screen
+      .getByTestId("gmail-connect-hint")
+      .querySelector("a");
+    expect(settingsLink?.getAttribute("href")).toBe("/settings");
+    expect(screen.getByTestId("gmail-status-line")).toHaveTextContent(
+      /not connected/i,
     );
   });
 
-  it("opens the Gmail auth URL when Connect Gmail is clicked", async () => {
-    const user = userEvent.setup();
+  it("shows the not-configured hint pointing to Settings", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: false,
+      configured: false,
+      missing_config: [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+      ],
       email: null,
       scopes: [],
       token_path_configured: true,
       last_checked_at: null,
     });
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
 
-    const button = await screen.findByRole("button", {
-      name: /connect gmail/i,
-    });
-    await user.click(button);
-
-    await waitFor(() => expect(getGmailAuthUrlMock).toHaveBeenCalledTimes(1));
-    expect(window.open).toHaveBeenCalledWith(
-      "https://accounts.google.com/o/oauth2/auth?fake=1",
-      "_blank",
-      "noopener,noreferrer",
+    await waitFor(() =>
+      expect(screen.getByTestId("gmail-connect-hint")).toHaveTextContent(
+        /not configured.*configure it in settings/i,
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: /connect gmail/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("gmail-status-line")).toHaveTextContent(
+      /not configured/i,
     );
   });
 
   it("shows Check Gmail action when connected and not yet checked", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
       last_checked_at: null,
     });
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
 
     await waitFor(() =>
       expect(
@@ -208,6 +231,8 @@ describe("GmailEvidence", () => {
     const user = userEvent.setup();
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -221,9 +246,7 @@ describe("GmailEvidence", () => {
     getApplicationMock.mockResolvedValue(refreshed);
     const onChanged = vi.fn();
 
-    render(
-      <GmailEvidence application={baseApp()} onApplicationChanged={onChanged} />,
-    );
+    renderEvidence(baseApp(), onChanged);
 
     await user.click(await screen.findByRole("button", { name: /check gmail/i }));
 
@@ -242,6 +265,8 @@ describe("GmailEvidence", () => {
   it("renders candidate metadata: subject, sender, snippet and matched signals", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -267,7 +292,7 @@ describe("GmailEvidence", () => {
     });
     const user = userEvent.setup();
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
 
     await user.click(await screen.findByRole("button", { name: /check gmail/i }));
 
@@ -289,6 +314,8 @@ describe("GmailEvidence", () => {
   it("does not render any full-body content for candidates (snippet only)", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -314,7 +341,7 @@ describe("GmailEvidence", () => {
     });
     const user = userEvent.setup();
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
     await user.click(await screen.findByRole("button", { name: /check gmail/i }));
 
     await waitFor(() => expect(screen.getByText("S")).toBeInTheDocument());
@@ -328,6 +355,8 @@ describe("GmailEvidence", () => {
   it("calls the classify endpoint and renders evidence with explicit text labels", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -353,7 +382,7 @@ describe("GmailEvidence", () => {
     });
     const user = userEvent.setup();
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
     await user.click(await screen.findByRole("button", { name: /check gmail/i }));
 
     const item = (await screen.findByText("Application update")).closest("li");
@@ -393,6 +422,8 @@ describe("GmailEvidence", () => {
   it("renders the latest classification summary from application fields", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -407,7 +438,7 @@ describe("GmailEvidence", () => {
       last_gmail_check_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
     });
 
-    render(<GmailEvidence application={app} onApplicationChanged={noop} />);
+    renderEvidence(app, noop);
 
     expect(screen.getByTestId("gmail-status-line")).toHaveTextContent(
       /rejection detected/i,
@@ -425,6 +456,8 @@ describe("GmailEvidence", () => {
   it("surfaces an inline error when the search endpoint fails", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -435,7 +468,7 @@ describe("GmailEvidence", () => {
     );
     const user = userEvent.setup();
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
     await user.click(await screen.findByRole("button", { name: /check gmail/i }));
 
     await waitFor(() => {
@@ -450,6 +483,8 @@ describe("GmailEvidence", () => {
   it("surfaces an inline error when classification fails", async () => {
     getGmailStatusMock.mockResolvedValue({
       connected: true,
+      configured: true,
+      missing_config: [],
       email: "user@example.com",
       scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
       token_path_configured: true,
@@ -478,7 +513,7 @@ describe("GmailEvidence", () => {
     );
     const user = userEvent.setup();
 
-    render(<GmailEvidence application={baseApp()} onApplicationChanged={noop} />);
+    renderEvidence(baseApp(), noop);
     await user.click(await screen.findByRole("button", { name: /check gmail/i }));
     const item = (await screen.findByText("Update")).closest("li");
     await user.click(

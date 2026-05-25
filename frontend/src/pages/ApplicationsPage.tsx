@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ApiError,
+  getGmailStatus,
   listApplications,
   listJobs,
   markApplicationInterview,
@@ -11,6 +12,7 @@ import {
 } from "../api";
 import type {
   Application,
+  GmailStatusResponse,
   GmailSyncApplicationsResponse,
   Job,
 } from "../api";
@@ -53,6 +55,9 @@ export function ApplicationsPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncResult, setSyncResult] =
     useState<GmailSyncApplicationsResponse | null>(null);
+  const [gmailStatus, setGmailStatus] = useState<GmailStatusResponse | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +72,16 @@ export function ApplicationsPage() {
         const message =
           err instanceof ApiError ? err.message : "Failed to load applications";
         setError(message);
+      });
+    // Gmail status is loaded separately so a failure here never blocks the
+    // application list; the UI just falls back to the generic "Connect Gmail
+    // in Settings" hint.
+    getGmailStatus()
+      .then((s) => {
+        if (!cancelled) setGmailStatus(s);
+      })
+      .catch(() => {
+        // Non-fatal; treat as unknown status.
       });
     return () => {
       cancelled = true;
@@ -154,6 +169,23 @@ export function ApplicationsPage() {
         >
           {syncing ? "Syncing Gmail…" : "Sync Gmail"}
         </button>
+        {gmailStatus && !gmailStatus.configured ? (
+          <span
+            className="applications-toolbar-hint"
+            data-testid="sync-gmail-hint"
+          >
+            Gmail OAuth is not configured.{" "}
+            <Link to="/settings">Open Settings</Link> for setup details.
+          </span>
+        ) : gmailStatus && !gmailStatus.connected ? (
+          <span
+            className="applications-toolbar-hint"
+            data-testid="sync-gmail-hint"
+          >
+            <Link to="/settings">Connect Gmail in Settings</Link> before
+            syncing applications.
+          </span>
+        ) : null}
       </div>
       {syncError ? (
         <p role="alert" className="error">

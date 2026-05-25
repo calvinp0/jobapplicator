@@ -169,6 +169,8 @@ export interface Application {
 
 export interface GmailStatusResponse {
   connected: boolean;
+  configured: boolean;
+  missing_config: string[];
   email: string | null;
   scopes: string[];
   token_path_configured: boolean;
