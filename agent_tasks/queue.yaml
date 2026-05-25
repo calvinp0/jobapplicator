@@ -1788,3 +1788,25 @@ tasks:
       - ".gitignore"
       - "agent_tasks/088-store-gmail-oauth-config-in-settings.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "089-fix-gmail-oauth-pkce-callback"
+    title: "Fix Gmail OAuth PKCE callback handling"
+    file: "agent_tasks/089-fix-gmail-oauth-pkce-callback.md"
+    branch: "agent/089-fix-gmail-oauth-pkce-callback"
+    worktree: "agent-089-fix-gmail-oauth-pkce-callback"
+    status: "ready"
+    depends_on:
+      - "088-store-gmail-oauth-config-in-settings"
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - ".gitignore"
+      - "agent_tasks/089-fix-gmail-oauth-pkce-callback.md"
+      - "agent_tasks/queue.yaml"
