@@ -548,3 +548,198 @@ this task.
   `curl`/the FastAPI docs page. A future settings-page card is
   on the roadmap.
 - The connection is single-account. Multi-account is not modeled.
+
+## Application Email Search (task 083)
+
+Task 083 adds an application-aware Gmail search endpoint on top of the
+read-only client from task 082. It **finds and scores** candidate
+emails that may relate to a specific application; it **does not**
+classify them, mutate the mailbox, or change the application's main
+outcome status.
+
+### Scope
+
+- Read-only Gmail use only (still under `gmail.readonly`).
+- User-triggered search only. No background polling.
+- No send, archive, delete, label, modify, or full-body access.
+- No classification of rejections / interviews / offers / etc. — the
+  user remains the final reviewer (per ADR-010).
+- `Application.status` is never moved to `rejected` / `interview` /
+  `offer` / etc. by this endpoint.
+
+### Query builder rules
+
+`backend/app/gmail_application_search.py::build_application_query`
+produces the Gmail-search string deterministically from an
+``ApplicationQueryInputs`` dataclass. The shape is::
+
+    (<phrase> OR <phrase> ...) <date-clause> [<ats-from-clause>]
+
+Rules (in order):
+
+1. Each of `company`, `job_title`, and any `extra_terms` is wrapped as
+   a quoted phrase (`"Example Aero Labs"`). Embedded double quotes are
+   stripped because Gmail's parser does not support escaping inside
+   quoted phrases.
+2. Terms are joined with `OR` so a message matching *any* of them is
+   returned. A single term yields no `(...)` wrapper.
+3. When `submitted_at` is set the date clause is
+   `after:YYYY/M/D`, applied with a one-day pre-submission buffer
+   (`SUBMITTED_BUFFER_DAYS = 1`).
+4. When `submitted_at` is `None` the date clause falls back to
+   `newer_than:180d` (`DEFAULT_NEWER_THAN_DAYS = 180`).
+5. When `include_ats_terms` is true, an `OR`-joined `from:` clause for
+   the known ATS domain list (`greenhouse.io`, `lever.co`,
+   `workday.com`, `myworkdayjobs.com`, `ashbyhq.com`,
+   `smartrecruiters.com`, `icims.com`, `bamboohr.com`, `jobvite.com`,
+   `recruitee.com`, `successfactors.com`) is appended.
+6. The builder never emits stray `()` or trailing `OR` — even when
+   every input is null it returns a valid Gmail filter (just the date
+   clause + ATS senders).
+
+Example for `Company = "Example Aero Labs"`,
+`Title = "Scientific Machine Learning Engineer"`,
+`submitted_at = 2026-05-25T03:00:00Z`:
+
+```text
+("Example Aero Labs" OR "Scientific Machine Learning Engineer") after:2026/5/24 (from:greenhouse.io OR from:lever.co OR ...)
+```
+
+### Matching signals and scoring
+
+`score_candidate(message, MatchInputs)` returns
+`(score: float, matched_signals: list[str])`. The match is purely a
+substring / domain check on the safe metadata fields — no model is
+invoked. Signals (and their additive weights) are:
+
+| Signal | Weight | Triggered when |
+|---|---|---|
+| `company_name` | 0.45 | company appears in subject / snippet / from |
+| `job_title` | 0.35 | job title appears in subject / snippet |
+| `company_sender_domain` | 0.20 | sender domain matches the company slug |
+| `ats_sender_domain` | 0.15 | sender domain is one of `ATS_DOMAINS` |
+| `after_submitted_at` | 0.10 | message date ≥ `submitted_at - 1d` |
+| `manual_term` | 0.15 | any `extra_terms` value matches; credited once |
+
+`score` is clamped to `[0.0, 1.0]`. The weights are deliberately
+deterministic and explainable; tests pin them so re-tuning is a
+contract-visible change.
+
+Candidates are returned newest-best-first (sorted by `match_score`
+descending; Python's stable sort preserves Gmail's own newest-first
+order on ties).
+
+### API endpoint
+
+```
+POST /applications/{application_id}/gmail/search
+```
+
+Request body (all fields optional):
+
+```jsonc
+{
+  "max_results": 10,
+  "extra_terms": ["optional phrase"],
+  "include_ats_terms": true
+}
+```
+
+`max_results` is clamped to the smaller of
+`MAX_APPLICATION_SEARCH_RESULTS = 25` and
+`gmail_client.MAX_TEST_SEARCH_RESULTS = 10` (effective ceiling: 10).
+
+Connected response:
+
+```jsonc
+{
+  "application_id": "...",
+  "gmail_connected": true,
+  "gmail_query": "(\"Example Aero Labs\" OR \"Scientific Machine Learning Engineer\") after:2026/5/24 ...",
+  "count": 2,
+  "candidates": [
+    {
+      "message_id": "...",
+      "thread_id": "...",
+      "subject": "...",
+      "from": "...",
+      "date": "...",
+      "snippet": "...",
+      "matched_signals": ["company_name", "job_title"],
+      "match_score": 0.78
+    }
+  ]
+}
+```
+
+Disconnected response (no token, or token lost between status check
+and search):
+
+```jsonc
+{
+  "application_id": "...",
+  "gmail_connected": false,
+  "gmail_query": null,
+  "count": 0,
+  "candidates": [],
+  "message": "Connect Gmail before searching for application emails"
+}
+```
+
+The endpoint **does not** trigger OAuth on its own — the user must
+visit `/gmail/auth-url` first (the task-082 surface).
+
+### State updates on the application
+
+After a successful search the endpoint persists exactly two summary
+fields:
+
+- `Application.last_gmail_check_at` — wall-clock of the search.
+- `Application.email_search_state` — the new column added by this
+  task; stores `"no_match"`, `"email_received"`, or `"error"`.
+
+`derive_email_status` consults `email_search_state` when no `EmailLink`
+rows exist for a submitted application, so the dashboard surfaces
+`no_match` / `email_received` immediately after a search runs without
+needing the user to attach an `EmailLink` first.
+
+Side-effect rules:
+
+| Outcome | `email_search_state` | `email_status` derivation |
+|---|---|---|
+| Gmail disconnected | unchanged | unchanged |
+| Search OK, zero candidates | `no_match` | `no_match` |
+| Search OK, ≥ 1 candidate | `email_received` | `email_received` |
+| Search raised an unexpected error | `error` | `error` |
+
+`Application.status` (main outcome) is **never** changed by this
+endpoint. The next-action / outcome decision still lives with the
+manual `EmailLink` flow (or a future classifier task) so the user
+remains the final reviewer.
+
+### Privacy constraints
+
+- Read-only Gmail use only (scope unchanged from task 082).
+- No send, archive, delete, label, or modify routes added.
+- No background polling; the search is strictly user-triggered.
+- Safe metadata only: `id`, `thread_id`, `subject`, `from`, `date`,
+  `snippet`. No full bodies, no HTML, no attachments are fetched or
+  returned.
+- Candidate metadata is **not** persisted to the database — only the
+  small summary fields above survive past the response.
+- `gmail_query` is included in the response so the user can audit /
+  copy the exact query Gmail saw.
+
+### Known limitations
+
+- The match score is purely substring / domain heuristics. It is good
+  enough to surface obvious matches and obvious non-matches; the user
+  is the final reviewer for ambiguous cases.
+- No `EmailLink` rows are written by this endpoint. Linking a
+  candidate to the application (and triggering the side-effect rules
+  in `application_status.md`) remains a manual / future-task step.
+- Multi-account is not modeled; the single connected mailbox from task
+  082 is searched.
+- Rate-limiting is not implemented; the endpoint is user-triggered and
+  capped at `max_results=10` per call, so abuse risk is low for the
+  local-first workload.

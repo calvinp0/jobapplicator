@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_db
@@ -138,6 +139,12 @@ def derive_email_status(
             return "needs_review"
         return _EMAIL_CLASSIFICATION_TO_STATE.get(classification, "email_received")
     if application.submitted_at is not None or application.status == "submitted":
+        # Task 083: a Gmail application-search may have produced a
+        # zero-classification outcome (``no_match`` or ``email_received``)
+        # without writing an ``EmailLink`` row yet. Honor it when set.
+        search_state = getattr(application, "email_search_state", None)
+        if search_state in ("no_match", "email_received", "error"):
+            return search_state
         return "watching"
     return "not_watching"
 
@@ -609,3 +616,167 @@ def list_email_links(
         .all()
     )
     return [EmailLinkRead.model_validate(link) for link in _sorted_email_links(links)]
+
+
+# ---- Gmail application search (task 083) ------------------------------
+
+# All Gmail-related interaction goes through ``app.gmail_client``; the
+# router stays thin so it does not pull google libraries into the import
+# graph (the task-080 safety guard
+# ``test_no_gmail_outbound_modules_imported`` enforces this).
+
+
+class GmailApplicationSearchRequest(BaseModel):
+    max_results: int = Field(default=10, ge=1)
+    extra_terms: list[str] = Field(default_factory=list, max_length=10)
+    include_ats_terms: bool = True
+
+
+class GmailSearchCandidate(BaseModel):
+    message_id: str | None = None
+    thread_id: str | None = None
+    subject: str | None = None
+    from_: str | None = Field(default=None, alias="from")
+    date: str | None = None
+    snippet: str | None = None
+    matched_signals: list[str] = Field(default_factory=list)
+    match_score: float = 0.0
+
+    model_config = {"populate_by_name": True}
+
+
+class GmailApplicationSearchResponse(BaseModel):
+    application_id: str
+    gmail_connected: bool
+    gmail_query: str | None = None
+    count: int = 0
+    candidates: list[GmailSearchCandidate] = Field(default_factory=list)
+    message: str | None = None
+
+
+@router.post(
+    "/{application_id}/gmail/search",
+    response_model=GmailApplicationSearchResponse,
+)
+def search_application_gmail(
+    application_id: str,
+    payload: GmailApplicationSearchRequest,
+    db: Session = Depends(get_db),
+) -> GmailApplicationSearchResponse:
+    """Search Gmail (read-only) for messages that may relate to ``application_id``.
+
+    This endpoint **does not** classify emails, modify the mailbox, or
+    update the application's main outcome status. It returns candidate
+    metadata + a deterministic match score; the user remains the final
+    reviewer.
+    """
+    from .. import gmail_client
+    from ..gmail_application_search import (
+        ApplicationQueryInputs,
+        MAX_APPLICATION_SEARCH_RESULTS,
+        MatchInputs,
+        build_application_query,
+        safe_metadata,
+        score_candidate,
+    )
+
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    job_obj = db.get(Job, app_obj.job_id)
+    if job_obj is None:
+        # Defensive: applications always reference a job in the schema,
+        # but a corrupted row should not 500 the search.
+        raise HTTPException(status_code=404, detail="job not found")
+
+    # If Gmail is not connected, the contract says return a clear
+    # message and do *not* mutate the application's email_status.
+    status_info = gmail_client.get_status()
+    if not status_info.get("connected"):
+        return GmailApplicationSearchResponse(
+            application_id=app_obj.id,
+            gmail_connected=False,
+            message="Connect Gmail before searching for application emails",
+        )
+
+    extra_terms = tuple(
+        t.strip() for t in (payload.extra_terms or []) if t and t.strip()
+    )
+    inputs = ApplicationQueryInputs(
+        company=job_obj.company,
+        job_title=job_obj.title,
+        submitted_at=app_obj.submitted_at,
+        extra_terms=extra_terms,
+        include_ats_terms=payload.include_ats_terms,
+    )
+    query = build_application_query(inputs)
+
+    capped = min(
+        int(payload.max_results),
+        MAX_APPLICATION_SEARCH_RESULTS,
+        gmail_client.MAX_TEST_SEARCH_RESULTS,
+    )
+
+    try:
+        raw_messages: list[dict[str, Any]] = gmail_client.search_messages(
+            query, capped
+        )
+    except gmail_client.GmailNotConnectedError:
+        # Status check above said connected but the token disappeared.
+        return GmailApplicationSearchResponse(
+            application_id=app_obj.id,
+            gmail_connected=False,
+            gmail_query=query,
+            message="Connect Gmail before searching for application emails",
+        )
+    except gmail_client.GmailDependencyError as exc:
+        # Surface the dependency issue cleanly; do not change email_status.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception:  # pragma: no cover - defensive
+        # Record the error outcome so the dashboard can surface it.
+        app_obj.email_search_state = "error"
+        app_obj.last_gmail_check_at = _utcnow()
+        db.commit()
+        raise
+
+    match_inputs = MatchInputs(
+        company=job_obj.company,
+        job_title=job_obj.title,
+        submitted_at=app_obj.submitted_at,
+        extra_terms=extra_terms,
+    )
+
+    candidates: list[GmailSearchCandidate] = []
+    for raw in raw_messages:
+        meta = safe_metadata(raw)
+        score, signals = score_candidate(meta, match_inputs)
+        candidates.append(
+            GmailSearchCandidate(
+                message_id=meta.get("id"),
+                thread_id=meta.get("thread_id"),
+                subject=meta.get("subject"),
+                **{"from": meta.get("from")},
+                date=meta.get("date"),
+                snippet=meta.get("snippet"),
+                matched_signals=signals,
+                match_score=round(score, 4),
+            )
+        )
+
+    # Stable order: highest score first, then by original index (Gmail's
+    # own newest-first order). Python sort is stable so equal-score
+    # candidates retain Gmail's ordering.
+    candidates.sort(key=lambda c: c.match_score, reverse=True)
+
+    app_obj.last_gmail_check_at = _utcnow()
+    app_obj.email_search_state = "email_received" if candidates else "no_match"
+    db.commit()
+
+    return GmailApplicationSearchResponse(
+        application_id=app_obj.id,
+        gmail_connected=True,
+        gmail_query=query,
+        count=len(candidates),
+        candidates=candidates,
+    )
