@@ -1613,7 +1613,7 @@ tasks:
     file: "agent_tasks/081-discover-master-resumes-from-candidate-context.md"
     branch: "agent/081-discover-master-resumes-from-candidate-context"
     worktree: "agent-081-discover-master-resumes-from-candidate-context"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "pytest backend/tests/test_master_resumes.py"
