@@ -30,6 +30,39 @@ EXPECTED_OUTPUTS = (
 RUNTIME_PROMPT_FILENAME = "resume_tailoring.md"
 REVISION_FEEDBACK_FILENAME = "revision_feedback.md"
 
+METADATA_FILENAME = "metadata.json"
+
+# Tailoring methods describe how a run will produce its tailored draft.
+# ``auto`` is the existing Claude Code subprocess path. ``word_handoff``
+# packages inputs for a manual/semi-automated Claude for Word edit and is
+# implemented by a follow-up task — this module only persists the choice.
+TAILORING_METHOD_AUTO = "auto"
+TAILORING_METHOD_WORD_HANDOFF = "word_handoff"
+ALLOWED_TAILORING_METHODS = (
+    TAILORING_METHOD_AUTO,
+    TAILORING_METHOD_WORD_HANDOFF,
+)
+DEFAULT_TAILORING_METHOD = TAILORING_METHOD_AUTO
+
+# Run-level workflow statuses tracked in metadata.json. This is distinct
+# from the DB-level ``ClaudeRun.status`` column, which tracks just the
+# subprocess lifecycle. The metadata status spans both the auto path and
+# the upcoming word_handoff path.
+ALLOWED_RUN_STATUSES = (
+    "created",
+    "input_ready",
+    "auto_tailoring_running",
+    "auto_tailoring_failed",
+    "auto_tailoring_complete",
+    "word_handoff_ready",
+    "waiting_for_word_result",
+    "word_result_imported",
+    "validation_failed",
+    "completed",
+    "failed",
+)
+DEFAULT_RUN_STATUS = "created"
+
 
 @dataclass(frozen=True)
 class RunDirectoryInfo:
@@ -82,6 +115,24 @@ def _read_candidate_file(candidate_root: Path, filename: str) -> str:
     return src.read_text(encoding="utf-8")
 
 
+def _validate_tailoring_method(method: str) -> str:
+    if method not in ALLOWED_TAILORING_METHODS:
+        raise RunDirectoryError(
+            "invalid tailoring_method: "
+            f"{method!r}; allowed: {list(ALLOWED_TAILORING_METHODS)}"
+        )
+    return method
+
+
+def _validate_run_status(status: str) -> str:
+    if status not in ALLOWED_RUN_STATUSES:
+        raise RunDirectoryError(
+            "invalid run status: "
+            f"{status!r}; allowed: {list(ALLOWED_RUN_STATUSES)}"
+        )
+    return status
+
+
 def create_run_directory(
     job: Job,
     master_resume: MasterResume,
@@ -93,6 +144,7 @@ def create_run_directory(
     run_id: Optional[str] = None,
     now: Optional[datetime] = None,
     revision_feedback: Optional[RevisionFeedbackInput] = None,
+    tailoring_method: str = DEFAULT_TAILORING_METHOD,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
 
@@ -103,6 +155,7 @@ def create_run_directory(
         raise RunDirectoryError("job is required")
     if master_resume is None:
         raise RunDirectoryError("master_resume is required")
+    _validate_tailoring_method(tailoring_method)
 
     candidate_root = Path(candidate_context_root)
     if not candidate_root.is_dir():
@@ -180,15 +233,15 @@ def create_run_directory(
         "evidence_bank_id": evidence_bank.id if evidence_bank is not None else None,
         "capture_method": capture_method,
         "created_at": created_at,
+        "updated_at": created_at,
         "input_files": file_hashes,
         "expected_outputs": list(EXPECTED_OUTPUTS),
         "prompt_hash": prompt_hash,
         "input_hash": input_hash,
+        "tailoring_method": tailoring_method,
+        "status": DEFAULT_RUN_STATUS,
     }
-    (run_dir / "metadata.json").write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    _write_metadata(run_dir, metadata)
 
     return RunDirectoryInfo(
         run_id=rid,
@@ -196,6 +249,81 @@ def create_run_directory(
         prompt_hash=prompt_hash,
         input_hash=input_hash,
     )
+
+
+def _metadata_path(run_dir: Path) -> Path:
+    return Path(run_dir) / METADATA_FILENAME
+
+
+def _read_metadata(run_dir: Path) -> dict[str, Any]:
+    path = _metadata_path(run_dir)
+    if not path.is_file():
+        raise RunDirectoryError(f"metadata.json not found in run directory: {run_dir}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_metadata(run_dir: Path, metadata: dict[str, Any]) -> None:
+    _metadata_path(run_dir).write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _stamp_updated_at(metadata: dict[str, Any], now: Optional[datetime]) -> None:
+    metadata["updated_at"] = (now or datetime.now(timezone.utc)).isoformat()
+
+
+def get_tailoring_method(run_dir: Path) -> str:
+    """Return the tailoring method recorded in metadata.json.
+
+    Backwards compatibility: older runs created before this field existed
+    are treated as ``auto`` (the only behavior the system ever had).
+    """
+    metadata = _read_metadata(run_dir)
+    method = metadata.get("tailoring_method", DEFAULT_TAILORING_METHOD)
+    # Don't silently coerce an unexpected value to the default — surface it
+    # so the caller can decide. ``None`` (an explicit null) also falls back.
+    if method is None:
+        return DEFAULT_TAILORING_METHOD
+    return method
+
+
+def set_tailoring_method(
+    run_dir: Path,
+    method: str,
+    *,
+    now: Optional[datetime] = None,
+) -> None:
+    """Persist ``method`` as the run's tailoring method in metadata.json."""
+    _validate_tailoring_method(method)
+    metadata = _read_metadata(run_dir)
+    metadata["tailoring_method"] = method
+    _stamp_updated_at(metadata, now)
+    _write_metadata(run_dir, metadata)
+
+
+def get_run_status(run_dir: Path) -> str:
+    """Return the workflow status recorded in metadata.json.
+
+    Older metadata that predates the status field is reported as
+    ``created`` to keep callers from having to special-case missing keys.
+    """
+    metadata = _read_metadata(run_dir)
+    return metadata.get("status", DEFAULT_RUN_STATUS) or DEFAULT_RUN_STATUS
+
+
+def set_run_status(
+    run_dir: Path,
+    status: str,
+    *,
+    now: Optional[datetime] = None,
+) -> None:
+    """Persist ``status`` as the run's workflow status in metadata.json."""
+    _validate_run_status(status)
+    metadata = _read_metadata(run_dir)
+    metadata["status"] = status
+    _stamp_updated_at(metadata, now)
+    _write_metadata(run_dir, metadata)
 
 
 def _render_revision_feedback(feedback: RevisionFeedbackInput) -> str:

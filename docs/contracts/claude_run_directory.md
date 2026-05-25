@@ -22,9 +22,16 @@ runs/<run_id>/
 │   └── claim_audit.md
 ├── progress/
 │   └── progress.log              # user-facing phase events + worker heartbeats
+├── word_handoff/                 # only used when tailoring_method == word_handoff
 ├── run.log
 └── metadata.json
 ```
+
+The `word_handoff/` directory holds the artifacts produced and consumed when
+a run's `tailoring_method` is `word_handoff`. It is not used by the `auto`
+path. The package format inside that directory is defined by the Claude for
+Word handoff package contract introduced alongside that feature; this
+document only reserves the directory name.
 
 ## Input Files
 
@@ -288,9 +295,53 @@ without invoking Claude.
   "master_resume_id": "...",
   "capture_method": "...",
   "created_at": "...",
+  "updated_at": "...",
   "input_files": {},
   "expected_outputs": [],
   "prompt_hash": "...",
-  "input_hash": "..."
+  "input_hash": "...",
+  "tailoring_method": "auto",
+  "status": "created"
 }
 ```
+
+### `tailoring_method`
+
+Describes how the run produces its tailored draft.
+
+Allowed values:
+
+- `auto` — the existing Claude Code subprocess path. Default for new runs.
+- `word_handoff` — packages inputs for a manual or semi-automated Claude
+  for Word editing session. Reads/writes happen inside `word_handoff/`.
+
+Backwards compatibility: runs created before this field existed have no
+`tailoring_method` key. Readers must treat a missing or null value as
+`auto`, since that was the only behavior the system supported.
+
+### `status`
+
+Workflow-level status of the run, spanning both the `auto` and
+`word_handoff` paths. Allowed values:
+
+- `created`
+- `input_ready`
+- `auto_tailoring_running`
+- `auto_tailoring_failed`
+- `auto_tailoring_complete`
+- `word_handoff_ready`
+- `waiting_for_word_result`
+- `word_result_imported`
+- `validation_failed`
+- `completed`
+- `failed`
+
+This field is distinct from the DB-level `ClaudeRun.status` column. The
+DB column tracks the Claude subprocess lifecycle and continues to use the
+shorter set of values (`created`, `running`, `completed`, `failed`,
+`imported`) that pre-existing routers and tests rely on. The metadata
+status is the source of truth for the broader workflow, including states
+that have no DB representation yet (e.g. `waiting_for_word_result`).
+
+Backwards compatibility: runs created before this field existed have no
+`status` key. Readers must treat a missing or null value as `created`.
