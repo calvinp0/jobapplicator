@@ -174,7 +174,7 @@ describe("JobDetailPage generate draft flow", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /^generate draft$/i }),
+      screen.getByRole("button", { name: /^generate automatically$/i }),
     );
 
     await waitFor(() =>
@@ -216,7 +216,7 @@ describe("JobDetailPage generate draft flow", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /^generate draft$/i }),
+      screen.getByRole("button", { name: /^generate automatically$/i }),
     );
 
     expect(

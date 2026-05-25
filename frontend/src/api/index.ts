@@ -16,6 +16,9 @@ import type {
   RevisionFeedbackCreate,
   RunLog,
   RunProgress,
+  WordHandoffMetadata,
+  WordHandoffTextRead,
+  WordResultImportResponse,
 } from "./types";
 
 export { API_BASE, ApiError } from "./client";
@@ -36,6 +39,9 @@ export type {
   RevisionFeedbackCreate,
   RunLog,
   RunProgress,
+  WordHandoffMetadata,
+  WordHandoffTextRead,
+  WordResultImportResponse,
 };
 
 export function getHealth(): Promise<{ status: string }> {
@@ -149,6 +155,32 @@ export function submitRevisionFeedback(
 
 export function listRevisionFeedbacks(): Promise<RevisionFeedback[]> {
   return apiRequest("/revision-feedbacks");
+}
+
+export function createWordHandoff(runId: string): Promise<WordHandoffMetadata> {
+  return apiRequest(`/runs/${runId}/word-handoff`, { method: "POST" });
+}
+
+export function getWordHandoff(runId: string): Promise<WordHandoffMetadata> {
+  return apiRequest(`/runs/${runId}/word-handoff`);
+}
+
+export function getWordHandoffPrompt(
+  runId: string,
+): Promise<WordHandoffTextRead> {
+  return apiRequest(`/runs/${runId}/word-handoff/prompt`);
+}
+
+export function getWordHandoffInstructions(
+  runId: string,
+): Promise<WordHandoffTextRead> {
+  return apiRequest(`/runs/${runId}/word-handoff/instructions`);
+}
+
+export function importWordResult(
+  runId: string,
+): Promise<WordResultImportResponse> {
+  return apiRequest(`/runs/${runId}/import-word-result`, { method: "POST" });
 }
 
 export function listApplications(): Promise<Application[]> {

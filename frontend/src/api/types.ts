@@ -151,3 +151,28 @@ export interface RevisionFeedback {
   status: string;
   created_at: string;
 }
+
+export interface WordHandoffMetadata {
+  run_id: string;
+  status: string;
+  tailoring_method: string;
+  handoff_dir: string;
+  resume_docx: string | null;
+  prompt_file: string | null;
+  instructions_file: string | null;
+  expected_output: string;
+}
+
+export interface WordHandoffTextRead {
+  run_id: string;
+  content: string;
+}
+
+export interface WordResultImportResponse {
+  run_id: string;
+  status: string;
+  message: string;
+  word_result?: string | null;
+  final_resume?: string | null;
+  expected_output?: string | null;
+}

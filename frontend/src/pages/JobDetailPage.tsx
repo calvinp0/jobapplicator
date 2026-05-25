@@ -4,7 +4,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   createApplication,
   createRun,
+  createWordHandoff,
   getJob,
+  getWordHandoffInstructions,
+  getWordHandoffPrompt,
+  importWordResult,
   invokeRun,
   listApplications,
   listEvidenceBanks,
@@ -21,6 +25,8 @@ import type {
   MasterResume,
   ResumeVersion,
   RevisionFeedback,
+  WordHandoffMetadata,
+  WordResultImportResponse,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
 import {
@@ -79,6 +85,118 @@ function WorkspaceStep({
   );
 }
 
+const EXPECTED_WORD_OUTPUT_DISPLAY = "output/word_tailored_resume.docx";
+
+function WordHandoffPanel({
+  handoff,
+  copyState,
+  onCopyPrompt,
+  onImport,
+  importing,
+  importResult,
+  importError,
+}: {
+  handoff: {
+    runId: string;
+    metadata: WordHandoffMetadata;
+    promptText: string;
+    instructionsText: string;
+  };
+  copyState: "idle" | "copied";
+  onCopyPrompt: () => void;
+  onImport: () => void;
+  importing: boolean;
+  importResult: WordResultImportResponse | null;
+  importError: string | null;
+}) {
+  const sourceMissing = handoff.metadata.resume_docx === null;
+  const isWaiting =
+    importResult !== null && importResult.status !== "completed";
+  const isImported =
+    importResult !== null && importResult.status === "completed";
+  return (
+    <section
+      className="word-handoff-panel"
+      aria-label="Claude for Word handoff"
+    >
+      <h4>Claude for Word handoff prepared</h4>
+      <ol className="word-handoff-steps">
+        <li>Open the prepared DOCX in Word</li>
+        <li>Open Claude for Word</li>
+        <li>Paste the generated prompt</li>
+        <li>
+          Save as <code>{EXPECTED_WORD_OUTPUT_DISPLAY}</code>
+        </li>
+        <li>Click Import Word Result</li>
+      </ol>
+      {sourceMissing ? (
+        <p role="alert" className="word-handoff-warning">
+          No source DOCX was found in this run's input. The prompt and
+          instructions are still available below, but you will need to open
+          your master resume DOCX in Word manually.
+        </p>
+      ) : null}
+      <p className="word-handoff-save-path">
+        Expected save path:{" "}
+        <code>{EXPECTED_WORD_OUTPUT_DISPLAY}</code>
+      </p>
+      <div className="word-handoff-prompt">
+        <div className="word-handoff-prompt-header">
+          <h5>Prompt</h5>
+          <button
+            type="button"
+            onClick={onCopyPrompt}
+            aria-label="Copy prompt"
+          >
+            {copyState === "copied" ? "Copied" : "Copy prompt"}
+          </button>
+        </div>
+        <textarea
+          className="word-handoff-prompt-text"
+          aria-label="Claude for Word prompt"
+          value={handoff.promptText}
+          readOnly
+          rows={8}
+        />
+      </div>
+      <div className="word-handoff-instructions">
+        <h5>Instructions</h5>
+        <pre className="word-handoff-instructions-text">
+          {handoff.instructionsText}
+        </pre>
+      </div>
+      <div className="word-handoff-import">
+        <button
+          type="button"
+          onClick={onImport}
+          disabled={importing}
+        >
+          {importing ? "Importing…" : "Import Word Result"}
+        </button>
+        {importError ? (
+          <p role="alert" className="error">
+            {importError}
+          </p>
+        ) : null}
+        {isWaiting ? (
+          <p role="status" className="word-handoff-waiting">
+            Waiting for Word result. Save the completed document as{" "}
+            <code>{EXPECTED_WORD_OUTPUT_DISPLAY}</code>, then click Import
+            again.
+          </p>
+        ) : null}
+        {isImported ? (
+          <p role="status" className="word-handoff-success">
+            Imported. Final resume available at{" "}
+            <code>{importResult?.final_resume ?? "output/final_resume.docx"}</code>
+            .
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function JobDetailPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
@@ -108,6 +226,19 @@ export function JobDetailPage() {
     null,
   );
   const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [wordHandoff, setWordHandoff] = useState<{
+    runId: string;
+    metadata: WordHandoffMetadata;
+    promptText: string;
+    instructionsText: string;
+  } | null>(null);
+  const [isPreparingWordHandoff, setIsPreparingWordHandoff] = useState(false);
+  const [wordHandoffError, setWordHandoffError] = useState<string | null>(null);
+  const [isImportingWordResult, setIsImportingWordResult] = useState(false);
+  const [wordImportResult, setWordImportResult] =
+    useState<WordResultImportResponse | null>(null);
+  const [wordImportError, setWordImportError] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
   useEffect(() => {
     if (!jobId) return;
@@ -194,6 +325,69 @@ export function JobDetailPage() {
       setGenerateError(extractApiDetail(err));
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function handlePrepareWordHandoff() {
+    if (!jobId) return;
+    if (!selectedResumeId) {
+      setWordHandoffError(
+        "Pick a master resume before preparing the Word handoff.",
+      );
+      return;
+    }
+    setIsPreparingWordHandoff(true);
+    setWordHandoffError(null);
+    setWordImportError(null);
+    setWordImportResult(null);
+    try {
+      const run = await createRun({
+        job_id: jobId,
+        master_resume_id: selectedResumeId,
+        evidence_bank_id: selectedBankId || null,
+      });
+      setRuns((prev) => (prev ? [...prev, run] : [run]));
+      const metadata = await createWordHandoff(run.id);
+      const [prompt, instructions] = await Promise.all([
+        getWordHandoffPrompt(run.id),
+        getWordHandoffInstructions(run.id),
+      ]);
+      setWordHandoff({
+        runId: run.id,
+        metadata,
+        promptText: prompt.content,
+        instructionsText: instructions.content,
+      });
+    } catch (err: unknown) {
+      setWordHandoffError(extractApiDetail(err));
+    } finally {
+      setIsPreparingWordHandoff(false);
+    }
+  }
+
+  async function handleImportWordResult() {
+    if (!wordHandoff) return;
+    setIsImportingWordResult(true);
+    setWordImportError(null);
+    try {
+      const response = await importWordResult(wordHandoff.runId);
+      setWordImportResult(response);
+    } catch (err: unknown) {
+      setWordImportError(extractApiDetail(err));
+    } finally {
+      setIsImportingWordResult(false);
+    }
+  }
+
+  async function handleCopyPrompt() {
+    if (!wordHandoff) return;
+    try {
+      await navigator.clipboard.writeText(wordHandoff.promptText);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1500);
+    } catch {
+      // Clipboard may be unavailable (e.g. insecure context); the prompt
+      // textarea is still visible and selectable so the user has a fallback.
     }
   }
 
@@ -570,21 +764,51 @@ export function JobDetailPage() {
                 />
               </div>
             ) : null}
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={isGenerating || resumes.length === 0}
-            >
-              {isGenerating
-                ? "Generating…"
-                : hasPriorRuns
-                  ? "Generate another draft"
-                  : "Generate draft"}
-            </button>
+            <div className="tailoring-method-actions">
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={isGenerating || resumes.length === 0}
+              >
+                {isGenerating
+                  ? "Generating…"
+                  : hasPriorRuns
+                    ? "Generate another draft automatically"
+                    : "Generate Automatically"}
+              </button>
+              <button
+                type="button"
+                className="tailoring-method-secondary"
+                onClick={handlePrepareWordHandoff}
+                disabled={
+                  isPreparingWordHandoff || resumes.length === 0
+                }
+              >
+                {isPreparingWordHandoff
+                  ? "Preparing…"
+                  : "Prepare for Claude for Word"}
+              </button>
+            </div>
             {generateError ? (
               <p role="alert" className="error">
                 {generateError}
               </p>
+            ) : null}
+            {wordHandoffError ? (
+              <p role="alert" className="error">
+                {wordHandoffError}
+              </p>
+            ) : null}
+            {wordHandoff ? (
+              <WordHandoffPanel
+                handoff={wordHandoff}
+                copyState={copyState}
+                onCopyPrompt={handleCopyPrompt}
+                onImport={handleImportWordResult}
+                importing={isImportingWordResult}
+                importResult={wordImportResult}
+                importError={wordImportError}
+              />
             ) : null}
           </WorkspaceStep>
         </li>

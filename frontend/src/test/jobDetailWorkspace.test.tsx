@@ -178,7 +178,7 @@ describe("JobDetailPage five-step workspace", () => {
     expect(screen.getByText(/build great things/i)).toBeInTheDocument();
   });
 
-  it("creates and invokes a run as one user action when clicking Generate draft", async () => {
+  it("creates and invokes a run as one user action when clicking Generate Automatically", async () => {
     const user = userEvent.setup();
     createRunMock.mockResolvedValue({
       id: "run-new",
@@ -224,7 +224,7 @@ describe("JobDetailPage five-step workspace", () => {
       "resume-1",
     );
     await user.click(
-      screen.getByRole("button", { name: /^generate draft$/i }),
+      screen.getByRole("button", { name: /^generate automatically$/i }),
     );
 
     await waitFor(() =>
