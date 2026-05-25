@@ -1379,7 +1379,7 @@ tasks:
     file: "agent_tasks/070-contract-application-status-and-email-links.md"
     branch: "agent/070-contract-application-status-and-email-links"
     worktree: "agent-070-contract-application-status-and-email-links"
-    status: "ready"
+    status: "done"
     depends_on:
       - "069-adr-application-status-timeline"
     verification:
@@ -1398,7 +1398,7 @@ tasks:
     file: "agent_tasks/071-backend-application-timeline-and-email-links.md"
     branch: "agent/071-backend-application-timeline-and-email-links"
     worktree: "agent-071-backend-application-timeline-and-email-links"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "069-adr-application-status-timeline"
       - "070-contract-application-status-and-email-links"
