@@ -9,6 +9,8 @@ const {
   createMasterResumeMock,
   createEvidenceBankMock,
   listCapturesMock,
+  getLlmProviderSettingMock,
+  setLlmProviderSettingMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -27,6 +29,8 @@ const {
     createMasterResumeMock: vi.fn(),
     createEvidenceBankMock: vi.fn(),
     listCapturesMock: vi.fn(),
+    getLlmProviderSettingMock: vi.fn(),
+    setLlmProviderSettingMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -37,6 +41,8 @@ vi.mock("../api", () => ({
   createMasterResume: createMasterResumeMock,
   createEvidenceBank: createEvidenceBankMock,
   listCaptures: listCapturesMock,
+  getLlmProviderSetting: getLlmProviderSettingMock,
+  setLlmProviderSetting: setLlmProviderSettingMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -67,6 +73,17 @@ describe("SettingsPage", () => {
     listMasterResumesMock.mockResolvedValue([]);
     listEvidenceBanksMock.mockResolvedValue([]);
     listCapturesMock.mockResolvedValue([]);
+    getLlmProviderSettingMock.mockResolvedValue({
+      default_provider: "claude_code",
+      available: [
+        {
+          id: "claude_code",
+          display_name: "Claude Code",
+          default_binary: "claude",
+          binary_env_var: "JOBAPPLY_CLAUDE_BINARY",
+        },
+      ],
+    });
   });
 
   afterEach(() => {

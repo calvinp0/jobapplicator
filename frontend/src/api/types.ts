@@ -176,3 +176,15 @@ export interface WordResultImportResponse {
   final_resume?: string | null;
   expected_output?: string | null;
 }
+
+export interface LlmProvider {
+  id: string;
+  display_name: string;
+  default_binary: string;
+  binary_env_var: string;
+}
+
+export interface LlmProviderSetting {
+  default_provider: string;
+  available: LlmProvider[];
+}
