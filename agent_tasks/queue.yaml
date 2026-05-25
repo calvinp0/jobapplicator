@@ -1486,7 +1486,7 @@ tasks:
     file: "agent_tasks/075-add-claude-code-office-word-mcp-support.md"
     branch: "agent/075-add-claude-code-office-word-mcp-support"
     worktree: "agent-075-add-claude-code-office-word-mcp-support"
-    status: "ready"
+    status: "done"
     depends_on:
       - "074-add-claude-docx-skill-support"
     verification:
