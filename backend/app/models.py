@@ -40,6 +40,25 @@ EMAIL_CLASSIFIED_STATUSES = (
     "offer",
     "other",
 )
+# Per-application Gmail tracking state surfaced on ApplicationRead. The full
+# vocabulary and derivation rules live in docs/contracts/gmail_integration.md;
+# the manual-entry path only emits a subset today, but ``no_match`` and
+# ``error`` are pinned here so the future Gmail-poll path can land without a
+# contract change.
+EMAIL_STATUSES = (
+    "not_watching",
+    "watching",
+    "confirmation_found",
+    "email_received",
+    "needs_review",
+    "classified_rejection",
+    "classified_interview",
+    "classified_assessment",
+    "classified_offer",
+    "classified_neutral",
+    "no_match",
+    "error",
+)
 
 
 class JobCapture(Base):
@@ -197,6 +216,15 @@ class Application(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Gmail tracking columns. See docs/contracts/gmail_integration.md.
+    # ``gmail_query`` holds an optional user override for the auto-built
+    # search query; ``last_gmail_check_at`` records the wall-clock of the
+    # most recent Gmail poll attempt. Both are NULL on existing rows and
+    # for any application that has not opted into Gmail tracking yet.
+    gmail_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_gmail_check_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
