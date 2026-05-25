@@ -392,14 +392,33 @@ def invoke_claude_run(
 
     binary = claude_binary or default_claude_binary()
     permission_mode = _permission_mode()
+    # ``--print`` is the documented non-interactive switch: Claude reads the
+    # prompt from stdin (or argv) and exits after producing output, instead of
+    # opening an interactive REPL. Passing the prompt file path as a positional
+    # argument made Claude treat it as a conversational starter ("what should I
+    # do with this?") rather than executing the contract, so we route the
+    # prompt's contents through stdin instead.
     argv = [
         binary,
+        "--print",
         "--permission-mode",
         permission_mode,
-        str(PROMPT_RELPATH),
         *_extra_args(),
     ]
 
+    try:
+        prompt_text = prompt_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        _append_progress(log_path, f"failed to read prompt file: {exc}")
+        _append_progress(log_path, "marking run failed")
+        return _record_failure(
+            db,
+            run,
+            f"failed to read prompt file {prompt_file}: {exc}",
+        )
+
+    _append_progress(log_path, "launching Claude Code in non-interactive mode")
+    _append_progress(log_path, f"prompt file={PROMPT_RELPATH}")
     _append_progress(log_path, f"launching Claude Code with cwd={run_dir}")
     _append_progress(log_path, f"permission mode={permission_mode}")
     _append_progress(log_path, f"output directory={output_dir}")
@@ -416,7 +435,7 @@ def invoke_claude_run(
                 process = subprocess.Popen(
                     argv,
                     cwd=str(run_dir),
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                 )
@@ -437,6 +456,21 @@ def invoke_claude_run(
                     f"failed to launch claude binary {binary}: {exc}",
                 )
             _append_progress(log_path, "Claude Code process started")
+            # Feed the prompt to Claude via stdin and close it immediately so
+            # Claude knows there's no more input coming. Large prompts can
+            # exceed ARG_MAX if passed as argv, and stdin keeps the prompt out
+            # of the process listing. A BrokenPipe means Claude exited before
+            # reading the full prompt — recoverable, the wait() below records
+            # the exit code.
+            if process.stdin is not None:
+                try:
+                    process.stdin.write(prompt_text.encode("utf-8"))
+                except (BrokenPipeError, OSError):
+                    pass
+                try:
+                    process.stdin.close()
+                except (BrokenPipeError, OSError):
+                    pass
             if heartbeat_interval > 0:
                 heartbeat_thread = threading.Thread(
                     target=_run_heartbeat,
