@@ -564,6 +564,246 @@ def test_post_run_missing_master_resume_returns_404(client, tmp_path, monkeypatc
     assert "master resume" in resp.json()["detail"].lower()
 
 
+def _make_docx_file(path: Path, body: str = "Real DOCX body content.") -> None:
+    """Helper that writes a real ``.docx`` via python-docx."""
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Header", style="Heading 1")
+    doc.add_paragraph(body)
+    doc.save(str(path))
+
+
+def test_create_run_directory_copies_docx_when_path_provided(fixture_layout, tmp_path):
+    """Passing ``master_resume_docx_path`` must stage the file in ``input/``."""
+    from app.run_directory import create_run_directory
+
+    job, resume, evidence = _make_objects()
+    docx_src = tmp_path / "source.docx"
+    _make_docx_file(docx_src)
+
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+        master_resume_docx_path=docx_src,
+    )
+
+    staged = info.run_dir / "input" / "master_resume.docx"
+    assert staged.is_file()
+    assert staged.read_bytes() == docx_src.read_bytes()
+    # The markdown sibling is still written so the input set stays uniform.
+    assert (info.run_dir / "input" / "master_resume.md").is_file()
+
+
+def test_create_run_directory_rejects_missing_docx_path(fixture_layout, tmp_path):
+    from app.run_directory import RunDirectoryError, create_run_directory
+
+    job, resume, evidence = _make_objects()
+    with pytest.raises(RunDirectoryError, match="master_resume_docx_path"):
+        create_run_directory(
+            job=job,
+            master_resume=resume,
+            evidence_bank=evidence,
+            candidate_context_root=fixture_layout["candidate_root"],
+            runs_root=fixture_layout["runs_root"],
+            runtime_prompts_root=fixture_layout["prompts_root"],
+            master_resume_docx_path=tmp_path / "missing.docx",
+        )
+
+
+def test_post_run_with_filesystem_docx_stages_docx_in_input(
+    client, tmp_path, monkeypatch
+):
+    """End-to-end: creating a run with a discovered DOCX must copy it
+    into ``runs/<id>/input/master_resume.docx`` and keep the existing
+    markdown contract intact."""
+    candidate_root = tmp_path / "candidate_context"
+    candidate_root.mkdir()
+    for name in CANDIDATE_FILES:
+        (candidate_root / name).write_text(f"# {name}\n", encoding="utf-8")
+    (candidate_root / "project_notes.md").write_text("notes\n", encoding="utf-8")
+    prompts_root = tmp_path / "runtime_prompts"
+    prompts_root.mkdir()
+    (prompts_root / "resume_tailoring.md").write_text("# prompt\n", encoding="utf-8")
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+    master_resumes_root = candidate_root / "master_resumes"
+    master_resumes_root.mkdir()
+    docx_path = master_resumes_root / "calvin.docx"
+    _make_docx_file(docx_path, body="ROUND_TRIP_DOCX_BODY")
+
+    monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
+    monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
+    monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
+    monkeypatch.setenv("JOBAPPLY_MASTER_RESUMES_ROOT", str(master_resumes_root))
+
+    job = client.post(
+        "/jobs",
+        json={
+            "source_platform": "linkedin",
+            "company": "Acme",
+            "title": "ML Engineer",
+            "description_text": "build things",
+        },
+    ).json()
+
+    listed = client.get("/master-resumes").json()
+    fs_entry = next(e for e in listed if e["source"] == "filesystem")
+
+    resp = client.post(
+        "/runs",
+        json={"job_id": job["id"], "master_resume_id": fs_entry["id"]},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["master_resume_id"] == fs_entry["id"]
+    run_dir = Path(body["run_dir"])
+    staged_docx = run_dir / "input" / "master_resume.docx"
+    assert staged_docx.is_file()
+    assert staged_docx.read_bytes() == docx_path.read_bytes()
+    # The markdown sibling is also written with the extracted body.
+    md_text = (run_dir / "input" / "master_resume.md").read_text(encoding="utf-8")
+    assert "ROUND_TRIP_DOCX_BODY" in md_text
+
+    shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def test_post_run_with_filesystem_md_writes_master_resume_md(
+    client, tmp_path, monkeypatch
+):
+    candidate_root = tmp_path / "candidate_context"
+    candidate_root.mkdir()
+    for name in CANDIDATE_FILES:
+        (candidate_root / name).write_text(f"# {name}\n", encoding="utf-8")
+    (candidate_root / "project_notes.md").write_text("notes\n", encoding="utf-8")
+    prompts_root = tmp_path / "runtime_prompts"
+    prompts_root.mkdir()
+    (prompts_root / "resume_tailoring.md").write_text("# prompt\n", encoding="utf-8")
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+    master_resumes_root = candidate_root / "master_resumes"
+    master_resumes_root.mkdir()
+    (master_resumes_root / "industry_ml.md").write_text(
+        "# Industry ML Resume\nSENTINEL_MD\n", encoding="utf-8"
+    )
+
+    monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
+    monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
+    monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
+    monkeypatch.setenv("JOBAPPLY_MASTER_RESUMES_ROOT", str(master_resumes_root))
+
+    job = client.post(
+        "/jobs",
+        json={
+            "source_platform": "linkedin",
+            "company": "Acme",
+            "title": "ML Engineer",
+            "description_text": "build",
+        },
+    ).json()
+    listed = client.get("/master-resumes").json()
+    fs_entry = next(e for e in listed if e["source"] == "filesystem")
+
+    resp = client.post(
+        "/runs",
+        json={"job_id": job["id"], "master_resume_id": fs_entry["id"]},
+    )
+    assert resp.status_code == 201, resp.text
+    run_dir = Path(resp.json()["run_dir"])
+    # No DOCX should be staged for a markdown-only filesystem resume.
+    assert not (run_dir / "input" / "master_resume.docx").exists()
+    md = (run_dir / "input" / "master_resume.md").read_text(encoding="utf-8")
+    assert "SENTINEL_MD" in md
+
+    shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def test_post_run_with_unknown_filesystem_id_returns_404(client, tmp_path, monkeypatch):
+    candidate_root = tmp_path / "candidate_context"
+    candidate_root.mkdir()
+    for name in CANDIDATE_FILES:
+        (candidate_root / name).write_text(f"# {name}\n", encoding="utf-8")
+    (candidate_root / "project_notes.md").write_text("notes\n", encoding="utf-8")
+    prompts_root = tmp_path / "runtime_prompts"
+    prompts_root.mkdir()
+    (prompts_root / "resume_tailoring.md").write_text("# prompt\n", encoding="utf-8")
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+    master_resumes_root = tmp_path / "fs"
+    master_resumes_root.mkdir()
+
+    monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
+    monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
+    monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
+    monkeypatch.setenv("JOBAPPLY_MASTER_RESUMES_ROOT", str(master_resumes_root))
+
+    job = client.post(
+        "/jobs",
+        json={
+            "source_platform": "linkedin",
+            "company": "Acme",
+            "title": "ML Engineer",
+            "description_text": "build",
+        },
+    ).json()
+    resp = client.post(
+        "/runs",
+        json={"job_id": job["id"], "master_resume_id": "fs:000000000000000a"},
+    )
+    assert resp.status_code == 404
+
+
+def test_post_run_with_database_resume_still_writes_master_resume_md(
+    client, tmp_path, monkeypatch
+):
+    """Existing DB-backed flow must continue producing master_resume.md
+    without staging master_resume.docx."""
+    candidate_root = tmp_path / "candidate_context"
+    candidate_root.mkdir()
+    for name in CANDIDATE_FILES:
+        (candidate_root / name).write_text(f"# {name}\n", encoding="utf-8")
+    (candidate_root / "project_notes.md").write_text("notes\n", encoding="utf-8")
+    prompts_root = tmp_path / "runtime_prompts"
+    prompts_root.mkdir()
+    (prompts_root / "resume_tailoring.md").write_text("# prompt\n", encoding="utf-8")
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+
+    monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
+    monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
+    monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
+
+    job = client.post(
+        "/jobs",
+        json={
+            "source_platform": "linkedin",
+            "company": "Acme",
+            "title": "ML Engineer",
+            "description_text": "build",
+        },
+    ).json()
+    resume = client.post(
+        "/master-resumes",
+        json={"name": "main", "content_markdown": "# DB_RESUME_SENTINEL\nbody\n"},
+    ).json()
+    resp = client.post(
+        "/runs",
+        json={"job_id": job["id"], "master_resume_id": resume["id"]},
+    )
+    assert resp.status_code == 201, resp.text
+    run_dir = Path(resp.json()["run_dir"])
+
+    assert not (run_dir / "input" / "master_resume.docx").exists()
+    md = (run_dir / "input" / "master_resume.md").read_text(encoding="utf-8")
+    assert "DB_RESUME_SENTINEL" in md
+
+    shutil.rmtree(run_dir, ignore_errors=True)
+
+
 def test_post_run_creates_row_and_directory(client, tmp_path, monkeypatch):
     candidate_root = tmp_path / "candidate_context"
     candidate_root.mkdir()

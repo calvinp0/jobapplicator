@@ -248,6 +248,114 @@ describe("JobDetailPage five-step workspace", () => {
     expect(invokeRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the source_format as an uppercase badge on filesystem resumes", async () => {
+    listMasterResumesMock.mockResolvedValue([
+      {
+        id: "fs:abcdef0123456789",
+        name: "calvin_resume.docx",
+        source_path: "candidate_context/master_resumes/calvin_resume.docx",
+        content_markdown: "",
+        created_at: "2026-05-22T10:00:00Z",
+        updated_at: "2026-05-22T10:00:00Z",
+        source: "filesystem",
+        source_format: "docx",
+        is_demo: false,
+      },
+      {
+        ...resume,
+        name: "Demo Master Resume",
+        source: "database",
+        is_demo: true,
+      },
+    ]);
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const select = screen.getByLabelText(/master resume/i) as HTMLSelectElement;
+    const optionTexts = Array.from(select.options).map((o) => o.text);
+    // Filesystem entry comes first and carries the uppercase format badge.
+    expect(optionTexts[1]).toBe("calvin_resume.docx [DOCX]");
+    // Demo DB entry stays available but without a badge.
+    expect(optionTexts[2]).toBe("Demo Master Resume");
+  });
+
+  it("sends the filesystem resume id when generating a run from a discovered DOCX", async () => {
+    const user = userEvent.setup();
+    listMasterResumesMock.mockResolvedValue([
+      {
+        id: "fs:abcdef0123456789",
+        name: "calvin_resume.docx",
+        source_path: "candidate_context/master_resumes/calvin_resume.docx",
+        content_markdown: "",
+        created_at: "2026-05-22T10:00:00Z",
+        updated_at: "2026-05-22T10:00:00Z",
+        source: "filesystem",
+        source_format: "docx",
+        is_demo: false,
+      },
+    ]);
+    createRunMock.mockResolvedValue({
+      id: "run-fs",
+      job_id: "job-1",
+      master_resume_id: "fs:abcdef0123456789",
+      evidence_bank_id: null,
+      run_dir: "runs/run-fs",
+      status: "created",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T12:00:00Z",
+      started_at: null,
+      completed_at: null,
+      error_message: null,
+    });
+    invokeRunMock.mockResolvedValue({
+      id: "run-fs",
+      job_id: "job-1",
+      master_resume_id: "fs:abcdef0123456789",
+      evidence_bank_id: null,
+      run_dir: "runs/run-fs",
+      status: "running",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T12:00:00Z",
+      started_at: "2026-05-22T12:00:01Z",
+      completed_at: null,
+      error_message: null,
+    });
+
+    renderJob("job-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "fs:abcdef0123456789",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^generate automatically$/i }),
+    );
+
+    await waitFor(() => expect(createRunMock).toHaveBeenCalledTimes(1));
+    expect(createRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job_id: "job-1",
+        master_resume_id: "fs:abcdef0123456789",
+      }),
+    );
+  });
+
   it("renders the needs-import state when a completed run has no matching ResumeVersion", async () => {
     listRunsMock.mockResolvedValue([
       {

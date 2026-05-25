@@ -15,6 +15,12 @@ from ..claude_worker import (
 )
 from ..db import get_db
 from ..llm_providers import is_known_provider, list_providers
+from ..master_resume_discovery import (
+    MasterResumeDiscoveryError,
+    is_filesystem_id,
+    load_filesystem_master_resume_text,
+    resolve_filesystem_master_resume,
+)
 from ..models import ClaudeRun, EvidenceBank, Job, JobCapture, MasterResume
 from ..run_directory import (
     RunDirectoryError,
@@ -42,9 +48,38 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
 
-    master_resume = db.get(MasterResume, payload.master_resume_id)
-    if master_resume is None:
-        raise HTTPException(status_code=404, detail="master resume not found")
+    master_resume_docx_path = None
+    if is_filesystem_id(payload.master_resume_id):
+        fs_record = resolve_filesystem_master_resume(payload.master_resume_id)
+        if fs_record is None:
+            raise HTTPException(
+                status_code=404, detail="master resume not found"
+            )
+        try:
+            content = load_filesystem_master_resume_text(fs_record)
+        except MasterResumeDiscoveryError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"failed to load master resume: {exc}",
+            ) from exc
+        # Build an unattached MasterResume so create_run_directory can read
+        # ``id`` and ``content_markdown`` without us having to widen the
+        # function's contract. The row is never added to the session — the
+        # filesystem is the source of truth for these resumes.
+        master_resume = MasterResume(
+            id=fs_record.id,
+            name=fs_record.name,
+            source_path=fs_record.source_path,
+            content_markdown=content,
+        )
+        if fs_record.source_format == "docx":
+            master_resume_docx_path = fs_record.absolute_path
+    else:
+        master_resume = db.get(MasterResume, payload.master_resume_id)
+        if master_resume is None:
+            raise HTTPException(status_code=404, detail="master resume not found")
 
     evidence_bank: EvidenceBank | None = None
     if payload.evidence_bank_id is not None:
@@ -79,6 +114,7 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
             runtime_prompts_root=default_runtime_prompts_root(),
             job_capture=job_capture,
             llm_provider=provider_id,
+            master_resume_docx_path=master_resume_docx_path,
         )
     except RunDirectoryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
