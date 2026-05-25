@@ -185,6 +185,11 @@ In `output/change_log.md`, summarize:
 
 ## DOCX
 
-Create `output/tailored_resume.docx` with clean professional formatting.
+When creating `output/tailored_resume.docx`, use the DOCX / Word document skill if available.
+The DOCX must be a professional resume document, not a plain-text dump.
+Preserve consistent heading styles, bullet indentation, margins, spacing, and readable typography.
+If a source DOCX exists in `input/`, use it as a formatting reference when possible.
 Prefer ATS-safe formatting.
 Avoid unnecessary tables or graphics.
+If DOCX generation fails, still write `output/tailored_resume.md`, `output/change_log.md`,
+and `output/claim_audit.md`, and explain the DOCX failure clearly in `output/claim_audit.md`.

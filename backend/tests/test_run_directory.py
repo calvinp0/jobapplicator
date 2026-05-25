@@ -616,3 +616,31 @@ def test_post_run_creates_row_and_directory(client, tmp_path, monkeypatch):
     # Cleanup the created run dir from outside tmp_path's auto-cleanup scope —
     # in this test it lives under tmp_path, so pytest will handle it.
     shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def _repo_root() -> Path:
+    # backend/tests/test_run_directory.py -> backend/tests -> backend -> repo
+    return Path(__file__).resolve().parents[2]
+
+
+def test_runtime_prompt_requests_docx_skill():
+    """The shipped runtime prompt must ask Claude to use the DOCX skill.
+
+    Tracking task 074: the auto path should explicitly request the
+    DOCX / Word document skill when generating tailored_resume.docx so
+    Claude produces a real Word document instead of plain text dumped
+    into a .docx.
+    """
+    prompt_path = _repo_root() / "runtime_prompts" / "resume_tailoring.md"
+    text = prompt_path.read_text(encoding="utf-8")
+    assert "DOCX / Word document skill" in text
+    # The prompt must say the DOCX is not a plain-text dump.
+    assert "not a plain-text dump" in text
+    # The prompt must say a source DOCX in input/ should be used as a
+    # formatting reference when available.
+    assert "source DOCX" in text and "input/" in text
+    assert "formatting reference" in text
+    # The non-interactive contract from task 057 must still be present so
+    # the prompt cannot drift back into a conversational response.
+    assert "Do not ask clarifying questions" in text
+    assert "non-interactive" in text
