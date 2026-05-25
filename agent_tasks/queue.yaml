@@ -1186,3 +1186,26 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/060-add-word-handoff-api-endpoints.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "061-import-claude-word-result"
+    title: "Import Claude for Word result"
+    file: "agent_tasks/061-import-claude-word-result.md"
+    branch: "agent/061-import-claude-word-result"
+    worktree: "agent-061-import-claude-word-result"
+    status: "ready"
+    depends_on:
+      - "060-add-word-handoff-api-endpoints"
+    verification:
+      - "pytest backend/tests/test_word_handoff.py"
+      - "pytest backend/tests/test_api.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/main.py"
+      - "backend/app/run_directory.py"
+      - "backend/app/word_handoff.py"
+      - "backend/tests/test_word_handoff.py"
+      - "backend/tests/test_api.py"
+      - "docs/contracts/claude_run_directory.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/061-import-claude-word-result.md"
+      - "agent_tasks/queue.yaml"
