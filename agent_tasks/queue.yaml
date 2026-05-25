@@ -1723,4 +1723,23 @@ tasks:
       - "README_INSTALL.md"
       - "agent_tasks/085-add-gmail-evidence-to-applications-ui.md"
       - "agent_tasks/queue.yaml"
-
+  - id: "086-add-manual-gmail-sync-for-applications"
+    title: "Add manual Gmail sync for applications"
+    file: "agent_tasks/086-add-manual-gmail-sync-for-applications.md"
+    branch: "agent/086-add-manual-gmail-sync-for-applications"
+    worktree: "agent-086-add-manual-gmail-sync-for-applications"
+    status: "ready"
+    depends_on:
+      - "085-add-gmail-evidence-to-applications-ui"
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - "agent_tasks/086-add-manual-gmail-sync-for-applications.md"
+      - "agent_tasks/queue.yaml"
