@@ -1272,7 +1272,7 @@ tasks:
     file: "agent_tasks/065-backend-llm-provider-registry.md"
     branch: "agent/065-backend-llm-provider-registry"
     worktree: "agent-065-backend-llm-provider-registry"
-    status: "ready"
+    status: "done"
     depends_on:
       - "063-adr-llm-provider-selection"
       - "064-contract-run-directory-llm-provider"
@@ -1298,7 +1298,7 @@ tasks:
     file: "agent_tasks/066-backend-llm-provider-default-setting.md"
     branch: "agent/066-backend-llm-provider-default-setting"
     worktree: "agent-066-backend-llm-provider-default-setting"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "065-backend-llm-provider-registry"
     verification:
