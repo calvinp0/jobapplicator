@@ -29,9 +29,62 @@ runs/<run_id>/
 
 The `word_handoff/` directory holds the artifacts produced and consumed when
 a run's `tailoring_method` is `word_handoff`. It is not used by the `auto`
-path. The package format inside that directory is defined by the Claude for
-Word handoff package contract introduced alongside that feature; this
-document only reserves the directory name.
+path.
+
+## Word Handoff Package
+
+When the backend creates a Claude for Word handoff for a run, it writes the
+following layout into `runs/<run_id>/word_handoff/`:
+
+```text
+word_handoff/
+├── 01_resume_for_claude_word.docx   # source DOCX, copied from input/ when present
+├── 02_prompt_for_claude_word.txt    # prompt the user pastes into Claude for Word
+├── 03_job_description.txt           # the captured job description text
+└── 04_instructions.md               # manual steps for the operator
+```
+
+The numeric prefixes reflect reading order; the directory is opened by a
+human.
+
+The source resume DOCX is looked up under `input/` using these accepted
+names, in order, with the first match winning:
+
+```text
+input/master_resume.docx
+input/resume.docx
+input/base_resume.docx
+input/original_resume.docx
+```
+
+If no DOCX is present but a markdown resume is — under any of these accepted
+names — the package is still created and the markdown is included in the
+prompt as fallback context:
+
+```text
+input/master_resume.md
+input/resume.md
+input/base_resume.md
+input/original_resume.md
+```
+
+The job description is looked up similarly:
+
+```text
+input/job_description.md
+input/job_description.txt
+input/jd.md
+input/jd.txt
+```
+
+Successful package creation transitions the run metadata to
+`tailoring_method = word_handoff` and `status = word_handoff_ready`, and
+appends `jobapply:` progress lines to `run.log` recording the handoff
+directory path and the expected Word output relative path
+(`output/word_tailored_resume.docx`).
+
+The Word output itself is imported by a follow-up step (the run-import
+flow); creating the handoff package only stages inputs and records intent.
 
 ## Input Files
 
