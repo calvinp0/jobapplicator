@@ -127,34 +127,69 @@ def gmail_auth_url() -> GmailAuthUrlRead:
     return GmailAuthUrlRead(**payload)
 
 
+def _gmail_callback_error_html(reason: str, status_code: int = 400) -> HTMLResponse:
+    """Render a small, link-back HTML page for OAuth callback failures.
+
+    The browser is mid-redirect from Google when this fires, so the
+    response has to be self-contained — there is no JavaScript context
+    to ask the SPA for an error toast.
+    """
+    body = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<title>Gmail connection failed</title></head><body>"
+        "<h1>Gmail connection failed.</h1>"
+        f"<p>Reason: {reason}</p>"
+        "<p>Return to Settings and click Connect Gmail again.</p>"
+        "<p><a href=\"http://localhost:5173/settings\">"
+        "Open Settings</a></p>"
+        "</body></html>"
+    )
+    return HTMLResponse(body, status_code=status_code)
+
+
 @router.get("/oauth/callback", response_class=HTMLResponse)
 def gmail_oauth_callback(
     code: str | None = None,
     error: str | None = None,
-    state: str | None = None,  # noqa: ARG001 — accepted for OAuth spec compliance
+    state: str | None = None,
 ) -> HTMLResponse:
     from .. import gmail_client
 
     if error:
-        return HTMLResponse(
-            f"<h1>Gmail connection failed</h1><p>{error}</p>",
-            status_code=400,
-        )
+        # Google reports the user-side decision here (e.g. access_denied).
+        # Clear any pending state so a retry starts from a clean slate.
+        gmail_client.clear_oauth_state()
+        return _gmail_callback_error_html(error)
     if not code:
-        raise HTTPException(status_code=400, detail="missing 'code' parameter")
+        return _gmail_callback_error_html(
+            "the callback request is missing the 'code' parameter."
+        )
+    if not state:
+        return _gmail_callback_error_html(
+            "the callback request is missing the 'state' parameter."
+        )
 
     try:
-        gmail_client.exchange_code(code)
+        gmail_client.exchange_code(code, state=state)
     except gmail_client.GmailNotConfiguredError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _gmail_callback_error_html(str(exc))
+    except gmail_client.GmailOAuthStateError as exc:
+        return _gmail_callback_error_html(str(exc))
+    except gmail_client.GmailOAuthExchangeError as exc:
+        return _gmail_callback_error_html(str(exc))
     except gmail_client.GmailScopeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _gmail_callback_error_html(str(exc))
     except gmail_client.GmailDependencyError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _gmail_callback_error_html(str(exc), status_code=500)
 
     return HTMLResponse(
-        "<h1>Gmail connected</h1>"
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<title>Gmail connected</title></head><body>"
+        "<h1>Gmail connected.</h1>"
         "<p>You can close this window and return to the app.</p>"
+        "<p><a href=\"http://localhost:5173/settings?gmail=connected\">"
+        "Open Settings</a></p>"
+        "</body></html>"
     )
 
 

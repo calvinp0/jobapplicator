@@ -1587,3 +1587,141 @@ The plaintext client secret is never rendered after save — the input
 shows a `••••••••` placeholder, and the masked field is purely
 visual. When env vars are the active source the card displays a
 short note explaining this and offering an override path.
+
+## PKCE Callback Handling (task 089)
+
+Task 089 fixes the `/gmail/oauth/callback` 500 caused by
+`google-auth-oauthlib` defaulting to PKCE (`autogenerate_code_verifier=True`)
+and the callback creating a *fresh* `Flow` with a *different* code
+verifier than the one Google saw in the `code_challenge`. The result
+was `oauthlib.oauth2.rfc6749.errors.InvalidGrantError: (invalid_grant)
+Missing code verifier.` Privacy / scope rules above are unchanged.
+
+### Pending OAuth state
+
+Between `/gmail/auth-url` and `/gmail/oauth/callback` the backend
+persists a small pending-state blob at
+`candidate_context/gmail/oauth_state.json` (next to the token file,
+under the same gitignore patterns). Shape:
+
+```jsonc
+{
+  "state": "<opaque state from authorization_url>",
+  "code_verifier": "<PKCE verifier from authorization_url>",
+  "redirect_uri": "http://localhost:8000/gmail/oauth/callback",
+  "scope": "https://www.googleapis.com/auth/gmail.readonly",
+  "created_at": "2026-05-26T12:00:00+00:00"
+}
+```
+
+Lifecycle:
+
+- Written by `build_auth_url()` after the underlying `Flow` chooses a
+  state + code verifier.
+- Read by `exchange_code()` to rehydrate the same verifier (and to
+  validate the `state` returned by Google) before `fetch_token`.
+- Cleared after a successful exchange, after a definitive failure
+  (`invalid_grant`, scope error, expired pending state), and when
+  Google reports a user-side error (`access_denied`) on the callback.
+- Treated as a local secret/session artefact — never returned by any
+  API endpoint and never logged.
+- Expires after `OAUTH_STATE_TTL_SECONDS = 600` (10 minutes). An
+  expired pending state is removed and the callback returns a friendly
+  "click Connect Gmail again" message.
+
+### Callback validation order
+
+`/gmail/oauth/callback` checks (in this order):
+
+1. `error` query param → friendly HTML, state cleared.
+2. Missing `code` → friendly HTML.
+3. Missing `state` → friendly HTML.
+4. `exchange_code(code, state)`:
+   - No pending state on disk → `GmailOAuthStateError`.
+   - Pending state expired → state cleared, `GmailOAuthStateError`.
+   - `state != pending.state` → `GmailOAuthStateError`.
+   - `flow.fetch_token` raises (e.g. `invalid_grant`,
+     `oauthlib.oauth2.rfc6749.errors.*`, transport errors) → state
+     cleared, `GmailOAuthExchangeError`.
+   - `GmailScopeError` if the granted scopes drift from `gmail.readonly`.
+
+Every expected failure renders a small self-contained HTML page with
+the reason and a link back to `http://localhost:5173/settings`. The
+endpoint never returns a generic 500 for these expected modes; the
+only 500 path is `GmailDependencyError` (the optional `[gmail]` extras
+are not installed), and it still renders the same friendly shell with
+a 500 status code.
+
+The success page links to `http://localhost:5173/settings?gmail=connected`
+so the Settings page can render a "Gmail connected" affirmation if the
+user has the SPA open.
+
+### Frontend behaviour
+
+The callback page is a backend-rendered HTML response, so the
+Settings page does not need to parse the OAuth result itself. The
+existing `GmailIntegrationCard` already refreshes `/gmail/status` on
+mount, so re-opening Settings (via the link in the success page or
+manually) surfaces the new connected state without additional client
+code.
+
+### Unverified-app screen for local development
+
+Google's consent screen shows **"Google hasn't verified this app"**
+when the OAuth client is in test mode. This is expected for an
+unverified local OAuth app:
+
+> During local development, Google may show "Google hasn't verified
+> this app" for Gmail scopes. This is expected for an unverified/test
+> OAuth app. For local use, add your Google account as a **test user**
+> in the OAuth consent screen and continue through *Advanced* →
+> *Go to (unsafe)*. **For public distribution, submit the app for
+> verification with Google** — do not encourage end users to bypass
+> the warning.
+
+Recording your own Google account as a test user removes the warning
+prompt for that account; it does not affect anyone else.
+
+### Redirect URI must match exactly
+
+Google compares the `redirect_uri` byte-for-byte against the list of
+authorized redirect URIs configured on the OAuth client. The default
+in this project is:
+
+```
+http://localhost:8000/gmail/oauth/callback
+```
+
+If the backend host/port changes — for example you run the app on
+port 8001 or behind a reverse proxy — the redirect URI must be
+updated in **two places**:
+
+1. The active config (`GOOGLE_REDIRECT_URI` env var, or the
+   Settings-stored Gmail OAuth config from task 088).
+2. The Google Cloud OAuth client's *Authorized redirect URIs* list.
+
+A mismatch surfaces as Google's `redirect_uri_mismatch` error during
+the consent step.
+
+### Tests
+
+`backend/tests/test_gmail_oauth.py` covers the new PKCE flow:
+
+- `/gmail/auth-url` persists the state + PKCE verifier returned by the
+  Flow.
+- `exchange_code` restores the persisted verifier before
+  `fetch_token`.
+- `/gmail/oauth/callback` rejects missing `code`, missing `state`,
+  state mismatch, missing/expired pending state, and Google-reported
+  errors (`access_denied`) with friendly HTML.
+- `invalid_grant` / generic `fetch_token` failures are wrapped in
+  `GmailOAuthExchangeError` and rendered as a friendly page, not a
+  500.
+- The pending state file is cleared after a successful exchange and
+  after a definitive failure.
+- `oauth_state.json` is covered by `.gitignore`.
+
+The tests do not require real Google credentials and do not import
+`google-auth-oauthlib` — the validation paths run on Python alone, and
+the success / failure paths inject a fake `Flow` class via
+`sys.modules`.
