@@ -1523,3 +1523,20 @@ tasks:
       - "docs/contracts/**"
       - "agent_tasks/076-improve-applications-dashboard-status-tracking.md"
       - "agent_tasks/queue.yaml"
+  - id: "077-add-cross-platform-install-readme"
+    title: "Add cross-platform install README"
+    file: "agent_tasks/077-add-cross-platform-install-readme.md"
+    branch: "agent/077-add-cross-platform-install-readme"
+    worktree: "agent-077-add-cross-platform-install-readme"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "test -f README_INSTALL.md || test -f docs/install.md"
+    allowed_paths:
+      - "README.md"
+      - "README_INSTALL.md"
+      - "docs/install.md"
+      - "docs/claude_docx_skill_setup.md"
+      - "docs/office_word_mcp_setup.md"
+      - "agent_tasks/077-add-cross-platform-install-readme.md"
+      - "agent_tasks/queue.yaml"
