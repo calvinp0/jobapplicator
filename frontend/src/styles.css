@@ -1242,3 +1242,130 @@ button[type="submit"]:disabled,
 .job-card .status-badge {
   margin-left: 0;
 }
+
+/* ----- Tailoring method controls (auto vs Claude for Word) ----- */
+
+.tailoring-method-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.tailoring-method-secondary {
+  background: var(--card-bg);
+  color: var(--content-fg);
+  border: 1px solid var(--border-strong);
+}
+
+.word-handoff-panel {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: #f7f9ff;
+  border: 1px solid #d6deff;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.word-handoff-panel h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.word-handoff-panel h5 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.word-handoff-steps {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.word-handoff-save-path {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.word-handoff-warning {
+  margin: 0;
+  font-size: 13px;
+  color: #8a4a00;
+  background: #fff7e6;
+  border: 1px solid #f1d28a;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.word-handoff-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.word-handoff-prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.word-handoff-prompt-text {
+  width: 100%;
+  min-height: 8em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+  resize: vertical;
+}
+
+.word-handoff-instructions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.word-handoff-instructions-text {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.word-handoff-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.word-handoff-waiting {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.word-handoff-success {
+  margin: 0;
+  font-size: 13px;
+  color: #1f6a2a;
+}
