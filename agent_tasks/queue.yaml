@@ -1101,7 +1101,7 @@ tasks:
     file: "agent_tasks/057-fix-claude-noninteractive-tailoring-invocation.md"
     branch: "agent/057-fix-claude-noninteractive-tailoring-invocation"
     worktree: "agent-057-fix-claude-noninteractive-tailoring-invocation"
-    status: "ready"
+    status: "done"
     depends_on:
       - "051-fix-claude-runtime-write-permissions"
       - "052-tailoring-progress-events"
