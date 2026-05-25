@@ -1546,7 +1546,7 @@ tasks:
     file: "agent_tasks/078-extract-master-resume-docx-before-tailoring.md"
     branch: "agent/078-extract-master-resume-docx-before-tailoring"
     worktree: "agent-078-extract-master-resume-docx-before-tailoring"
-    status: "ready"
+    status: "done"
     depends_on:
       - "075-add-claude-code-office-word-mcp-support"
     verification:
