@@ -50,3 +50,30 @@ def init_db() -> None:
     from . import models  # noqa: F401  (side-effect: registers tables)
 
     Base.metadata.create_all(bind=engine)
+    ensure_runtime_columns()
+
+
+def ensure_runtime_columns() -> None:
+    """Add columns that post-date the initial schema to existing tables.
+
+    ``Base.metadata.create_all`` only creates missing tables; it does not
+    add missing columns to tables that already exist. The project runs on
+    SQLite without alembic, so we issue idempotent ``ALTER TABLE ADD
+    COLUMN`` statements here and call this helper from both ``init_db()``
+    and the FastAPI app's startup path. New columns must carry a SQL-level
+    default so existing rows backfill cleanly.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "claude_runs" not in inspector.get_table_names():
+        return
+    existing = {col["name"] for col in inspector.get_columns("claude_runs")}
+    if "llm_provider" not in existing:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE claude_runs ADD COLUMN llm_provider "
+                    "VARCHAR(32) NOT NULL DEFAULT 'claude_code'"
+                )
+            )

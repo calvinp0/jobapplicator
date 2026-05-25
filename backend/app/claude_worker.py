@@ -14,6 +14,12 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from .llm_providers import (
+    DEFAULT_PROVIDER_ID,
+    LLMProvider,
+    get_provider,
+    resolve_binary,
+)
 from .models import ClaudeRun
 from .run_directory import EXPECTED_OUTPUTS
 
@@ -174,8 +180,22 @@ class ClaudeWorkerError(RuntimeError):
     """
 
 
-def default_claude_binary() -> str:
-    return os.environ.get(CLAUDE_BINARY_ENV, "claude")
+def _resolve_run_provider(run: ClaudeRun) -> LLMProvider:
+    """Look up the run's persisted provider, falling back to the default.
+
+    A run can carry an unknown id only if the row was written by a build
+    that knew about more providers than this one (rolling-rollback safety).
+    In that case we surface the unknown id by raising — the worker treats
+    it like a configuration error rather than silently substituting the
+    default, which would hide drift between code and data.
+    """
+    provider_id = (run.llm_provider or DEFAULT_PROVIDER_ID).strip() or DEFAULT_PROVIDER_ID
+    provider = get_provider(provider_id)
+    if provider is None:
+        raise ClaudeWorkerError(
+            f"unknown llm_provider on run {run.id}: {provider_id!r}"
+        )
+    return provider
 
 
 def is_dry_run() -> bool:
@@ -390,21 +410,24 @@ def invoke_claude_run(
         db.refresh(run)
         return run
 
-    binary = claude_binary or default_claude_binary()
+    try:
+        provider = _resolve_run_provider(run)
+    except ClaudeWorkerError as exc:
+        _append_progress(log_path, str(exc))
+        _append_progress(log_path, "marking run failed")
+        return _record_failure(db, run, str(exc))
+
+    # Override priority: explicit kwarg > provider env var > provider default.
+    # The kwarg path stays for callers that want to inject a binary without
+    # touching the environment (tests historically used the env var).
+    binary = claude_binary or resolve_binary(provider)
     permission_mode = _permission_mode()
-    # ``--print`` is the documented non-interactive switch: Claude reads the
-    # prompt from stdin (or argv) and exits after producing output, instead of
-    # opening an interactive REPL. Passing the prompt file path as a positional
-    # argument made Claude treat it as a conversational starter ("what should I
-    # do with this?") rather than executing the contract, so we route the
-    # prompt's contents through stdin instead.
-    argv = [
-        binary,
-        "--print",
-        "--permission-mode",
-        permission_mode,
-        *_extra_args(),
-    ]
+    # The argv is built by the provider's registry entry. The prompt body
+    # itself is delivered over stdin (see PROMPT_DELIVERY_STDIN in
+    # llm_providers.py); passing the prompt file path as a positional
+    # argument made Claude Code treat it as a conversational starter, and
+    # large prompts can exceed ARG_MAX, so the body never enters argv.
+    argv = [*provider.build_argv(binary, permission_mode), *_extra_args()]
 
     try:
         prompt_text = prompt_file.read_text(encoding="utf-8")
@@ -440,20 +463,26 @@ def invoke_claude_run(
                     stderr=subprocess.STDOUT,
                 )
             except FileNotFoundError as exc:
-                _append_progress(log_path, f"claude binary not found: {binary}")
+                _append_progress(
+                    log_path,
+                    f"provider {provider.id!r} binary not found: {binary}",
+                )
                 _append_progress(log_path, "marking run failed")
                 return _record_failure(
                     db,
                     run,
-                    f"claude binary not found: {binary} ({exc})",
+                    f"provider {provider.id!r} binary not found: {binary} ({exc})",
                 )
             except OSError as exc:
-                _append_progress(log_path, f"failed to launch claude binary {binary}")
+                _append_progress(
+                    log_path,
+                    f"failed to launch provider {provider.id!r} binary {binary}",
+                )
                 _append_progress(log_path, "marking run failed")
                 return _record_failure(
                     db,
                     run,
-                    f"failed to launch claude binary {binary}: {exc}",
+                    f"failed to launch provider {provider.id!r} binary {binary}: {exc}",
                 )
             _append_progress(log_path, "Claude Code process started")
             # Feed the prompt to Claude via stdin and close it immediately so
