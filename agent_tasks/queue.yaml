@@ -1511,7 +1511,7 @@ tasks:
     file: "agent_tasks/076-improve-applications-dashboard-status-tracking.md"
     branch: "agent/076-improve-applications-dashboard-status-tracking"
     worktree: "agent-076-improve-applications-dashboard-status-tracking"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "pytest"
