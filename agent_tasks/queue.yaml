@@ -1234,7 +1234,7 @@ tasks:
     file: "agent_tasks/063-adr-llm-provider-selection.md"
     branch: "agent/063-adr-llm-provider-selection"
     worktree: "agent-063-adr-llm-provider-selection"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "test -f docs/adr/009-llm-provider-selection.md"
@@ -1253,7 +1253,7 @@ tasks:
     file: "agent_tasks/064-contract-run-directory-llm-provider.md"
     branch: "agent/064-contract-run-directory-llm-provider"
     worktree: "agent-064-contract-run-directory-llm-provider"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "063-adr-llm-provider-selection"
     verification:
