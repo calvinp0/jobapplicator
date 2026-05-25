@@ -1683,7 +1683,7 @@ tasks:
     file: "agent_tasks/084-classify-gmail-application-emails.md"
     branch: "agent/084-classify-gmail-application-emails"
     worktree: "agent-084-classify-gmail-application-emails"
-    status: "ready"
+    status: "done"
     depends_on:
       - "083-search-gmail-for-application-emails"
     verification:
