@@ -321,3 +321,25 @@ export interface LlmProviderSetting {
   default_provider: string;
   available: LlmProvider[];
 }
+
+// Sanitized snapshot of the persisted Gmail OAuth config (task 088).
+// The plaintext client secret is never sent — only a masked preview and
+// a boolean flag.
+export interface GmailOAuthSettings {
+  configured: boolean;
+  source: "settings" | "environment" | "none";
+  google_client_id: string | null;
+  has_google_client_secret: boolean;
+  google_client_secret_preview: string;
+  google_redirect_uri: string;
+  gmail_token_path: string;
+  updated_at: string | null;
+}
+
+export interface GmailOAuthSettingsUpdate {
+  google_client_id: string;
+  google_client_secret?: string | null;
+  google_redirect_uri: string;
+  gmail_token_path?: string | null;
+  preserve_existing_secret?: boolean;
+}

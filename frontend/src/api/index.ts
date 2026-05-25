@@ -17,6 +17,8 @@ import type {
   GmailStatusResponse,
   GmailSyncApplicationResult,
   GmailSyncApplicationsResponse,
+  GmailOAuthSettings,
+  GmailOAuthSettingsUpdate,
   Job,
   JobCapture,
   LlmProvider,
@@ -52,6 +54,8 @@ export type {
   GmailStatusResponse,
   GmailSyncApplicationResult,
   GmailSyncApplicationsResponse,
+  GmailOAuthSettings,
+  GmailOAuthSettingsUpdate,
   Job,
   JobCapture,
   LlmProvider,
@@ -285,6 +289,20 @@ export function getGmailStatus(): Promise<GmailStatusResponse> {
 
 export function getGmailAuthUrl(): Promise<GmailAuthUrlResponse> {
   return apiRequest("/gmail/auth-url");
+}
+
+export function getGmailOAuthSettings(): Promise<GmailOAuthSettings> {
+  return apiRequest("/settings/gmail-oauth");
+}
+
+export function setGmailOAuthSettings(
+  payload: GmailOAuthSettingsUpdate,
+): Promise<GmailOAuthSettings> {
+  return apiRequest("/settings/gmail-oauth", { method: "PUT", body: payload });
+}
+
+export function deleteGmailOAuthSettings(): Promise<GmailOAuthSettings> {
+  return apiRequest("/settings/gmail-oauth", { method: "DELETE" });
 }
 
 export interface SearchApplicationGmailPayload {

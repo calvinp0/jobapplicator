@@ -13,6 +13,9 @@ const {
   setLlmProviderSettingMock,
   getGmailStatusMock,
   getGmailAuthUrlMock,
+  getGmailOAuthSettingsMock,
+  setGmailOAuthSettingsMock,
+  deleteGmailOAuthSettingsMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -35,6 +38,9 @@ const {
     setLlmProviderSettingMock: vi.fn(),
     getGmailStatusMock: vi.fn(),
     getGmailAuthUrlMock: vi.fn(),
+    getGmailOAuthSettingsMock: vi.fn(),
+    setGmailOAuthSettingsMock: vi.fn(),
+    deleteGmailOAuthSettingsMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -49,6 +55,9 @@ vi.mock("../api", () => ({
   setLlmProviderSetting: setLlmProviderSettingMock,
   getGmailStatus: getGmailStatusMock,
   getGmailAuthUrl: getGmailAuthUrlMock,
+  getGmailOAuthSettings: getGmailOAuthSettingsMock,
+  setGmailOAuthSettings: setGmailOAuthSettingsMock,
+  deleteGmailOAuthSettings: deleteGmailOAuthSettingsMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -102,6 +111,36 @@ describe("SettingsPage", () => {
     getGmailAuthUrlMock.mockResolvedValue({
       auth_url: "https://accounts.google.com/o/oauth2/auth?fake=1",
       scope: "https://www.googleapis.com/auth/gmail.readonly",
+    });
+    getGmailOAuthSettingsMock.mockResolvedValue({
+      configured: true,
+      source: "environment",
+      google_client_id: "env-id.apps.googleusercontent.com",
+      has_google_client_secret: true,
+      google_client_secret_preview: "from environment",
+      google_redirect_uri: "http://localhost:8000/gmail/oauth/callback",
+      gmail_token_path: "candidate_context/gmail/token.json",
+      updated_at: null,
+    });
+    setGmailOAuthSettingsMock.mockResolvedValue({
+      configured: true,
+      source: "settings",
+      google_client_id: "saved-id.apps.googleusercontent.com",
+      has_google_client_secret: true,
+      google_client_secret_preview: "••••••••",
+      google_redirect_uri: "http://localhost:8000/gmail/oauth/callback",
+      gmail_token_path: "candidate_context/gmail/token.json",
+      updated_at: "2026-05-26T12:00:00+00:00",
+    });
+    deleteGmailOAuthSettingsMock.mockResolvedValue({
+      configured: false,
+      source: "none",
+      google_client_id: null,
+      has_google_client_secret: false,
+      google_client_secret_preview: "",
+      google_redirect_uri: "http://localhost:8000/gmail/oauth/callback",
+      gmail_token_path: "candidate_context/gmail/token.json",
+      updated_at: null,
     });
   });
 

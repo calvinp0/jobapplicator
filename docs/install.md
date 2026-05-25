@@ -177,7 +177,10 @@ GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
 GOOGLE_REDIRECT_URI
 GMAIL_TOKEN_PATH
-    Optional Gmail read-only OAuth integration (task 082).
+    Optional Gmail read-only OAuth integration (task 082). Since task
+    088 you can also paste these values into the Settings page; saved
+    settings take precedence over env vars and remove the need to
+    restart the backend after configuration.
     See section 11 (Optional Gmail Read-Only Connection) below and
     docs/contracts/gmail_integration.md for the full contract.
 ```
@@ -639,7 +642,20 @@ pip install -e .[gmail]
 5. Enable the **Gmail API** for the project under **APIs &
    Services → Library**.
 
-### Set the env vars
+### Configure the OAuth client
+
+You have two options for telling the backend about the OAuth client.
+
+**Recommended (since task 088): save it in Settings.** Start the
+backend with no Gmail env vars, open the cockpit, and go to **Settings
+→ Gmail integration**. Paste the client ID, client secret, redirect
+URI, and (optionally) the token path, then click **Save Gmail
+config**. The values persist in the local app DB. Settings-stored
+config takes precedence over env vars, so this is the recommended path
+for a local development machine. Backend restarts are not required.
+
+**Alternative: environment variables.** Useful for CI / deployment /
+power users. Settings-stored config still wins if both are set.
 
 ```bash
 export GOOGLE_CLIENT_ID="<your client id>.apps.googleusercontent.com"
@@ -649,8 +665,11 @@ export GOOGLE_REDIRECT_URI="http://localhost:8000/gmail/oauth/callback"
 export GMAIL_TOKEN_PATH="$PWD/candidate_context/gmail/token.json"
 ```
 
-The token file is excluded from git via `.gitignore` and holds a
-plain-text refresh token — treat it as a secret.
+Treat the Settings-stored secret as a local development secret: it is
+held in the app DB (which is already gitignored) and the
+`/settings/gmail-oauth` API only returns a masked preview, never the
+plaintext value. The token file is excluded from git via `.gitignore`
+and holds a plain-text refresh token — treat it as a secret.
 
 ### Connect and verify
 
@@ -669,12 +688,14 @@ credentials.
    Gmail integration**.
 
 3. The card shows one of three states:
-   - **Not configured** — the OAuth env vars above are not set. The
-     card lists which ones are missing (`GOOGLE_CLIENT_ID`,
-     `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`). Set them in the
-     backend environment and restart the backend.
-   - **Not connected** — env vars are set but there is no token. Click
-     **Connect Gmail** to start the Google consent flow.
+   - **Not configured** — neither Settings nor env vars supply the
+     OAuth credentials. Fill in the form on the card (Google client
+     ID, client secret, redirect URI, token path) and click **Save
+     Gmail config**, or alternatively set the env vars listed above
+     and restart the backend.
+   - **Not connected** — credentials are present (from Settings or
+     env vars) but there is no token. Click **Connect Gmail** to
+     start the Google consent flow.
    - **Connected** — shows the connected mailbox (when available) and
      the granted scopes.
 
@@ -720,6 +741,10 @@ the cockpit now surfaces an actionable message instead, e.g.:
 Gmail OAuth is not configured.
 Missing: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
 ```
+
+To clear the error: either save the Gmail OAuth config in Settings
+(recommended for local use; no backend restart needed) or set the env
+vars listed above and restart the backend.
 
 The backend's response shape is structured:
 

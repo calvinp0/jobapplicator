@@ -2,20 +2,27 @@ import { useEffect, useState } from "react";
 import {
   createEvidenceBank,
   createMasterResume,
+  deleteGmailOAuthSettings,
   getGmailAuthUrl,
+  getGmailOAuthSettings,
   getGmailStatus,
   getLlmProviderSetting,
   listEvidenceBanks,
   listMasterResumes,
+  setGmailOAuthSettings,
   setLlmProviderSetting,
 } from "../api";
 import type {
   EvidenceBank,
+  GmailOAuthSettings,
   GmailStatusResponse,
   LlmProvider,
   MasterResume,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
+
+const DEFAULT_REDIRECT_URI = "http://localhost:8000/gmail/oauth/callback";
+const DEFAULT_TOKEN_PATH = "candidate_context/gmail/token.json";
 
 interface SeedEntity {
   id: string;
@@ -287,27 +294,73 @@ function LlmProviderCard() {
   );
 }
 
+interface GmailOAuthFormState {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  tokenPath: string;
+}
+
 function GmailIntegrationCard() {
   const [status, setStatus] = useState<GmailStatusResponse | null>(null);
+  const [oauthSettings, setOauthSettings] =
+    useState<GmailOAuthSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [form, setForm] = useState<GmailOAuthFormState>({
+    clientId: "",
+    clientSecret: "",
+    redirectUri: DEFAULT_REDIRECT_URI,
+    tokenPath: DEFAULT_TOKEN_PATH,
+  });
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [isDeletingConfig, setIsDeletingConfig] = useState(false);
+
+  async function refreshAll() {
+    const [s, c] = await Promise.all([
+      getGmailStatus(),
+      getGmailOAuthSettings(),
+    ]);
+    setStatus(s);
+    setOauthSettings(c);
+    return { status: s, settings: c };
+  }
 
   useEffect(() => {
     let cancelled = false;
-    getGmailStatus()
-      .then((s) => {
-        if (cancelled) return;
-        setStatus(s);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setLoadError(extractApiDetail(err));
-      });
+    refreshAll().catch((err: unknown) => {
+      if (cancelled) return;
+      setLoadError(extractApiDetail(err));
+    });
     return () => {
       cancelled = true;
     };
+    // refreshAll is stable in scope; ignore exhaustive-deps for the
+    // initial-mount load — re-runs go through the explicit handlers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function openForm() {
+    setForm({
+      clientId: oauthSettings?.google_client_id ?? "",
+      clientSecret: "",
+      redirectUri:
+        oauthSettings?.google_redirect_uri ?? DEFAULT_REDIRECT_URI,
+      tokenPath: oauthSettings?.gmail_token_path ?? DEFAULT_TOKEN_PATH,
+    });
+    setSaveError(null);
+    setSaveSuccess(null);
+    setIsFormOpen(true);
+  }
+
+  function cancelForm() {
+    setIsFormOpen(false);
+    setSaveError(null);
+  }
 
   async function handleConnect() {
     setIsConnecting(true);
@@ -322,12 +375,76 @@ function GmailIntegrationCard() {
     }
   }
 
+  async function handleSaveConfig(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaveError(null);
+    setSaveSuccess(null);
+
+    const clientId = form.clientId.trim();
+    const clientSecret = form.clientSecret;
+    const redirectUri = form.redirectUri.trim() || DEFAULT_REDIRECT_URI;
+    const tokenPath = form.tokenPath.trim() || DEFAULT_TOKEN_PATH;
+
+    if (!clientId) {
+      setSaveError("Client ID is required.");
+      return;
+    }
+    const hasExistingSecret =
+      oauthSettings?.source === "settings" &&
+      oauthSettings.has_google_client_secret;
+    if (!clientSecret && !hasExistingSecret) {
+      setSaveError("Client secret is required.");
+      return;
+    }
+
+    setIsSavingConfig(true);
+    try {
+      await setGmailOAuthSettings({
+        google_client_id: clientId,
+        google_client_secret: clientSecret || null,
+        google_redirect_uri: redirectUri,
+        gmail_token_path: tokenPath,
+        preserve_existing_secret: !clientSecret && hasExistingSecret,
+      });
+      await refreshAll();
+      setForm((prev) => ({ ...prev, clientSecret: "" }));
+      setSaveSuccess("Gmail config saved.");
+      setIsFormOpen(false);
+    } catch (err: unknown) {
+      setSaveError(extractApiDetail(err));
+    } finally {
+      setIsSavingConfig(false);
+    }
+  }
+
+  async function handleDeleteConfig() {
+    setIsDeletingConfig(true);
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      await deleteGmailOAuthSettings();
+      await refreshAll();
+      setSaveSuccess("Local Gmail config deleted.");
+      setIsFormOpen(false);
+    } catch (err: unknown) {
+      setSaveError(extractApiDetail(err));
+    } finally {
+      setIsDeletingConfig(false);
+    }
+  }
+
   let statusText = "Loading…";
   if (status) {
     if (!status.configured) statusText = "Not configured";
     else if (!status.connected) statusText = "Not connected";
     else statusText = status.email ? `Connected as ${status.email}` : "Connected";
   }
+
+  const showForm = isFormOpen || (status !== null && !status.configured);
+  const settingsSource = oauthSettings?.source ?? "none";
+  const hasSavedSecret =
+    settingsSource === "settings" &&
+    (oauthSettings?.has_google_client_secret ?? false);
 
   return (
     <section className="settings-card" data-testid="gmail-integration-card">
@@ -355,9 +472,32 @@ function GmailIntegrationCard() {
             <dd>{status.scopes.join(", ")}</dd>
           </>
         ) : null}
+        {oauthSettings ? (
+          <>
+            <dt>Config source</dt>
+            <dd data-testid="gmail-config-source">
+              {settingsSource === "settings"
+                ? "Local settings"
+                : settingsSource === "environment"
+                  ? "Environment variables"
+                  : "Not configured"}
+            </dd>
+          </>
+        ) : null}
       </dl>
 
-      {status && !status.configured ? (
+      {oauthSettings && settingsSource === "environment" ? (
+        <p
+          className="settings-helper"
+          data-testid="gmail-env-source-note"
+          role="status"
+        >
+          Gmail OAuth config is loaded from environment variables. You can
+          override it by saving local settings below.
+        </p>
+      ) : null}
+
+      {status && !status.configured && !isFormOpen ? (
         <div
           className="settings-empty"
           data-testid="gmail-not-configured"
@@ -370,22 +510,147 @@ function GmailIntegrationCard() {
               : null}
           </p>
           <p>
-            See the install docs for setup details (Optional Gmail Read-Only
-            Connection in <code>docs/install.md</code>).
+            Save your Google OAuth client ID and secret below to enable Gmail
+            tracking. Environment variables remain supported as a fallback.
           </p>
         </div>
       ) : null}
 
-      {status && status.configured && !status.connected ? (
+      {showForm ? (
+        <form
+          onSubmit={handleSaveConfig}
+          noValidate
+          className="settings-card-form"
+          data-testid="gmail-oauth-form"
+        >
+          <label className="field">
+            <span>Google Client ID</span>
+            <input
+              type="text"
+              value={form.clientId}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, clientId: e.target.value }))
+              }
+              autoComplete="off"
+              required
+            />
+          </label>
+          <label className="field">
+            <span>
+              Google Client Secret
+              {hasSavedSecret ? (
+                <em
+                  style={{ marginLeft: "0.5em", fontStyle: "italic" }}
+                  data-testid="gmail-secret-saved-hint"
+                >
+                  (Client secret saved — leave blank to keep)
+                </em>
+              ) : null}
+            </span>
+            <input
+              type="password"
+              value={form.clientSecret}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  clientSecret: e.target.value,
+                }))
+              }
+              autoComplete="new-password"
+              placeholder={hasSavedSecret ? "••••••••" : ""}
+            />
+          </label>
+          <label className="field">
+            <span>Redirect URI</span>
+            <input
+              type="text"
+              value={form.redirectUri}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, redirectUri: e.target.value }))
+              }
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Token path</span>
+            <input
+              type="text"
+              value={form.tokenPath}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, tokenPath: e.target.value }))
+              }
+            />
+          </label>
+
+          {saveError ? (
+            <p role="alert" className="error">
+              {saveError}
+            </p>
+          ) : null}
+
+          <div className="settings-card-form-actions">
+            <button
+              type="submit"
+              disabled={isSavingConfig}
+              data-testid="gmail-save-config-button"
+            >
+              {isSavingConfig ? "Saving…" : "Save Gmail config"}
+            </button>
+            {status && status.configured ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={cancelForm}
+                disabled={isSavingConfig}
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      ) : null}
+
+      {saveSuccess ? (
+        <p role="status" className="settings-success">
+          {saveSuccess}
+        </p>
+      ) : null}
+
+      {status && status.configured && !isFormOpen ? (
         <div className="settings-card-form-actions">
+          {!status.connected ? (
+            <button
+              type="button"
+              onClick={handleConnect}
+              disabled={isConnecting}
+              data-testid="gmail-connect-button"
+            >
+              {isConnecting ? "Opening…" : "Connect Gmail"}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={handleConnect}
-            disabled={isConnecting}
-            data-testid="gmail-connect-button"
+            className="button button-secondary"
+            onClick={openForm}
+            data-testid="gmail-edit-config-button"
           >
-            {isConnecting ? "Opening…" : "Connect Gmail"}
+            {settingsSource === "settings"
+              ? "Edit Gmail config"
+              : "Override with local settings"}
           </button>
+          {settingsSource === "settings" ? (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={handleDeleteConfig}
+              disabled={isDeletingConfig}
+              data-testid="gmail-delete-config-button"
+            >
+              {isDeletingConfig
+                ? "Deleting…"
+                : "Delete local Gmail config"}
+            </button>
+          ) : null}
         </div>
       ) : null}
 

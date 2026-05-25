@@ -275,3 +275,9 @@ backend/jobapply.db
 # first connect; the token blob itself is what we keep out of git.
 candidate_context/gmail/token.json
 candidate_context/gmail/*.json
+
+# Settings-stored secrets (task 088). The Gmail OAuth client secret is
+# persisted in the app DB today; these patterns are defensive in case a
+# future change writes a settings file under candidate_context/settings/.
+candidate_context/settings/gmail_oauth.json
+candidate_context/settings/*.secret.json
