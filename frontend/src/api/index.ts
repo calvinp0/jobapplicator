@@ -96,6 +96,7 @@ export interface CreateRunPayload {
   job_id: string;
   master_resume_id: string;
   evidence_bank_id?: string | null;
+  llm_provider?: string;
 }
 
 export function createRun(payload: CreateRunPayload): Promise<ClaudeRun> {
