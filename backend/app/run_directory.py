@@ -182,6 +182,7 @@ def create_run_directory(
     revision_feedback: Optional[RevisionFeedbackInput] = None,
     tailoring_method: str = DEFAULT_TAILORING_METHOD,
     llm_provider: Optional[str] = None,
+    master_resume_docx_path: Optional[Path] = None,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
 
@@ -221,6 +222,14 @@ def create_run_directory(
     # --- write input files ---
     _write_text(input_dir / "job_description.md", _format_job_description(job))
     _write_text(input_dir / "master_resume.md", master_resume.content_markdown)
+
+    if master_resume_docx_path is not None:
+        docx_src = Path(master_resume_docx_path)
+        if not docx_src.is_file():
+            raise RunDirectoryError(
+                f"master_resume_docx_path does not exist: {docx_src}"
+            )
+        shutil.copyfile(docx_src, input_dir / "master_resume.docx")
 
     if evidence_bank is not None:
         _write_text(input_dir / "evidence_bank.md", evidence_bank.content_markdown)

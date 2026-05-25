@@ -703,11 +703,17 @@ export function JobDetailPage() {
                   onChange={(e) => setSelectedResumeId(e.target.value)}
                 >
                   <option value="">Select a master resume…</option>
-                  {resumes.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
+                  {resumes.map((r) => {
+                    const badge = r.source_format
+                      ? r.source_format.toUpperCase()
+                      : null;
+                    const label = badge ? `${r.name} [${badge}]` : r.name;
+                    return (
+                      <option key={r.id} value={r.id}>
+                        {label}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
             )}

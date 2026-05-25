@@ -110,6 +110,14 @@ class MasterResumeRead(_ORMModel):
     content_markdown: str
     created_at: datetime
     updated_at: datetime
+    # ``source`` distinguishes database-backed rows from filesystem
+    # discoveries (``candidate_context/master_resumes/``). ``source_format``
+    # is the lowercase extension for filesystem entries (``docx``, ``md``,
+    # ``txt``) and ``None`` for database rows. ``is_demo`` flags the seeded
+    # demo record so the UI can sort real files ahead of it.
+    source: str = "database"
+    source_format: Optional[str] = None
+    is_demo: bool = False
 
 
 # ---- EvidenceBank ----

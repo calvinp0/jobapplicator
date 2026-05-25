@@ -25,6 +25,12 @@ def client() -> Iterator:
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     os.environ["JOBAPPLY_DATABASE_URL"] = f"sqlite:///{tmp.name}"
+    # Default the filesystem master-resume discovery root to a fresh empty
+    # directory so tests don't pick up the repo's real
+    # ``candidate_context/master_resumes/`` folder. Tests that exercise
+    # discovery override this with their own root via monkeypatch.
+    master_resumes_dir = tempfile.mkdtemp(prefix="jobapply-master-resumes-")
+    os.environ["JOBAPPLY_MASTER_RESUMES_ROOT"] = master_resumes_dir
 
     # Reload modules so the engine picks up the new env var.
     for mod_name in [
@@ -61,3 +67,6 @@ def client() -> Iterator:
         os.unlink(tmp.name)
     except FileNotFoundError:
         pass
+    import shutil
+
+    shutil.rmtree(master_resumes_dir, ignore_errors=True)

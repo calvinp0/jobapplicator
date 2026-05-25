@@ -38,6 +38,14 @@ export interface MasterResume {
   content_markdown: string;
   created_at: string;
   updated_at: string;
+  // ``source`` is "filesystem" for resumes discovered from
+  // candidate_context/master_resumes/ and "database" for DB-backed rows.
+  // ``source_format`` is the lowercase file extension for filesystem
+  // entries (e.g. "docx") and null otherwise. ``is_demo`` flags the
+  // seeded demo row so real files render ahead of it.
+  source?: "filesystem" | "database";
+  source_format?: string | null;
+  is_demo?: boolean;
 }
 
 export interface MasterResumeCreate {
