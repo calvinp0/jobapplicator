@@ -231,6 +231,54 @@ function formatEmailRelative(
   return then.toLocaleDateString();
 }
 
+const SUBMISSION_STATUS_LABELS: Record<string, string> = {
+  not_submitted: "Not submitted",
+  submitted: "Submitted",
+  unknown: "Unknown",
+};
+
+export function submissionStatusLabel(value: string): string {
+  return SUBMISSION_STATUS_LABELS[value] ?? value;
+}
+
+const EMAIL_STATUS_LABELS: Record<string, string> = {
+  not_watching: "Not watching yet",
+  watching: "Waiting for email",
+  email_received: "Email received",
+  classified_positive: "Positive response",
+  classified_rejection: "Rejection detected",
+  classified_neutral: "Confirmation received",
+  needs_review: "Email needs review",
+};
+
+export function emailStatusLabel(value: string): string {
+  return EMAIL_STATUS_LABELS[value] ?? value;
+}
+
+function formatRelativeTime(
+  value: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  const then = parseTimestamp(value ?? null);
+  if (!then) return "—";
+  const diffMs = now.getTime() - then.getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days}d ago`;
+  return then.toLocaleDateString();
+}
+
+export function applicationUpdatedLabel(
+  app: Application,
+  now: Date = new Date(),
+): string {
+  return formatRelativeTime(app.updated_at, now);
+}
+
 /**
  * One-line summary of the most recently received email attached to an
  * application, suitable for inline display in the list. Returns null when

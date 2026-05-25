@@ -231,6 +231,22 @@ export function submitApplication(
   });
 }
 
+export function markApplicationRejected(
+  applicationId: string,
+): Promise<Application> {
+  return apiRequest(`/applications/${applicationId}/mark-rejected`, {
+    method: "POST",
+  });
+}
+
+export function markApplicationInterview(
+  applicationId: string,
+): Promise<Application> {
+  return apiRequest(`/applications/${applicationId}/mark-interview`, {
+    method: "POST",
+  });
+}
+
 export function listApplicationEvents(
   applicationId: string,
 ): Promise<ApplicationEvent[]> {

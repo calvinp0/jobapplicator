@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-const { listApplicationsMock, listJobsMock, ApiErrorMock } = vi.hoisted(() => {
+const {
+  listApplicationsMock,
+  listJobsMock,
+  markApplicationRejectedMock,
+  markApplicationInterviewMock,
+  submitApplicationMock,
+  ApiErrorMock,
+} = vi.hoisted(() => {
   class ApiErrorMock extends Error {
     status: number;
     body: unknown;
@@ -16,6 +24,9 @@ const { listApplicationsMock, listJobsMock, ApiErrorMock } = vi.hoisted(() => {
   return {
     listApplicationsMock: vi.fn(),
     listJobsMock: vi.fn(),
+    markApplicationRejectedMock: vi.fn(),
+    markApplicationInterviewMock: vi.fn(),
+    submitApplicationMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -23,6 +34,9 @@ const { listApplicationsMock, listJobsMock, ApiErrorMock } = vi.hoisted(() => {
 vi.mock("../api", () => ({
   listApplications: listApplicationsMock,
   listJobs: listJobsMock,
+  markApplicationRejected: markApplicationRejectedMock,
+  markApplicationInterview: markApplicationInterviewMock,
+  submitApplication: submitApplicationMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -158,6 +172,12 @@ const applications = [
     timeline_stage: "draft",
     last_email_link: null,
     email_link_count: 0,
+    submission_status: "not_submitted",
+    email_status: "not_watching",
+    next_action: "Ready to submit",
+    latest_run_id: "run-1",
+    latest_run_status: "imported",
+    last_email_at: null,
   },
   {
     id: "app-sent",
@@ -170,6 +190,12 @@ const applications = [
     timeline_stage: "sent",
     last_email_link: null,
     email_link_count: 0,
+    submission_status: "submitted",
+    email_status: "watching",
+    next_action: "Waiting for email",
+    latest_run_id: null,
+    latest_run_status: null,
+    last_email_at: null,
   },
   {
     id: "app-confirmation",
@@ -185,6 +211,12 @@ const applications = [
       sender: "ats@gamma.example",
     }),
     email_link_count: 1,
+    submission_status: "submitted",
+    email_status: "classified_neutral",
+    next_action: "Waiting for response",
+    latest_run_id: null,
+    latest_run_status: null,
+    last_email_at: "2026-05-22T12:00:00Z",
   },
   {
     id: "app-rejected",
@@ -200,6 +232,12 @@ const applications = [
       sender: "hiring@delta.example",
     }),
     email_link_count: 3,
+    submission_status: "submitted",
+    email_status: "classified_rejection",
+    next_action: "Rejected",
+    latest_run_id: null,
+    latest_run_status: null,
+    last_email_at: "2026-05-22T12:00:00Z",
   },
   {
     id: "app-interview",
@@ -215,6 +253,12 @@ const applications = [
       sender: "recruiter@epsilon.example",
     }),
     email_link_count: 1,
+    submission_status: "submitted",
+    email_status: "classified_positive",
+    next_action: "Interview response needed",
+    latest_run_id: null,
+    latest_run_status: null,
+    last_email_at: "2026-05-22T12:00:00Z",
   },
   {
     id: "app-offer",
@@ -230,6 +274,12 @@ const applications = [
       sender: "hiring@zeta.example",
     }),
     email_link_count: 2,
+    submission_status: "submitted",
+    email_status: "classified_positive",
+    next_action: "Respond to offer",
+    latest_run_id: null,
+    latest_run_status: null,
+    last_email_at: "2026-05-22T12:00:00Z",
   },
 ];
 
@@ -359,5 +409,142 @@ describe("ApplicationsPage", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/no applications yet/i)).toBeInTheDocument();
+  });
+
+  it("renders submission, email, updated, and next-action lines for each row", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+
+    // Draft row shows submission, email state, and next action.
+    const draftRow = screen
+      .getByRole("link", { name: /senior engineer — acme corp/i })
+      .closest("li");
+    expect(draftRow).not.toBeNull();
+    expect(
+      within(draftRow!).getByText(/Submission: Not submitted/),
+    ).toBeInTheDocument();
+    expect(
+      within(draftRow!).getByText(/Email: Not watching yet/),
+    ).toBeInTheDocument();
+    expect(
+      within(draftRow!).getByText(/Next: Ready to submit/),
+    ).toBeInTheDocument();
+
+    // Submitted row shows submitted date and watching state.
+    const sentRow = screen
+      .getByRole("link", { name: /platform lead — beta inc/i })
+      .closest("li");
+    expect(sentRow).not.toBeNull();
+    expect(
+      within(sentRow!).getByText(/Submission: Submitted/),
+    ).toBeInTheDocument();
+    expect(
+      within(sentRow!).getByText(/Email: Waiting for email/),
+    ).toBeInTheDocument();
+    expect(
+      within(sentRow!).getByText(/Next: Waiting for email/),
+    ).toBeInTheDocument();
+
+    // Rejected row shows rejection detected and Next: Rejected.
+    const rejRow = screen
+      .getByRole("link", { name: /frontend eng — delta co/i })
+      .closest("li");
+    expect(rejRow).not.toBeNull();
+    expect(
+      within(rejRow!).getByText(/Email: Rejection detected/),
+    ).toBeInTheDocument();
+    expect(within(rejRow!).getByText(/Next: Rejected/)).toBeInTheDocument();
+  });
+
+  it("renders an updated-time line for each application card", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+    // At least one Updated: line is present per card.
+    const updatedLines = screen.getAllByText(/^Updated: /);
+    expect(updatedLines.length).toBe(applications.length);
+  });
+
+  it("invokes markApplicationRejected when 'Mark rejected' is clicked", async () => {
+    submitApplicationMock.mockResolvedValue({
+      ...applications[0],
+      status: "submitted",
+      submission_status: "submitted",
+      submitted_at: "2026-05-22T13:00:00Z",
+      timeline_stage: "sent",
+    });
+    markApplicationRejectedMock.mockResolvedValue({
+      ...applications[0],
+      status: "rejected",
+      submission_status: "submitted",
+      timeline_stage: "rejected",
+      next_action: "Rejected",
+    });
+    markApplicationInterviewMock.mockResolvedValue({
+      ...applications[0],
+      status: "interview",
+      timeline_stage: "interview",
+      next_action: "Interview response needed",
+    });
+
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+
+    // The draft row offers all three mark actions.
+    const draftLink = screen.getByRole("link", {
+      name: /senior engineer — acme corp/i,
+    });
+    const draftRow = draftLink.closest("li");
+    expect(draftRow).not.toBeNull();
+
+    const rejectButton = within(draftRow!).getByRole("button", {
+      name: /mark rejected/i,
+    });
+    const submitButton = within(draftRow!).getByRole("button", {
+      name: /mark submitted/i,
+    });
+    const interviewButton = within(draftRow!).getByRole("button", {
+      name: /mark interview/i,
+    });
+    expect(submitButton).toBeInTheDocument();
+    expect(interviewButton).toBeInTheDocument();
+
+    await userEvent.click(rejectButton);
+    expect(markApplicationRejectedMock).toHaveBeenCalledWith("app-draft");
+  });
+
+  it("hides Mark rejected/interview on already-rejected rows", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+    const rejLink = screen.getByRole("link", {
+      name: /frontend eng — delta co/i,
+    });
+    const rejRow = rejLink.closest("li");
+    expect(rejRow).not.toBeNull();
+    expect(
+      within(rejRow!).queryByRole("button", { name: /mark rejected/i }),
+    ).toBeNull();
+    expect(
+      within(rejRow!).queryByRole("button", { name: /mark interview/i }),
+    ).toBeNull();
+    expect(
+      within(rejRow!).queryByRole("button", { name: /mark submitted/i }),
+    ).toBeNull();
   });
 });
