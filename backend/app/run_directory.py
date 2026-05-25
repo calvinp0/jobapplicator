@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .llm_providers import (
+    DEFAULT_PROVIDER_ID,
+    WORD_HANDOFF_PROVIDER_ID,
+    is_known_provider,
+)
 from .models import EvidenceBank, Job, JobCapture, MasterResume
 
 CANDIDATE_CONTEXT_FILES = (
@@ -48,6 +53,16 @@ DEFAULT_TAILORING_METHOD = TAILORING_METHOD_AUTO
 # from the DB-level ``ClaudeRun.status`` column, which tracks just the
 # subprocess lifecycle. The metadata status spans both the auto path and
 # the upcoming word_handoff path.
+# Default LLM provider for the ``auto`` tailoring path. The router accepts an
+# explicit override per run; this constant is the fallback when none is given
+# (task 066 will replace it with a user-configurable setting).
+DEFAULT_LLM_PROVIDER = DEFAULT_PROVIDER_ID
+
+# Sentinel stamped into ``llm_provider`` when ``tailoring_method == word_handoff``.
+# That flow never invokes a backend CLI, but the contract requires the field
+# to be present so the metadata file stays self-describing.
+WORD_HANDOFF_LLM_PROVIDER = WORD_HANDOFF_PROVIDER_ID
+
 ALLOWED_RUN_STATUSES = (
     "created",
     "input_ready",
@@ -124,6 +139,27 @@ def _validate_tailoring_method(method: str) -> str:
     return method
 
 
+def _resolve_llm_provider(
+    tailoring_method: str, llm_provider: Optional[str]
+) -> str:
+    """Decide which value to stamp into ``metadata.json``.
+
+    Word-handoff runs always carry the ``claude_for_word`` sentinel
+    because no backend CLI runs in that flow; any caller-supplied
+    provider id is ignored. Auto runs default to ``claude_code`` and
+    accept any id registered with the provider registry.
+    """
+    if tailoring_method == TAILORING_METHOD_WORD_HANDOFF:
+        return WORD_HANDOFF_LLM_PROVIDER
+    if llm_provider is None:
+        return DEFAULT_LLM_PROVIDER
+    if not is_known_provider(llm_provider):
+        raise RunDirectoryError(
+            f"invalid llm_provider: {llm_provider!r}"
+        )
+    return llm_provider
+
+
 def _validate_run_status(status: str) -> str:
     if status not in ALLOWED_RUN_STATUSES:
         raise RunDirectoryError(
@@ -145,6 +181,7 @@ def create_run_directory(
     now: Optional[datetime] = None,
     revision_feedback: Optional[RevisionFeedbackInput] = None,
     tailoring_method: str = DEFAULT_TAILORING_METHOD,
+    llm_provider: Optional[str] = None,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
 
@@ -156,6 +193,7 @@ def create_run_directory(
     if master_resume is None:
         raise RunDirectoryError("master_resume is required")
     _validate_tailoring_method(tailoring_method)
+    resolved_llm_provider = _resolve_llm_provider(tailoring_method, llm_provider)
 
     candidate_root = Path(candidate_context_root)
     if not candidate_root.is_dir():
@@ -239,6 +277,7 @@ def create_run_directory(
         "prompt_hash": prompt_hash,
         "input_hash": input_hash,
         "tailoring_method": tailoring_method,
+        "llm_provider": resolved_llm_provider,
         "status": DEFAULT_RUN_STATUS,
     }
     _write_metadata(run_dir, metadata)
@@ -300,6 +339,20 @@ def set_tailoring_method(
     metadata["tailoring_method"] = method
     _stamp_updated_at(metadata, now)
     _write_metadata(run_dir, metadata)
+
+
+def get_llm_provider(run_dir: Path) -> str:
+    """Return the llm provider recorded in metadata.json.
+
+    Backwards compatibility: pre-registry runs have no ``llm_provider``
+    key; readers must treat that as ``claude_code`` since that was the
+    only worker the system supported.
+    """
+    metadata = _read_metadata(run_dir)
+    value = metadata.get("llm_provider", DEFAULT_LLM_PROVIDER)
+    if value is None:
+        return DEFAULT_LLM_PROVIDER
+    return value
 
 
 def get_run_status(run_dir: Path) -> str:

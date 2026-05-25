@@ -14,6 +14,11 @@ from ..claude_worker import (
     read_recent_log_lines,
 )
 from ..db import get_db
+from ..llm_providers import (
+    is_known_provider,
+    list_providers,
+    resolve_default_provider_id,
+)
 from ..models import ClaudeRun, EvidenceBank, Job, JobCapture, MasterResume
 from ..run_directory import (
     RunDirectoryError,
@@ -54,6 +59,19 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
     if job.created_from_capture_id:
         job_capture = db.get(JobCapture, job.created_from_capture_id)
 
+    # Validate the provider against the registry before touching the
+    # filesystem so an unknown id never leaves a half-created run on disk.
+    # Omitting the field falls back to the application-wide default
+    # (task 066 will wire this to a persisted setting; for now it stubs
+    # to ``claude_code``).
+    provider_id = payload.llm_provider or resolve_default_provider_id()
+    if not is_known_provider(provider_id):
+        known = ", ".join(p.id for p in list_providers())
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown llm_provider: {provider_id!r}; known: {known}",
+        )
+
     try:
         info = create_run_directory(
             job=job,
@@ -63,6 +81,7 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
             runs_root=default_runs_root(),
             runtime_prompts_root=default_runtime_prompts_root(),
             job_capture=job_capture,
+            llm_provider=provider_id,
         )
     except RunDirectoryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -74,6 +93,7 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
         evidence_bank_id=evidence_bank.id if evidence_bank is not None else None,
         run_dir=str(info.run_dir),
         status="created",
+        llm_provider=provider_id,
         prompt_hash=info.prompt_hash,
         input_hash=info.input_hash,
     )

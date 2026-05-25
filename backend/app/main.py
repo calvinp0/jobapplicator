@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from .db import Base, engine, get_db
+from .db import Base, engine, ensure_runtime_columns, get_db
 from .models import ClaudeRun
 from .routers import (
     applications,
@@ -16,6 +16,7 @@ from .routers import (
     evidence_banks,
     files,
     jobs,
+    llm_providers,
     master_resumes,
     resume_versions,
     runs,
@@ -248,6 +249,10 @@ def create_app() -> FastAPI:
     )
 
     Base.metadata.create_all(bind=engine)
+    # Backfill columns added after the initial schema. ``create_all`` only
+    # creates missing tables; columns added in later tasks (currently just
+    # ``claude_runs.llm_provider``) need an explicit ALTER on existing DBs.
+    ensure_runtime_columns()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -262,6 +267,7 @@ def create_app() -> FastAPI:
     app.include_router(word_handoff_router)
     app.include_router(resume_versions.router)
     app.include_router(files.router)
+    app.include_router(llm_providers.router)
 
     return app
 

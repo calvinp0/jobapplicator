@@ -383,6 +383,116 @@ def test_status_updates_bump_updated_at(fixture_layout):
     assert metadata["updated_at"].startswith("2026-01-01T00:00:30")
 
 
+def test_create_run_directory_stamps_default_llm_provider(fixture_layout):
+    from app.run_directory import (
+        DEFAULT_LLM_PROVIDER,
+        create_run_directory,
+        get_llm_provider,
+    )
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+    )
+
+    metadata = json.loads((info.run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["llm_provider"] == "claude_code"
+    assert DEFAULT_LLM_PROVIDER == "claude_code"
+    assert get_llm_provider(info.run_dir) == "claude_code"
+
+
+def test_create_run_directory_accepts_explicit_llm_provider(fixture_layout):
+    from app.run_directory import create_run_directory, get_llm_provider
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+        llm_provider="codex",
+    )
+
+    metadata = json.loads((info.run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["llm_provider"] == "codex"
+    assert get_llm_provider(info.run_dir) == "codex"
+
+
+def test_create_run_directory_word_handoff_uses_sentinel(fixture_layout):
+    """Word-handoff runs do not invoke a backend CLI; the field must still be
+    present so metadata stays self-describing, and it must carry the
+    ``claude_for_word`` sentinel regardless of any caller-supplied value."""
+    from app.run_directory import create_run_directory, get_llm_provider
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+        tailoring_method="word_handoff",
+        llm_provider="codex",  # intentionally lying — must be overridden
+    )
+
+    metadata = json.loads((info.run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["llm_provider"] == "claude_for_word"
+    assert get_llm_provider(info.run_dir) == "claude_for_word"
+
+
+def test_create_run_directory_rejects_unknown_llm_provider(fixture_layout):
+    from app.run_directory import RunDirectoryError, create_run_directory
+
+    job, resume, evidence = _make_objects()
+    with pytest.raises(RunDirectoryError, match="invalid llm_provider"):
+        create_run_directory(
+            job=job,
+            master_resume=resume,
+            evidence_bank=evidence,
+            candidate_context_root=fixture_layout["candidate_root"],
+            runs_root=fixture_layout["runs_root"],
+            runtime_prompts_root=fixture_layout["prompts_root"],
+            llm_provider="bogus",
+        )
+
+
+def test_legacy_metadata_without_llm_provider_reads_as_claude_code(fixture_layout):
+    """Metadata predating ADR-009 must read back as the claude_code default."""
+    from app.run_directory import (
+        DEFAULT_LLM_PROVIDER,
+        create_run_directory,
+        get_llm_provider,
+    )
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+    )
+
+    metadata_path = info.run_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("llm_provider", None)
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert get_llm_provider(info.run_dir) == DEFAULT_LLM_PROVIDER
+
+
 def test_legacy_metadata_without_tailoring_method_reads_as_auto(fixture_layout):
     """Metadata predating this field must read back as the auto default."""
     from app.run_directory import (

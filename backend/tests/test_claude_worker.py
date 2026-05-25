@@ -193,7 +193,11 @@ def test_invoke_run_missing_binary_marks_failed(client, tmp_path, monkeypatch):
 
     assert body["status"] == "failed"
     assert body["error_message"]
-    assert "claude binary not found" in body["error_message"]
+    # After ADR-009 the worker quotes the provider id, not the literal
+    # string "claude", so a future provider-specific failure stays
+    # distinguishable in logs.
+    assert "binary not found" in body["error_message"]
+    assert "'claude_code'" in body["error_message"]
 
 
 def test_invoke_run_unknown_id_returns_404(client, tmp_path, monkeypatch):
@@ -446,6 +450,87 @@ def test_invoke_run_creates_output_dir_if_missing(client, tmp_path, monkeypatch)
     assert output_dir.is_dir()
     for name in ALL_OUTPUTS:
         assert (output_dir / name).is_file()
+
+
+def _seed_run_with_provider(
+    client, tmp_path, monkeypatch, provider_id: str
+) -> dict:
+    """Variant of ``_seed_run`` that POSTs an explicit ``llm_provider``."""
+    candidate_root = tmp_path / "candidate_context"
+    candidate_root.mkdir()
+    for name in CANDIDATE_FILES:
+        (candidate_root / name).write_text(f"# {name}\nbody\n", encoding="utf-8")
+    prompts_root = tmp_path / "runtime_prompts"
+    prompts_root.mkdir()
+    (prompts_root / "resume_tailoring.md").write_text("# prompt\n", encoding="utf-8")
+    runs_root = tmp_path / "runs"
+    runs_root.mkdir()
+
+    monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
+    monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
+    monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
+
+    job = client.post(
+        "/jobs",
+        json={
+            "source_platform": "linkedin",
+            "company": "Acme",
+            "title": "ML Engineer",
+            "description_text": "build things",
+        },
+    ).json()
+    resume = client.post(
+        "/master-resumes",
+        json={"name": "main", "content_markdown": "# resume\n"},
+    ).json()
+    resp = client.post(
+        "/runs",
+        json={
+            "job_id": job["id"],
+            "master_resume_id": resume["id"],
+            "llm_provider": provider_id,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_invoke_run_dry_run_preserves_codex_provider(
+    client, tmp_path, monkeypatch
+):
+    """Per ADR-009 the persisted provider id survives a dry-run round trip.
+
+    Dry-run skips the subprocess so we can verify the registry plumbing
+    end-to-end without depending on a fake binary: the run is created
+    with ``llm_provider=codex``, the column is persisted, ``metadata.json``
+    records the same value, and dry-run still marks the run completed
+    (providers are not consulted in dry-run mode).
+    """
+    import json
+
+    run = _seed_run_with_provider(client, tmp_path, monkeypatch, "codex")
+    assert run["llm_provider"] == "codex"
+
+    metadata = json.loads(
+        (Path(run["run_dir"]) / "metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata["llm_provider"] == "codex"
+
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_DRY_RUN", "1")
+    monkeypatch.setenv(
+        "JOBAPPLY_CODEX_BINARY", str(tmp_path / "would_explode_if_used")
+    )
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["status"] == "completed"
+    assert body["llm_provider"] == "codex"
+    # Re-fetch to confirm the column is read back as codex after the
+    # subprocess-less dry-run completes (the value is set at create-time
+    # and must not be mutated by invoke).
+    fetched = client.get(f"/runs/{run['id']}").json()
+    assert fetched["llm_provider"] == "codex"
 
 
 def test_invoke_does_not_mutate_resume_versions(client, tmp_path, monkeypatch):

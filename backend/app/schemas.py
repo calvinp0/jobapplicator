@@ -176,6 +176,12 @@ class ClaudeRunCreate(BaseModel):
     job_id: str
     master_resume_id: str
     evidence_bank_id: Optional[str] = None
+    # Optional provider override. When omitted the route falls back to the
+    # application-wide default (currently stubbed to ``claude_code``;
+    # task 066 wires it to a persisted setting). Unknown ids are rejected
+    # at the route layer against the provider registry, not by this schema,
+    # so the error returns a clean 400 with a registry-aware message.
+    llm_provider: Optional[str] = None
 
 
 class ClaudeRunRead(_ORMModel):
@@ -185,6 +191,7 @@ class ClaudeRunRead(_ORMModel):
     evidence_bank_id: Optional[str]
     run_dir: str
     status: str
+    llm_provider: str
     prompt_hash: Optional[str]
     input_hash: Optional[str]
     output_hash: Optional[str]
@@ -192,6 +199,24 @@ class ClaudeRunRead(_ORMModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     error_message: Optional[str]
+
+
+# ---- LLMProvider ----
+
+
+class LLMProviderRead(BaseModel):
+    """Read shape for the provider registry listing endpoint (ADR-009).
+
+    Returned by ``GET /llm-providers`` so the frontend can render a
+    selector without having to embed the registry. Only fields that are
+    safe to surface to the UI live here — the argv builder and the
+    prompt-delivery sentinel stay server-side.
+    """
+
+    id: str
+    display_name: str
+    default_binary: str
+    binary_env_var: str
 
 
 class ClaudeRunLogRead(BaseModel):

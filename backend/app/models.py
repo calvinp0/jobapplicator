@@ -134,6 +134,14 @@ class ClaudeRun(Base):
     )
     run_dir: Mapped[str] = mapped_column(String(1024), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    # ``llm_provider`` records which CLI worker produced the run's artifacts.
+    # Per ADR-009 this is persisted on the run so provenance survives the
+    # user later changing the application-wide default. Default ``claude_code``
+    # preserves the pre-registry behavior for existing rows and for runs
+    # that do not opt into a different provider explicitly.
+    llm_provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="claude_code", server_default="claude_code"
+    )
     prompt_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     input_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     output_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
