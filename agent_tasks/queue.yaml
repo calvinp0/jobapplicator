@@ -1140,3 +1140,26 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/058-add-tailoring-method-model.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "059-create-claude-word-handoff-package"
+    title: "Create Claude for Word handoff package"
+    file: "agent_tasks/059-create-claude-word-handoff-package.md"
+    branch: "agent/059-create-claude-word-handoff-package"
+    worktree: "agent-059-create-claude-word-handoff-package"
+    status: "ready"
+    depends_on:
+      - "058-add-tailoring-method-model"
+    verification:
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest backend/tests/test_word_handoff.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/run_directory.py"
+      - "backend/app/word_handoff.py"
+      - "backend/app/main.py"
+      - "backend/tests/test_run_directory.py"
+      - "backend/tests/test_word_handoff.py"
+      - "docs/contracts/claude_run_directory.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/059-create-claude-word-handoff-package.md"
+      - "agent_tasks/queue.yaml"
