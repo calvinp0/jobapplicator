@@ -1702,3 +1702,25 @@ tasks:
       - "pyproject.toml"
       - "agent_tasks/084-classify-gmail-application-emails.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "085-add-gmail-evidence-to-applications-ui"
+    title: "Add Gmail evidence to Applications UI"
+    file: "agent_tasks/085-add-gmail-evidence-to-applications-ui.md"
+    branch: "agent/085-add-gmail-evidence-to-applications-ui"
+    worktree: "agent-085-add-gmail-evidence-to-applications-ui"
+    status: "ready"
+    depends_on:
+      - "084-classify-gmail-application-emails"
+    verification:
+      - "cd frontend && npm run build"
+      - "pytest"
+    allowed_paths:
+      - "frontend/**"
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - "agent_tasks/085-add-gmail-evidence-to-applications-ui.md"
+      - "agent_tasks/queue.yaml"
+
