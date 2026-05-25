@@ -1209,3 +1209,22 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/061-import-claude-word-result.md"
       - "agent_tasks/queue.yaml"
+  - id: "062-add-frontend-tailoring-method-controls"
+    title: "Add frontend controls for Auto and Claude for Word modes"
+    file: "agent_tasks/062-add-frontend-tailoring-method-controls.md"
+    branch: "agent/062-add-frontend-tailoring-method-controls"
+    worktree: "agent-062-add-frontend-tailoring-method-controls"
+    status: "ready"
+    depends_on:
+      - "061-import-claude-word-result"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+      - "pytest"
+    allowed_paths:
+      - "frontend/**"
+      - "backend/app/main.py"
+      - "docs/contracts/agent_orchestration.md"
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/062-add-frontend-tailoring-method-controls.md"
+      - "agent_tasks/queue.yaml"
