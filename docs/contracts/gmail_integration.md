@@ -1449,5 +1449,141 @@ verbatim so the user sees, e.g.:
 > Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID,
 > GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI.
 
-Set the missing environment variables and restart the backend to clear
-the error.
+To clear the error, either save the Gmail OAuth config in Settings
+(see task 088 below) or set the listed environment variables and
+restart the backend.
+
+## Settings-Stored OAuth Configuration (task 088)
+
+Task 088 lets the user save the Gmail OAuth config from the Settings
+page so the env-var-and-restart loop is no longer required for local
+use. Privacy / scope rules above are unchanged: read-only scope only,
+no send/archive/delete/label/modify, no full bodies, no background
+polling.
+
+### Resolution priority
+
+`gmail_client.get_gmail_config()` resolves the active config from, in
+order:
+
+```
+1. Settings-stored Gmail OAuth config (app.gmail_settings)
+2. Environment variables (GOOGLE_CLIENT_ID etc.)
+3. Built-in defaults for non-secret fields
+```
+
+Env vars remain a fully supported fallback for CI / deployment /
+power users. When both layers supply credentials the Settings-stored
+config wins; the env vars are not consulted further until the
+Settings-stored row is deleted.
+
+### Storage and secret handling
+
+The Settings-stored config is a JSON blob in the existing
+`app_settings` key/value table (ADR-009), keyed by
+`gmail_oauth_config`. The blob shape:
+
+```jsonc
+{
+  "google_client_id": "<client id>",
+  "google_client_secret": "<client secret>",
+  "google_redirect_uri": "http://localhost:8000/gmail/oauth/callback",
+  "gmail_token_path": "candidate_context/gmail/token.json",
+  "updated_at": "2026-05-26T12:00:00+00:00"
+}
+```
+
+Safety rules:
+
+- The DB file is local-machine state and is gitignored.
+- The plaintext `google_client_secret` is never returned by any GET
+  endpoint, never logged, and never rendered in the UI after save.
+- GET / response shapes return `has_google_client_secret: true` and a
+  masked `google_client_secret_preview` of `••••••••`.
+- The `.gitignore` also lists
+  `candidate_context/settings/gmail_oauth.json` and
+  `candidate_context/settings/*.secret.json` defensively so a future
+  file-based storage choice cannot accidentally commit a secret.
+
+### Backend endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/settings/gmail-oauth` | Sanitized snapshot of the effective config (`source` ∈ `settings` / `environment` / `none`). |
+| PUT | `/settings/gmail-oauth` | Save / overwrite the Settings-stored config. |
+| DELETE | `/settings/gmail-oauth` | Remove the Settings-stored config (the OAuth token file is **not** deleted). |
+
+Sanitized GET response when settings own the config:
+
+```jsonc
+{
+  "configured": true,
+  "source": "settings",
+  "google_client_id": "123456789-abc.apps.googleusercontent.com",
+  "has_google_client_secret": true,
+  "google_client_secret_preview": "••••••••",
+  "google_redirect_uri": "http://localhost:8000/gmail/oauth/callback",
+  "gmail_token_path": "candidate_context/gmail/token.json",
+  "updated_at": "2026-05-26T12:00:00+00:00"
+}
+```
+
+When the env-var fallback is in effect, `source: "environment"`,
+`google_client_secret_preview: "from environment"`, and `updated_at`
+is `null`. When nothing is configured at all, `configured: false`,
+`source: "none"`, and `has_google_client_secret: false`.
+
+PUT request body:
+
+```jsonc
+{
+  "google_client_id": "...",
+  "google_client_secret": "...",
+  "google_redirect_uri": "http://localhost:8000/gmail/oauth/callback",
+  "gmail_token_path": "candidate_context/gmail/token.json",
+  "preserve_existing_secret": false
+}
+```
+
+Validation:
+
+- `google_client_id` is required.
+- `google_client_secret` is required unless
+  `preserve_existing_secret` is `true` and a saved secret already
+  exists for the user.
+- `google_redirect_uri` is required (defaulted in the UI to
+  `http://localhost:8000/gmail/oauth/callback`).
+- `gmail_token_path` is optional; defaults to
+  `candidate_context/gmail/token.json`.
+
+The request body is never logged in full — the persistence helper
+exists so the secret value is the only field that needs special
+handling, and it is written straight into the AppSetting row.
+
+### Hot-reload behavior
+
+`/gmail/status`, `/gmail/auth-url`, `/gmail/oauth/callback`, and
+`/gmail/test-search` all call `gmail_client.get_gmail_config()` on
+every request, so saving config in Settings clears the
+`gmail_oauth_not_configured` error without a backend restart. The
+Settings card immediately shows **Not connected** (or **Connected**
+if a previous token survives the config change).
+
+### Settings UI summary
+
+The Gmail integration card on the Settings page renders:
+
+- The current status (Not configured / Not connected / Connected).
+- A config-source label ("Local settings" / "Environment variables"
+  / "Not configured").
+- A form for entering Google Client ID, Client Secret, Redirect URI,
+  and Token Path. The form is shown automatically when nothing is
+  configured and can be re-opened via **Edit Gmail config** (or
+  **Override with local settings** when env-loaded).
+- A **Connect Gmail** button once credentials are present.
+- A **Delete local Gmail config** button when the Settings row exists.
+
+The plaintext client secret is never rendered after save — the input
+shows a `••••••••` placeholder, and the masked field is purely
+visual. When env vars are the active source the card displays a
+short note explaining this and offering an override path.

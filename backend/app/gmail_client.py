@@ -106,19 +106,23 @@ class GmailConfig:
 
     ``client_id`` / ``client_secret`` are required for any OAuth
     operation; the other fields have sensible local defaults.
+    ``source`` records where the credentials came from
+    (``"settings"`` / ``"environment"`` / ``"none"``) so the UI and the
+    structured config-error responses can name it.
     """
 
     client_id: str | None
     client_secret: str | None
     redirect_uri: str
-    redirect_uri_from_env: bool
+    redirect_uri_explicit: bool
     token_path: Path
+    source: str = "none"
 
     def is_oauth_configured(self) -> bool:
         return bool(self.client_id and self.client_secret)
 
     def missing_config(self) -> list[str]:
-        """Names of the OAuth env vars the user still needs to set.
+        """Names of the OAuth fields the user still needs to set.
 
         Returns ``[]`` when :meth:`is_oauth_configured` is true so the
         ``/gmail/status`` and ``/gmail/auth-url`` surfaces can render a
@@ -134,7 +138,7 @@ class GmailConfig:
             missing.append("GOOGLE_CLIENT_ID")
         if not self.client_secret:
             missing.append("GOOGLE_CLIENT_SECRET")
-        if not self.redirect_uri_from_env:
+        if not self.redirect_uri_explicit:
             missing.append("GOOGLE_REDIRECT_URI")
         return missing
 
@@ -152,22 +156,63 @@ def _default_redirect_uri() -> str:
     return "http://localhost:8000/gmail/oauth/callback"
 
 
+def _env(name: str) -> str | None:
+    """Tiny wrapper around ``os.environ.get`` for test/monkeypatch reach."""
+    return os.environ.get(name)
+
+
 def get_gmail_config() -> GmailConfig:
-    """Read the Gmail OAuth configuration from the environment.
+    """Resolve the Gmail OAuth config.
+
+    Priority order (task 088):
+
+    1. Settings-stored Gmail OAuth config (``app.gmail_settings``).
+    2. Environment variables (``GOOGLE_CLIENT_ID`` etc.).
+    3. Built-in defaults for non-secret fields.
 
     Always returns a :class:`GmailConfig`; call
     :meth:`GmailConfig.is_oauth_configured` to check whether the
-    client credentials are present.
+    client credentials are present. The ``source`` field tells callers
+    which layer supplied the credentials so the Settings UI can label
+    env-loaded configs accordingly.
     """
-    token_path_env = os.environ.get("GMAIL_TOKEN_PATH")
-    token_path = Path(token_path_env) if token_path_env else _default_token_path()
-    redirect_uri_env = os.environ.get("GOOGLE_REDIRECT_URI") or None
+    # Imported lazily so ``app.main`` and ``app.gmail_client`` can be
+    # imported in any order without a circular import.
+    from . import gmail_settings
+
+    stored = gmail_settings.get_stored_config()
+
+    token_path_env = _env("GMAIL_TOKEN_PATH")
+    redirect_uri_env = _env("GOOGLE_REDIRECT_URI") or None
+    client_id_env = _env("GOOGLE_CLIENT_ID") or None
+    client_secret_env = _env("GOOGLE_CLIENT_SECRET") or None
+
+    if stored is not None:
+        token_path = (
+            Path(stored.gmail_token_path)
+            if stored.gmail_token_path
+            else _default_token_path()
+        )
+        return GmailConfig(
+            client_id=stored.google_client_id,
+            client_secret=stored.google_client_secret,
+            redirect_uri=stored.google_redirect_uri,
+            redirect_uri_explicit=True,
+            token_path=token_path,
+            source="settings",
+        )
+
+    token_path = (
+        Path(token_path_env) if token_path_env else _default_token_path()
+    )
+    source = "environment" if (client_id_env and client_secret_env) else "none"
     return GmailConfig(
-        client_id=os.environ.get("GOOGLE_CLIENT_ID") or None,
-        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET") or None,
+        client_id=client_id_env,
+        client_secret=client_secret_env,
         redirect_uri=redirect_uri_env or _default_redirect_uri(),
-        redirect_uri_from_env=redirect_uri_env is not None,
+        redirect_uri_explicit=redirect_uri_env is not None,
         token_path=token_path,
+        source=source,
     )
 
 
