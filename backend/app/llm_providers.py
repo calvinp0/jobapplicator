@@ -134,11 +134,7 @@ def resolve_binary(provider: LLMProvider) -> str:
     return os.environ.get(provider.binary_env_var, provider.default_binary)
 
 
-def resolve_default_provider_id() -> str:
-    """Return the application-wide default provider id.
-
-    Task 066 wires this to a persisted setting; for now it stubs to the
-    project-wide default (``claude_code``) so the rest of the flow can be
-    implemented without coupling.
-    """
-    return DEFAULT_PROVIDER_ID
+# The application-wide default provider lives in the ``app_settings``
+# table; callers go through :func:`app.settings.get_default_llm_provider`
+# (task 066). ``DEFAULT_PROVIDER_ID`` above is the fallback used by that
+# helper on a fresh DB and by ``run_directory`` for metadata defaults.

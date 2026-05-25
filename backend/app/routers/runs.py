@@ -14,11 +14,7 @@ from ..claude_worker import (
     read_recent_log_lines,
 )
 from ..db import get_db
-from ..llm_providers import (
-    is_known_provider,
-    list_providers,
-    resolve_default_provider_id,
-)
+from ..llm_providers import is_known_provider, list_providers
 from ..models import ClaudeRun, EvidenceBank, Job, JobCapture, MasterResume
 from ..run_directory import (
     RunDirectoryError,
@@ -28,6 +24,7 @@ from ..run_directory import (
     default_runtime_prompts_root,
 )
 from ..run_import import RunImportError, import_run_outputs
+from ..settings import get_default_llm_provider
 from ..schemas import (
     ClaudeRunCreate,
     ClaudeRunLogRead,
@@ -61,10 +58,10 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
 
     # Validate the provider against the registry before touching the
     # filesystem so an unknown id never leaves a half-created run on disk.
-    # Omitting the field falls back to the application-wide default
-    # (task 066 will wire this to a persisted setting; for now it stubs
-    # to ``claude_code``).
-    provider_id = payload.llm_provider or resolve_default_provider_id()
+    # Omitting the field falls back to the persisted app-wide default
+    # (``app_settings.default_llm_provider``); on a fresh DB that is
+    # ``claude_code`` per ADR-009.
+    provider_id = payload.llm_provider or get_default_llm_provider()
     if not is_known_provider(provider_id):
         known = ", ".join(p.id for p in list_providers())
         raise HTTPException(

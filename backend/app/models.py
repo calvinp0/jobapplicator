@@ -255,6 +255,25 @@ class RevisionFeedback(Base):
     )
 
 
+class AppSetting(Base):
+    """Singleton-style key/value store for application-wide settings.
+
+    Used today only for ``default_llm_provider`` (ADR-009 / task 066). The
+    table is intentionally a simple key/value shape — not a general-purpose
+    feature-flag system — so additional settings, if ever needed, slot in
+    without a schema change. ``value`` is TEXT; callers serialize/parse
+    typed values themselves.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
+    )
+
+
 class EmailLink(Base):
     __tablename__ = "email_links"
 
