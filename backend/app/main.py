@@ -20,6 +20,7 @@ from .routers import (
     master_resumes,
     resume_versions,
     runs,
+    settings,
 )
 from .run_directory import (
     TAILORING_METHOD_WORD_HANDOFF,
@@ -268,6 +269,7 @@ def create_app() -> FastAPI:
     app.include_router(resume_versions.router)
     app.include_router(files.router)
     app.include_router(llm_providers.router)
+    app.include_router(settings.router)
 
     return app
 
