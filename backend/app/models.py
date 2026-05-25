@@ -225,6 +225,15 @@ class Application(Base):
     last_gmail_check_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Outcome of the most recent Gmail application-search (task 083). Stores
+    # only the small derived label ``"no_match"`` / ``"email_received"`` /
+    # ``"error"`` produced by the search endpoint; full candidate metadata
+    # is returned in the search response, not persisted here. ``NULL``
+    # means "no search has run yet" and falls back to the EmailLink-driven
+    # derivation in ``derive_email_status``.
+    email_search_state: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now, onupdate=_now

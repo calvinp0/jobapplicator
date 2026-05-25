@@ -94,3 +94,15 @@ def ensure_runtime_columns() -> None:
                         "ADD COLUMN last_gmail_check_at DATETIME"
                     )
                 )
+        # Backfill for task 083. Stores the most recent
+        # application-aware Gmail-search outcome so ``email_status``
+        # derivation can emit ``no_match`` / ``email_received`` without
+        # waiting for an EmailLink row to land.
+        if "email_search_state" not in existing_app_cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE applications "
+                        "ADD COLUMN email_search_state VARCHAR(32)"
+                    )
+                )
