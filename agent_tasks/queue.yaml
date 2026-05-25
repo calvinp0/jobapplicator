@@ -1595,7 +1595,7 @@ tasks:
     file: "agent_tasks/080-add-gmail-integration-design-and-email-status-model.md"
     branch: "agent/080-add-gmail-integration-design-and-email-status-model"
     worktree: "agent-080-add-gmail-integration-design-and-email-status-model"
-    status: "ready"
+    status: "done"
     depends_on:
       - "076-improve-applications-dashboard-status-tracking"
     verification:
