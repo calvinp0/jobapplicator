@@ -1528,7 +1528,7 @@ tasks:
     file: "agent_tasks/077-add-cross-platform-install-readme.md"
     branch: "agent/077-add-cross-platform-install-readme"
     worktree: "agent-077-add-cross-platform-install-readme"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "test -f README_INSTALL.md || test -f docs/install.md"
