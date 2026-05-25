@@ -1362,7 +1362,7 @@ tasks:
     file: "agent_tasks/069-adr-application-status-timeline.md"
     branch: "agent/069-adr-application-status-timeline"
     worktree: "agent-069-adr-application-status-timeline"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "test -f docs/adr/010-application-status-timeline.md"
@@ -1379,7 +1379,7 @@ tasks:
     file: "agent_tasks/070-contract-application-status-and-email-links.md"
     branch: "agent/070-contract-application-status-and-email-links"
     worktree: "agent-070-contract-application-status-and-email-links"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "069-adr-application-status-timeline"
     verification:
