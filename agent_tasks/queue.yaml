@@ -1678,4 +1678,27 @@ tasks:
       - "agent_tasks/083-search-gmail-for-application-emails.md"
       - "agent_tasks/queue.yaml"
 
-
+  - id: "084-classify-gmail-application-emails"
+    title: "Classify Gmail application emails with evidence"
+    file: "agent_tasks/084-classify-gmail-application-emails.md"
+    branch: "agent/084-classify-gmail-application-emails"
+    worktree: "agent-084-classify-gmail-application-emails"
+    status: "ready"
+    depends_on:
+      - "083-search-gmail-for-application-emails"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - ".env.example"
+      - ".gitignore"
+      - "requirements.txt"
+      - "backend/requirements.txt"
+      - "pyproject.toml"
+      - "agent_tasks/084-classify-gmail-application-emails.md"
+      - "agent_tasks/queue.yaml"
