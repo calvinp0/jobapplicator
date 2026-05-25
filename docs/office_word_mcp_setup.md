@@ -78,35 +78,199 @@ in our environment:
 - `@frastlin/Office-Word-MCP-Server` (via Smithery) failed with
   "404 server not found".
 
-The working pattern is a manual fork install:
+The working pattern is a manual fork install + explicit Claude Code
+MCP registration. Use a **dedicated Python environment** (a venv
+inside the cloned repo, or a `word-mcp` conda env) so Claude Code
+launches the MCP with a deterministic interpreter rather than a
+PATH-dependent `python` / `python3`.
 
-1. Clone the fork:
+The instructions below use these portable placeholders:
 
-   ```bash
-   git clone https://github.com/frastlin/Office-Word-MCP-Server.git
-   cd Office-Word-MCP-Server
-   ```
+```text
+<WORD_MCP_DIR>      cloned Office-Word-MCP-Server directory
+<WORD_MCP_PYTHON>   explicit Python interpreter for the MCP server
+<WORD_MCP_SERVER>   absolute path to word_mcp_server.py
+```
 
-2. Create a Python virtualenv and install requirements:
+Primary commands use shell variables (`$WORD_MCP_DIR`,
+`$WORD_MCP_PYTHON`, `$WORD_MCP_SERVER`) rather than hardcoded
+user-specific paths like `/home/<user>/...` or
+`C:\Users\<You>\...`.
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+### Option A — virtualenv
 
-3. Register `word_mcp_server.py` with Claude Code's MCP system. The
-   exact command varies by Claude Code build; the canonical form is:
+Linux / macOS:
 
-   ```bash
-   claude mcp add word-document-server -- /absolute/path/to/.venv/bin/python /absolute/path/to/Office-Word-MCP-Server/word_mcp_server.py
-   ```
+```bash
+WORD_MCP_DIR="$HOME/code/mcp/Office-Word-MCP-Server"
 
-   Inspect `claude mcp --help` for the flags your build accepts (some
-   builds use `--scope` or `--transport stdio`).
+mkdir -p "$(dirname "$WORD_MCP_DIR")"
+cd "$(dirname "$WORD_MCP_DIR")"
 
-4. Restart Claude Code (or the relevant session) so it picks up the new
-   MCP entry.
+git clone https://github.com/frastlin/Office-Word-MCP-Server.git
+cd "$WORD_MCP_DIR"
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install -U pip
+pip install -r requirements.txt
+
+WORD_MCP_PYTHON="$WORD_MCP_DIR/.venv/bin/python"
+WORD_MCP_SERVER="$WORD_MCP_DIR/word_mcp_server.py"
+
+echo "$WORD_MCP_PYTHON"
+echo "$WORD_MCP_SERVER"
+
+test -x "$WORD_MCP_PYTHON"
+test -f "$WORD_MCP_SERVER"
+```
+
+Windows PowerShell:
+
+```powershell
+$WORD_MCP_DIR = "$HOME\code\mcp\Office-Word-MCP-Server"
+
+New-Item -ItemType Directory -Force -Path (Split-Path $WORD_MCP_DIR)
+Set-Location (Split-Path $WORD_MCP_DIR)
+
+git clone https://github.com/frastlin/Office-Word-MCP-Server.git
+Set-Location $WORD_MCP_DIR
+
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+
+python -m pip install -U pip
+pip install -r requirements.txt
+
+$WORD_MCP_PYTHON = "$WORD_MCP_DIR\.venv\Scripts\python.exe"
+$WORD_MCP_SERVER = "$WORD_MCP_DIR\word_mcp_server.py"
+
+Write-Host $WORD_MCP_PYTHON
+Write-Host $WORD_MCP_SERVER
+
+Test-Path $WORD_MCP_PYTHON
+Test-Path $WORD_MCP_SERVER
+```
+
+If PowerShell blocks `Activate.ps1` with an execution-policy error,
+run once per user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+### Option B — conda
+
+Linux / macOS:
+
+```bash
+WORD_MCP_DIR="$HOME/code/mcp/Office-Word-MCP-Server"
+
+mkdir -p "$(dirname "$WORD_MCP_DIR")"
+cd "$(dirname "$WORD_MCP_DIR")"
+
+git clone https://github.com/frastlin/Office-Word-MCP-Server.git
+cd "$WORD_MCP_DIR"
+
+conda create -n word-mcp python=3.11 -y
+conda activate word-mcp
+
+python -m pip install -U pip
+pip install -r requirements.txt
+
+WORD_MCP_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+WORD_MCP_SERVER="$WORD_MCP_DIR/word_mcp_server.py"
+
+echo "$WORD_MCP_PYTHON"
+echo "$WORD_MCP_SERVER"
+
+test -x "$WORD_MCP_PYTHON"
+test -f "$WORD_MCP_SERVER"
+```
+
+Windows PowerShell:
+
+```powershell
+$WORD_MCP_DIR = "$HOME\code\mcp\Office-Word-MCP-Server"
+
+New-Item -ItemType Directory -Force -Path (Split-Path $WORD_MCP_DIR)
+Set-Location (Split-Path $WORD_MCP_DIR)
+
+git clone https://github.com/frastlin/Office-Word-MCP-Server.git
+Set-Location $WORD_MCP_DIR
+
+conda create -n word-mcp python=3.11 -y
+conda activate word-mcp
+
+python -m pip install -U pip
+pip install -r requirements.txt
+
+$WORD_MCP_PYTHON = python -c "import sys; print(sys.executable)"
+$WORD_MCP_SERVER = "$WORD_MCP_DIR\word_mcp_server.py"
+
+Write-Host $WORD_MCP_PYTHON
+Write-Host $WORD_MCP_SERVER
+
+Test-Path $WORD_MCP_PYTHON
+Test-Path $WORD_MCP_SERVER
+```
+
+### Why an explicit interpreter
+
+Do not rely on:
+
+```text
+python
+python3
+```
+
+from `PATH` to launch the MCP. PATH-dependent interpreters silently
+change between shells, between machines, and when other Python
+toolchains are installed — Claude Code will then launch the MCP
+server with the wrong dependency set and `/mcp` will list it as
+`failed` or `disconnected`.
+
+Use a dedicated environment such as `word-mcp` (Option B) or the
+in-repo `.venv` (Option A). Do not reuse the JobApplicator backend
+env unless you are intentionally maintaining both together.
+
+### Register with Claude Code
+
+Use the resolved `$WORD_MCP_PYTHON` and `$WORD_MCP_SERVER` (or the
+explicit absolute paths) in `claude mcp add`. The exact flag style
+varies by Claude Code build; try both forms below if the first is
+rejected.
+
+Linux / macOS:
+
+```bash
+claude mcp add word-document-server -- \
+  "$WORD_MCP_PYTHON" \
+  "$WORD_MCP_SERVER"
+```
+
+or, without the explicit `--` separator (older Claude Code builds):
+
+```bash
+claude mcp add word-document-server \
+  "$WORD_MCP_PYTHON" \
+  "$WORD_MCP_SERVER"
+```
+
+Windows PowerShell:
+
+```powershell
+claude mcp add word-document-server -- `
+  "$WORD_MCP_PYTHON" `
+  "$WORD_MCP_SERVER"
+```
+
+Run `claude mcp add --help` to confirm the supported flags for your
+build. Some versions require `--scope` or `--transport stdio`.
+
+Restart Claude Code (or the relevant session) so it picks up the new
+MCP entry.
 
 ## Verifying installation
 
