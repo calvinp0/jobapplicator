@@ -1456,3 +1456,27 @@ tasks:
       - "frontend/src/test/applicationDetailPage.test.tsx"
       - "agent_tasks/073-frontend-application-detail-email-evidence.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "074-add-claude-docx-skill-support"
+    title: "Add Claude DOCX skill support to auto tailoring"
+    file: "agent_tasks/074-add-claude-docx-skill-support.md"
+    branch: "agent/074-add-claude-docx-skill-support"
+    worktree: "agent-074-add-claude-docx-skill-support"
+    status: "ready"
+    depends_on:
+      - "057-fix-claude-noninteractive-tailoring-invocation"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_directory.py"
+      - "backend/tests/test_claude_worker.py"
+      - "backend/tests/test_run_directory.py"
+      - "runtime_prompts/resume_tailoring.md"
+      - "docs/contracts/claude_run_directory.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "docs/claude_docx_skill_setup.md"
+      - "agent_tasks/074-add-claude-docx-skill-support.md"
+      - "agent_tasks/queue.yaml"
