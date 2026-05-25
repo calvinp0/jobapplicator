@@ -106,6 +106,19 @@ export interface ResumeVersion {
   created_at: string;
 }
 
+export interface EmailLink {
+  id: string;
+  application_id: string;
+  gmail_message_id: string;
+  gmail_thread_id: string | null;
+  subject: string | null;
+  sender: string | null;
+  received_at: string | null;
+  classified_status: string | null;
+  confidence: number | null;
+  created_at: string;
+}
+
 export interface Application {
   id: string;
   job_id: string;
@@ -114,6 +127,9 @@ export interface Application {
   submitted_at: string | null;
   created_at: string;
   updated_at: string;
+  timeline_stage: string;
+  last_email_link: EmailLink | null;
+  email_link_count: number;
 }
 
 export interface ApplicationCreate {

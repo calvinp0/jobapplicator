@@ -2,31 +2,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, listApplications, listJobs } from "../api";
 import type { Application, Job } from "../api";
+import {
+  lastEmailSummary,
+  timelineStageLabel,
+  timelineStageVariant,
+} from "../lib/workflow";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
   return new Date(value).toLocaleString();
-}
-
-const APPLICATION_STATUS_LABELS: Record<string, string> = {
-  draft: "Draft",
-  generated: "In progress",
-  approved: "Approved",
-  submitted: "Sent",
-  response_received: "Response received",
-  rejected: "Rejected",
-  interview: "Interview",
-  offer: "Offer",
-  withdrawn: "Withdrawn",
-};
-
-function applicationStatusBadge(status: string): {
-  label: string;
-  variant: string;
-} {
-  const label = APPLICATION_STATUS_LABELS[status] ?? status;
-  const variant = status === "submitted" ? "submitted" : "default";
-  return { label, variant };
 }
 
 export function ApplicationsPage() {
@@ -87,21 +71,34 @@ export function ApplicationsPage() {
             const label = job
               ? `${job.title} — ${job.company}`
               : `Job ${app.job_id}`;
-            const badge = applicationStatusBadge(app.status);
+            const stageLabel = timelineStageLabel(app.timeline_stage);
+            const stageVariant = timelineStageVariant(app.timeline_stage);
+            const emailSummary = lastEmailSummary(app);
+            const emailSuffix =
+              emailSummary && app.email_link_count > 1
+                ? ` · ${app.email_link_count} emails`
+                : "";
             return (
               <li key={app.id} className="application-list-item">
-                <Link to={`/applications/${app.id}`}>
-                  <strong>{label}</strong>
-                </Link>
-                <span
-                  className={`status-badge status-badge-${badge.variant}`}
-                >
-                  {badge.label}
-                </span>
+                <div className="application-row-head">
+                  <Link to={`/applications/${app.id}`}>
+                    <strong>{label}</strong>
+                  </Link>
+                  <span
+                    className={`status-badge status-badge-${stageVariant}`}
+                  >
+                    {stageLabel}
+                  </span>
+                </div>
                 {app.submitted_at ? (
                   <span className="application-meta">
-                    {" "}
-                    · sent {formatTimestamp(app.submitted_at)}
+                    sent {formatTimestamp(app.submitted_at)}
+                  </span>
+                ) : null}
+                {emailSummary ? (
+                  <span className="application-meta application-email-summary">
+                    {emailSummary}
+                    {emailSuffix}
                   </span>
                 ) : null}
               </li>

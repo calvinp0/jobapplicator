@@ -1253,8 +1253,45 @@ button[type="submit"]:disabled,
   color: #1a3e8c;
 }
 
+.status-badge-rejected {
+  background: #f7d8dd;
+  color: #8a1f2c;
+}
+
+.status-badge-interview {
+  background: #e7defc;
+  color: #5630a8;
+}
+
+.status-badge-offer {
+  background: #d8efd8;
+  color: #1f6a2a;
+}
+
 .job-card .status-badge {
   margin-left: 0;
+}
+
+.application-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.application-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.application-row-head .status-badge {
+  margin-left: 0;
+}
+
+.application-email-summary {
+  color: var(--muted-fg);
+  font-size: 13px;
 }
 
 /* ----- Tailoring method controls (auto vs Claude for Word) ----- */
