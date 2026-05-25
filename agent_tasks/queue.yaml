@@ -1634,7 +1634,7 @@ tasks:
     file: "agent_tasks/082-add-gmail-readonly-oauth-connection.md"
     branch: "agent/082-add-gmail-readonly-oauth-connection"
     worktree: "agent-082-add-gmail-readonly-oauth-connection"
-    status: "ready"
+    status: "done"
     depends_on:
       - "080-add-gmail-integration-design-and-email-status-model"
     verification:
