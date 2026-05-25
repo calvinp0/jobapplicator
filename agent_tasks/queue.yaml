@@ -1629,3 +1629,28 @@ tasks:
       - "docs/contracts/**"
       - "agent_tasks/081-discover-master-resumes-from-candidate-context.md"
       - "agent_tasks/queue.yaml"
+  - id: "082-add-gmail-readonly-oauth-connection"
+    title: "Add Gmail read-only OAuth connection"
+    file: "agent_tasks/082-add-gmail-readonly-oauth-connection.md"
+    branch: "agent/082-add-gmail-readonly-oauth-connection"
+    worktree: "agent-082-add-gmail-readonly-oauth-connection"
+    status: "ready"
+    depends_on:
+      - "080-add-gmail-integration-design-and-email-status-model"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - ".env.example"
+      - ".gitignore"
+      - "requirements.txt"
+      - "backend/requirements.txt"
+      - "pyproject.toml"
+      - "agent_tasks/082-add-gmail-readonly-oauth-connection.md"
+      - "agent_tasks/queue.yaml"
+
