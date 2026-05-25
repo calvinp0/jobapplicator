@@ -6,6 +6,7 @@ import {
   createRun,
   createWordHandoff,
   getJob,
+  getLlmProviderSetting,
   getWordHandoffInstructions,
   getWordHandoffPrompt,
   importWordResult,
@@ -22,6 +23,7 @@ import type {
   ClaudeRun,
   EvidenceBank,
   Job,
+  LlmProvider,
   MasterResume,
   ResumeVersion,
   RevisionFeedback,
@@ -239,6 +241,9 @@ export function JobDetailPage() {
     useState<WordResultImportResponse | null>(null);
   const [wordImportError, setWordImportError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const [llmProviders, setLlmProviders] = useState<LlmProvider[] | null>(null);
+  const [defaultProviderId, setDefaultProviderId] = useState<string>("");
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
 
   useEffect(() => {
     if (!jobId) return;
@@ -273,6 +278,25 @@ export function JobDetailPage() {
         if (cancelled) return;
         setRevisionFeedbacks([]);
       });
+    // Wrapped in try/catch because some legacy JobDetailPage test mocks omit
+    // this export from `../api`; vitest throws at call-time in that case.
+    // A failure here just disables the selector — generation still works
+    // and falls back to the backend's persisted default.
+    try {
+      getLlmProviderSetting()
+        .then((data) => {
+          if (cancelled) return;
+          setLlmProviders(data.available);
+          setDefaultProviderId(data.default_provider);
+          setSelectedProviderId(data.default_provider);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setLlmProviders([]);
+        });
+    } catch {
+      setLlmProviders([]);
+    }
     return () => {
       cancelled = true;
     };
@@ -306,11 +330,18 @@ export function JobDetailPage() {
     setGenerateError(null);
     setImportError(null);
     try {
-      const run = await createRun({
+      const payload: Parameters<typeof createRun>[0] = {
         job_id: jobId,
         master_resume_id: selectedResumeId,
         evidence_bank_id: selectedBankId || null,
-      });
+      };
+      if (
+        selectedProviderId &&
+        selectedProviderId !== defaultProviderId
+      ) {
+        payload.llm_provider = selectedProviderId;
+      }
+      const run = await createRun(payload);
       // Insert the new run immediately so the workspace flips into its
       // "tailoring in progress" state without waiting on the invoke
       // round-trip. The poller takes over from here.
@@ -611,6 +642,11 @@ export function JobDetailPage() {
     ? formatElapsedSince(runStartTimestamp(latestRun), new Date(nowTick))
     : null;
 
+  const latestRunProviderName = latestRun?.llm_provider && llmProviders
+    ? (llmProviders.find((p) => p.id === latestRun.llm_provider)?.display_name
+        ?? latestRun.llm_provider)
+    : null;
+
   return (
     <section className="job-detail">
       <h2>
@@ -740,6 +776,12 @@ export function JobDetailPage() {
                         : `${elapsedLabel} elapsed`}
                     </>
                   ) : null}
+                  {latestRunProviderName ? (
+                    <>
+                      {" "}
+                      · Using {latestRunProviderName}
+                    </>
+                  ) : null}
                 </p>
                 {importFailed && importError ? (
                   <button
@@ -776,6 +818,28 @@ export function JobDetailPage() {
                     ? "Generate another draft automatically"
                     : "Generate Automatically"}
               </button>
+              {llmProviders && llmProviders.length > 0 ? (
+                <label
+                  className="tailoring-provider-select"
+                  aria-label="LLM provider for this run"
+                >
+                  <span className="tailoring-provider-select-label">LLM</span>
+                  <select
+                    aria-label="LLM provider"
+                    value={selectedProviderId}
+                    onChange={(e) =>
+                      setSelectedProviderId(e.target.value)
+                    }
+                    disabled={isGenerating}
+                  >
+                    {llmProviders.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <button
                 type="button"
                 className="tailoring-method-secondary"

@@ -75,6 +75,7 @@ export interface ClaudeRun {
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
+  llm_provider?: string | null;
 }
 
 export interface RunLog {

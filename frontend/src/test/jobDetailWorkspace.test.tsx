@@ -22,6 +22,7 @@ const {
   createApplicationMock,
   getRunMock,
   importRunMock,
+  getLlmProviderSettingMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -47,6 +48,7 @@ const {
     createApplicationMock: vi.fn(),
     getRunMock: vi.fn(),
     importRunMock: vi.fn(),
+    getLlmProviderSettingMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -64,6 +66,7 @@ vi.mock("../api", () => ({
   createApplication: createApplicationMock,
   getRun: getRunMock,
   importRun: importRunMock,
+  getLlmProviderSetting: getLlmProviderSettingMock,
   getRunLog: vi.fn(() =>
     Promise.resolve({ run_id: "stub", lines: [], truncated: false }),
   ),
@@ -119,6 +122,17 @@ describe("JobDetailPage five-step workspace", () => {
     listRunsMock.mockResolvedValue([]);
     listApplicationsMock.mockResolvedValue([]);
     listRevisionFeedbacksMock.mockResolvedValue([]);
+    getLlmProviderSettingMock.mockResolvedValue({
+      default_provider: "claude_code",
+      available: [
+        {
+          id: "claude_code",
+          display_name: "Claude Code",
+          default_binary: "claude",
+          binary_env_var: "JOBAPPLY_CLAUDE_BINARY",
+        },
+      ],
+    });
     // Defensive defaults: the auto-import polling hook may fire `importRun`
     // and `getRun` in tests where a run lands in `completed` state. We
     // stall both with never-resolving promises so individual tests can

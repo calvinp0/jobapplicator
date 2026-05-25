@@ -1272,6 +1272,37 @@ button[type="submit"]:disabled,
   border: 1px solid var(--border-strong);
 }
 
+.tailoring-provider-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.tailoring-provider-select-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.tailoring-provider-select select {
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+  color: var(--content-fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.tailoring-provider-select select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 115, 255, 0.18);
+}
+
 .word-handoff-panel {
   margin-top: var(--space-3);
   padding: var(--space-3) var(--space-4);
