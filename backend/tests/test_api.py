@@ -223,6 +223,58 @@ def test_post_word_handoff_returns_400_when_input_is_unusable(
     assert isinstance(detail, str) and detail
 
 
+def test_post_import_word_result_returns_waiting_when_file_missing(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run_with_jd(client, tmp_path, monkeypatch)
+
+    resp = client.post(f"/runs/{run['id']}/import-word-result")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["run_id"] == run["id"]
+    assert body["status"] == "waiting_for_word_result"
+    assert body["expected_output"] == (
+        f"runs/{run['id']}/output/word_tailored_resume.docx"
+    )
+    # Operator-facing message must point at the expected save location.
+    assert isinstance(body["message"], str) and body["message"]
+
+
+def test_post_import_word_result_imports_and_marks_completed(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run_with_jd(client, tmp_path, monkeypatch)
+    run_dir = Path(run["run_dir"])
+    output_dir = run_dir / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    word_result_bytes = b"PK\x03\x04 word result for api test"
+    (output_dir / "word_tailored_resume.docx").write_bytes(word_result_bytes)
+
+    resp = client.post(f"/runs/{run['id']}/import-word-result")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["run_id"] == run["id"]
+    assert body["status"] == "completed"
+    assert body["word_result"] == (
+        f"runs/{run['id']}/output/word_tailored_resume.docx"
+    )
+    assert body["final_resume"] == (
+        f"runs/{run['id']}/output/final_resume.docx"
+    )
+
+    final = output_dir / "final_resume.docx"
+    assert final.is_file()
+    assert final.stat().st_size > 0
+    assert final.read_bytes() == word_result_bytes
+
+
+def test_import_word_result_endpoint_404_for_unknown_run(client):
+    resp = client.post("/runs/does-not-exist/import-word-result")
+    assert resp.status_code == 404
+
+
 def test_existing_auto_invoke_endpoint_still_works(
     client, tmp_path, monkeypatch
 ):
