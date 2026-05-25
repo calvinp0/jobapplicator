@@ -5,7 +5,11 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import APPLICATION_STATUSES, REVISION_FEEDBACK_STATUSES
+from .models import (
+    APPLICATION_STATUSES,
+    EMAIL_CLASSIFIED_STATUSES,
+    REVISION_FEEDBACK_STATUSES,
+)
 
 
 class _ORMModel(BaseModel):
@@ -132,6 +136,29 @@ class ApplicationCreate(BaseModel):
     status: str = Field(default="draft")
 
 
+class EmailLinkRead(_ORMModel):
+    id: str
+    application_id: str
+    gmail_message_id: str
+    gmail_thread_id: Optional[str]
+    subject: Optional[str]
+    sender: Optional[str]
+    received_at: Optional[datetime]
+    classified_status: Optional[str]
+    confidence: Optional[float]
+    created_at: datetime
+
+
+class EmailLinkCreate(BaseModel):
+    gmail_message_id: str = Field(min_length=1)
+    gmail_thread_id: Optional[str] = None
+    subject: Optional[str] = None
+    sender: Optional[str] = None
+    received_at: Optional[datetime] = None
+    classified_status: str
+    confidence: Optional[float] = None
+
+
 class ApplicationRead(_ORMModel):
     id: str
     job_id: str
@@ -140,9 +167,13 @@ class ApplicationRead(_ORMModel):
     submitted_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
+    timeline_stage: str
+    last_email_link: Optional[EmailLinkRead] = None
+    email_link_count: int = 0
 
 
 APPLICATION_STATUS_SET = set(APPLICATION_STATUSES)
+EMAIL_CLASSIFIED_STATUS_SET = set(EMAIL_CLASSIFIED_STATUSES)
 
 
 # ---- ApplicationEvent ----

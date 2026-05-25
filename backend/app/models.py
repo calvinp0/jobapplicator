@@ -33,6 +33,13 @@ APPLICATION_STATUSES = (
     "offer",
     "withdrawn",
 )
+EMAIL_CLASSIFIED_STATUSES = (
+    "confirmation",
+    "rejection",
+    "next_step",
+    "offer",
+    "other",
+)
 
 
 class JobCapture(Base):
