@@ -91,6 +91,12 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     timeline_stage: "draft",
     last_email_link: null,
     email_link_count: 0,
+    submission_status: "not_submitted",
+    email_status: "not_watching",
+    next_action: "Generate draft",
+    latest_run_id: null,
+    latest_run_status: null,
+    last_email_at: null,
     ...overrides,
   };
 }

@@ -140,6 +140,12 @@ export interface Application {
   timeline_stage: string;
   last_email_link: EmailLink | null;
   email_link_count: number;
+  submission_status: string;
+  email_status: string;
+  next_action: string;
+  latest_run_id: string | null;
+  latest_run_status: string | null;
+  last_email_at: string | null;
 }
 
 export interface ApplicationCreate {

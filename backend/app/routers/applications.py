@@ -7,7 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_db
-from ..models import Application, ApplicationEvent, EmailLink, Job, ResumeVersion
+from ..models import (
+    Application,
+    ApplicationEvent,
+    ClaudeRun,
+    EmailLink,
+    Job,
+    ResumeVersion,
+)
 from ..schemas import (
     APPLICATION_STATUS_SET,
     EMAIL_CLASSIFIED_STATUS_SET,
@@ -88,8 +95,109 @@ def _sorted_email_links(links: Iterable[EmailLink]) -> list[EmailLink]:
     return sorted(links, key=_email_link_sort_key)
 
 
-def _build_application_read(application: Application) -> ApplicationRead:
+def _derive_submission_status(application: Application) -> str:
+    if application.submitted_at is not None or application.status not in {
+        "draft",
+        "generated",
+        "approved",
+    }:
+        # Once an application is in a post-submission state (or carries a
+        # submitted_at timestamp), treat it as submitted from the dashboard's
+        # perspective. Everything still in draft/generated/approved is
+        # "not_submitted".
+        return "submitted"
+    return "not_submitted"
+
+
+# Mapping from EmailLink.classified_status to the dashboard email state.
+_EMAIL_CLASSIFICATION_TO_STATE = {
+    "confirmation": "classified_neutral",
+    "rejection": "classified_rejection",
+    "next_step": "classified_positive",
+    "offer": "classified_positive",
+    "other": "classified_neutral",
+}
+
+
+def _derive_email_status(
+    application: Application, sorted_links: list[EmailLink]
+) -> str:
+    if sorted_links:
+        latest = sorted_links[0]
+        classification = latest.classified_status
+        if classification is None:
+            return "needs_review"
+        return _EMAIL_CLASSIFICATION_TO_STATE.get(classification, "email_received")
+    # No emails attached yet. If we know the user submitted, we're "watching"
+    # for a response; otherwise we are not watching yet.
+    if application.submitted_at is not None or application.status == "submitted":
+        return "watching"
+    return "not_watching"
+
+
+def _derive_next_action(
+    application: Application, sorted_links: list[EmailLink]
+) -> str:
+    status = application.status
+    if status == "withdrawn":
+        return "Withdrawn"
+    if status == "rejected":
+        return "Rejected"
+    if status == "offer":
+        return "Respond to offer"
+    if status == "interview":
+        return "Interview response needed"
+    if status == "response_received":
+        return "Review response"
+    if status == "submitted":
+        if sorted_links:
+            latest = sorted_links[0]
+            classification = latest.classified_status
+            if classification in {"rejection", "next_step", "offer"}:
+                return "Review detected email"
+            if classification == "confirmation":
+                return "Waiting for response"
+            return "Review detected email"
+        return "Waiting for email"
+    if status == "approved":
+        return "Ready to submit"
+    if status == "generated":
+        return "Review draft"
+    # draft and any unexpected status fall through here.
+    return "Generate draft"
+
+
+def _latest_run_for_application(
+    application: Application, db: Session
+) -> Optional[ClaudeRun]:
+    # Prefer the run that produced the linked resume version; otherwise fall
+    # back to the most recent run for the job. The fallback keeps the
+    # "latest run" surface meaningful for applications created before a
+    # resume version was approved/linked.
+    if application.resume_version_id is not None:
+        version = db.get(ResumeVersion, application.resume_version_id)
+        if version is not None and version.claude_run_id is not None:
+            run = db.get(ClaudeRun, version.claude_run_id)
+            if run is not None:
+                return run
+    return (
+        db.query(ClaudeRun)
+        .filter(ClaudeRun.job_id == application.job_id)
+        .order_by(ClaudeRun.created_at.desc())
+        .first()
+    )
+
+
+def _build_application_read(
+    application: Application, db: Optional[Session] = None
+) -> ApplicationRead:
     sorted_links = _sorted_email_links(application.email_links)
+    last_email_at = None
+    if sorted_links:
+        last_email_at = sorted_links[0].received_at or sorted_links[0].created_at
+    latest_run = (
+        _latest_run_for_application(application, db) if db is not None else None
+    )
     return ApplicationRead(
         id=application.id,
         job_id=application.job_id,
@@ -103,7 +211,47 @@ def _build_application_read(application: Application) -> ApplicationRead:
             EmailLinkRead.model_validate(sorted_links[0]) if sorted_links else None
         ),
         email_link_count=len(application.email_links),
+        submission_status=_derive_submission_status(application),
+        email_status=_derive_email_status(application, sorted_links),
+        next_action=_derive_next_action(application, sorted_links),
+        latest_run_id=latest_run.id if latest_run is not None else None,
+        latest_run_status=latest_run.status if latest_run is not None else None,
+        last_email_at=last_email_at,
     )
+
+
+# Sort priority for the Applications dashboard: rows still needing user
+# action come first, then in-flight states, then closed states. Ties break on
+# updated_at desc (handled at the query layer).
+_DASHBOARD_PRIORITY = {
+    "response_received": 0,
+    "approved": 1,  # ready to submit
+    "generated": 2,
+    "draft": 3,
+    "submitted": 4,
+    "interview": 5,
+    "offer": 6,
+    "rejected": 7,
+    "withdrawn": 8,
+}
+
+
+def _dashboard_sort_key(reads: list[ApplicationRead]) -> list[ApplicationRead]:
+    def key(app: ApplicationRead) -> tuple:
+        # Boost rows with a detected (non-confirmation) email up to the top
+        # so the user sees them before regular submitted/draft items.
+        link = app.last_email_link
+        has_actionable_email = (
+            link is not None
+            and link.classified_status in {"rejection", "next_step", "offer"}
+            and app.status not in {"rejected", "interview", "offer", "withdrawn"}
+        )
+        attention = 0 if has_actionable_email else 1
+        priority = _DASHBOARD_PRIORITY.get(app.status, 99)
+        updated_ts = _ensure_aware(app.updated_at)
+        return (attention, priority, -updated_ts.timestamp())
+
+    return sorted(reads, key=key)
 
 
 # ---- Application endpoints ----------------------------------------------
@@ -128,7 +276,7 @@ def create_application(
     db.add(application)
     db.commit()
     db.refresh(application)
-    return _build_application_read(application)
+    return _build_application_read(application, db)
 
 
 @router.get("", response_model=list[ApplicationRead])
@@ -136,10 +284,11 @@ def list_applications(db: Session = Depends(get_db)) -> list[ApplicationRead]:
     apps = (
         db.query(Application)
         .options(selectinload(Application.email_links))
-        .order_by(Application.created_at.desc())
+        .order_by(Application.updated_at.desc())
         .all()
     )
-    return [_build_application_read(app_obj) for app_obj in apps]
+    reads = [_build_application_read(app_obj, db) for app_obj in apps]
+    return _dashboard_sort_key(reads)
 
 
 @router.get("/{application_id}", response_model=ApplicationRead)
@@ -149,7 +298,7 @@ def get_application(
     app_obj = db.get(Application, application_id)
     if app_obj is None:
         raise HTTPException(status_code=404, detail="application not found")
-    return _build_application_read(app_obj)
+    return _build_application_read(app_obj, db)
 
 
 @router.post("/{application_id}/submit", response_model=ApplicationRead)
@@ -163,7 +312,7 @@ def submit_application(
     # Idempotent: if already submitted, return the existing row without
     # creating a duplicate event or moving submitted_at.
     if app_obj.status == "submitted":
-        return _build_application_read(app_obj)
+        return _build_application_read(app_obj, db)
 
     now = _utcnow()
     app_obj.status = "submitted"
@@ -178,7 +327,51 @@ def submit_application(
     )
     db.commit()
     db.refresh(app_obj)
-    return _build_application_read(app_obj)
+    return _build_application_read(app_obj, db)
+
+
+def _mark_status(
+    db: Session,
+    application_id: str,
+    new_status: str,
+    event_type: str,
+) -> ApplicationRead:
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    # Idempotent: do not append a duplicate event when the application is
+    # already in the requested status.
+    if app_obj.status == new_status:
+        return _build_application_read(app_obj, db)
+
+    now = _utcnow()
+    app_obj.status = new_status
+    db.add(
+        ApplicationEvent(
+            application_id=app_obj.id,
+            event_type=event_type,
+            event_time=now,
+            source="user",
+        )
+    )
+    db.commit()
+    db.refresh(app_obj)
+    return _build_application_read(app_obj, db)
+
+
+@router.post("/{application_id}/mark-rejected", response_model=ApplicationRead)
+def mark_rejected(
+    application_id: str, db: Session = Depends(get_db)
+) -> ApplicationRead:
+    return _mark_status(db, application_id, "rejected", "marked_rejected")
+
+
+@router.post("/{application_id}/mark-interview", response_model=ApplicationRead)
+def mark_interview(
+    application_id: str, db: Session = Depends(get_db)
+) -> ApplicationRead:
+    return _mark_status(db, application_id, "interview", "marked_interview")
 
 
 @router.post(

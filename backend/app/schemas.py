@@ -170,6 +170,15 @@ class ApplicationRead(_ORMModel):
     timeline_stage: str
     last_email_link: Optional[EmailLinkRead] = None
     email_link_count: int = 0
+    # Richer dashboard fields. All are derived server-side from the
+    # existing status/submitted_at/email_links/resume_version data so no
+    # schema migration is required.
+    submission_status: str = "not_submitted"
+    email_status: str = "not_watching"
+    next_action: str = ""
+    latest_run_id: Optional[str] = None
+    latest_run_status: Optional[str] = None
+    last_email_at: Optional[datetime] = None
 
 
 APPLICATION_STATUS_SET = set(APPLICATION_STATUSES)
