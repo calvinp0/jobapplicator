@@ -6,6 +6,7 @@ import type {
   ApplicationEventCreate,
   ClaudeRun,
   EmailLink,
+  EmailLinkCreatePayload,
   EvidenceBank,
   EvidenceBankCreate,
   Job,
@@ -32,6 +33,7 @@ export type {
   ApplicationEventCreate,
   ClaudeRun,
   EmailLink,
+  EmailLinkCreatePayload,
   EvidenceBank,
   EvidenceBankCreate,
   Job,
@@ -240,6 +242,22 @@ export function createApplicationEvent(
   payload: ApplicationEventCreate,
 ): Promise<ApplicationEvent> {
   return apiRequest(`/applications/${applicationId}/events`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function listApplicationEmailLinks(
+  applicationId: string,
+): Promise<EmailLink[]> {
+  return apiRequest(`/applications/${applicationId}/email-links`);
+}
+
+export function createApplicationEmailLink(
+  applicationId: string,
+  payload: EmailLinkCreatePayload,
+): Promise<EmailLink> {
+  return apiRequest(`/applications/${applicationId}/email-links`, {
     method: "POST",
     body: payload,
   });

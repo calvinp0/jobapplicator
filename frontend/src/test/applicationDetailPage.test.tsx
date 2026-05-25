@@ -10,6 +10,8 @@ const {
   listApplicationEventsMock,
   submitApplicationMock,
   createApplicationEventMock,
+  listApplicationEmailLinksMock,
+  createApplicationEmailLinkMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -29,6 +31,8 @@ const {
     listApplicationEventsMock: vi.fn(),
     submitApplicationMock: vi.fn(),
     createApplicationEventMock: vi.fn(),
+    listApplicationEmailLinksMock: vi.fn(),
+    createApplicationEmailLinkMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -40,6 +44,8 @@ vi.mock("../api", () => ({
   listApplicationEvents: listApplicationEventsMock,
   submitApplication: submitApplicationMock,
   createApplicationEvent: createApplicationEventMock,
+  listApplicationEmailLinks: listApplicationEmailLinksMock,
+  createApplicationEmailLink: createApplicationEmailLinkMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -99,6 +105,9 @@ const applicationWithApprovedVersion = {
   submitted_at: null,
   created_at: "2026-05-22T13:30:00Z",
   updated_at: "2026-05-22T13:30:00Z",
+  timeline_stage: "draft",
+  last_email_link: null,
+  email_link_count: 0,
 };
 
 const applicationWithoutVersion = {
@@ -110,11 +119,32 @@ const submittedApplication = {
   ...applicationWithApprovedVersion,
   status: "submitted",
   submitted_at: "2026-05-22T14:00:00Z",
+  timeline_stage: "sent",
+};
+
+const applicationConfirmationReceived = {
+  ...submittedApplication,
+  timeline_stage: "confirmation_received",
+  email_link_count: 1,
+};
+
+const confirmationEmail = {
+  id: "email-1",
+  application_id: "app-1",
+  gmail_message_id: "manual:abc-123",
+  gmail_thread_id: null,
+  subject: "We've received your application",
+  sender: "noreply@acme.com",
+  received_at: "2026-05-22T14:30:00Z",
+  classified_status: "confirmation",
+  confidence: null,
+  created_at: "2026-05-22T14:30:00Z",
 };
 
 describe("ApplicationDetailPage", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
+    listApplicationEmailLinksMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -365,5 +395,186 @@ describe("ApplicationDetailPage", () => {
       expect(screen.getByText("response_received")).toBeInTheDocument(),
     );
     expect(screen.getByText("Recruiter replied")).toBeInTheDocument();
+  });
+
+  it("renders the timeline-stage badge for the 'sent' stage", async () => {
+    getApplicationMock.mockResolvedValue(submittedApplication);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([]);
+
+    renderApp("app-1");
+
+    await waitFor(() => {
+      const badge = screen
+        .getAllByText("Sent")
+        .find((el) => el.classList.contains("status-badge"));
+      expect(badge).toBeDefined();
+      expect(badge).toHaveClass("status-badge-submitted");
+    });
+  });
+
+  it("renders the timeline-stage badge for the 'confirmation_received' stage", async () => {
+    getApplicationMock.mockResolvedValue(applicationConfirmationReceived);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([confirmationEmail]);
+
+    renderApp("app-1");
+
+    await waitFor(() => {
+      const badge = screen
+        .getAllByText("Confirmation received")
+        .find((el) => el.classList.contains("status-badge"));
+      expect(badge).toBeDefined();
+      expect(badge).toHaveClass("status-badge-completed");
+    });
+  });
+
+  it("renders the attached email-link list", async () => {
+    getApplicationMock.mockResolvedValue(applicationConfirmationReceived);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([
+      confirmationEmail,
+      {
+        ...confirmationEmail,
+        id: "email-2",
+        gmail_message_id: "manual:def-456",
+        subject: "Interview invitation",
+        sender: "recruiter@acme.com",
+        classified_status: "next_step",
+        received_at: "2026-05-23T10:00:00Z",
+      },
+    ]);
+
+    renderApp("app-1");
+
+    await screen.findByRole("heading", { level: 3, name: /email evidence/i });
+
+    expect(
+      screen.getByText("We've received your application"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("noreply@acme.com")).toBeInTheDocument();
+    expect(screen.getByText("Interview invitation")).toBeInTheDocument();
+    expect(screen.getByText("recruiter@acme.com")).toBeInTheDocument();
+
+    const confirmationBadge = screen
+      .getAllByText("Confirmation")
+      .find((el) => el.classList.contains("status-badge"));
+    expect(confirmationBadge).toBeDefined();
+    const nextStepBadge = screen
+      .getAllByText("Next step")
+      .find((el) => el.classList.contains("status-badge"));
+    expect(nextStepBadge).toBeDefined();
+  });
+
+  it("renders the empty-state copy when no email links are attached", async () => {
+    getApplicationMock.mockResolvedValue(submittedApplication);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([]);
+
+    renderApp("app-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /no emails recorded yet\. the gmail integration is not enabled — you can record an email by hand\./i,
+        ),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("records a manual email, refreshes the application, and refetches the email list", async () => {
+    const user = userEvent.setup();
+    getApplicationMock.mockResolvedValueOnce(submittedApplication);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValueOnce([]);
+    createApplicationEmailLinkMock.mockResolvedValue(confirmationEmail);
+    getApplicationMock.mockResolvedValueOnce(applicationConfirmationReceived);
+    listApplicationEmailLinksMock.mockResolvedValueOnce([confirmationEmail]);
+
+    renderApp("app-1");
+
+    await screen.findByRole("heading", { level: 3, name: /record email/i });
+
+    await user.clear(screen.getByLabelText(/gmail message id/i));
+    await user.type(
+      screen.getByLabelText(/gmail message id/i),
+      "manual:abc-123",
+    );
+    await user.type(
+      screen.getByLabelText(/sender/i),
+      "noreply@acme.com",
+    );
+    await user.type(
+      screen.getByLabelText(/subject/i),
+      "We've received your application",
+    );
+
+    await user.click(screen.getByRole("button", { name: /record email/i }));
+
+    await waitFor(() =>
+      expect(createApplicationEmailLinkMock).toHaveBeenCalledWith(
+        "app-1",
+        expect.objectContaining({
+          gmail_message_id: "manual:abc-123",
+          classified_status: "confirmation",
+          sender: "noreply@acme.com",
+          subject: "We've received your application",
+        }),
+      ),
+    );
+
+    // After create: parent application is re-fetched and the timeline-stage
+    // badge reflects the new stage.
+    await waitFor(() => {
+      const badge = screen
+        .getAllByText("Confirmation received")
+        .find((el) => el.classList.contains("status-badge"));
+      expect(badge).toBeDefined();
+    });
+
+    // The refreshed email-link list is rendered.
+    await waitFor(() =>
+      expect(
+        screen.getByText("We've received your application"),
+      ).toBeInTheDocument(),
+    );
+
+    // Both follow-up fetches fired.
+    expect(getApplicationMock).toHaveBeenCalledTimes(2);
+    expect(listApplicationEmailLinksMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces an inline error when the create-email call fails", async () => {
+    const user = userEvent.setup();
+    getApplicationMock.mockResolvedValue(submittedApplication);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([]);
+    createApplicationEmailLinkMock.mockRejectedValue(
+      new ApiErrorMock(
+        "Request to /applications/app-1/email-links failed with status 422",
+        422,
+        null,
+      ),
+    );
+
+    renderApp("app-1");
+
+    await screen.findByRole("heading", { level: 3, name: /record email/i });
+
+    await user.click(screen.getByRole("button", { name: /record email/i }));
+
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      const message = alerts.find((el) =>
+        /failed with status 422/i.test(el.textContent ?? ""),
+      );
+      expect(message).toBeDefined();
+    });
   });
 });

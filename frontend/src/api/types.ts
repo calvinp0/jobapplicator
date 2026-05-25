@@ -119,6 +119,16 @@ export interface EmailLink {
   created_at: string;
 }
 
+export interface EmailLinkCreatePayload {
+  gmail_message_id: string;
+  classified_status: string;
+  gmail_thread_id?: string | null;
+  subject?: string | null;
+  sender?: string | null;
+  received_at?: string | null;
+  confidence?: number | null;
+}
+
 export interface Application {
   id: string;
   job_id: string;

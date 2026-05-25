@@ -2,20 +2,28 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
+  createApplicationEmailLink,
   createApplicationEvent,
   getApplication,
   getJob,
   getResumeVersion,
+  listApplicationEmailLinks,
   listApplicationEvents,
   submitApplication,
 } from "../api";
 import type {
   Application,
   ApplicationEvent,
+  EmailLink,
   Job,
   ResumeVersion,
 } from "../api";
-import { draftLabel, draftStatusLabel } from "../lib/workflow";
+import {
+  draftLabel,
+  draftStatusLabel,
+  timelineStageLabel,
+  timelineStageVariant,
+} from "../lib/workflow";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
@@ -38,6 +46,39 @@ function applicationStatusLabel(status: string): string {
   return APPLICATION_STATUS_LABELS[status] ?? status;
 }
 
+const EMAIL_CLASSIFICATION_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "confirmation", label: "Confirmation" },
+  { value: "rejection", label: "Rejection" },
+  { value: "next_step", label: "Next step" },
+  { value: "offer", label: "Offer" },
+  { value: "other", label: "Other" },
+];
+
+const EMAIL_CLASSIFICATION_LABELS: Record<string, string> =
+  EMAIL_CLASSIFICATION_OPTIONS.reduce<Record<string, string>>(
+    (acc, { value, label }) => {
+      acc[value] = label;
+      return acc;
+    },
+    {},
+  );
+
+function classificationLabel(value: string | null): string {
+  if (!value) return "Unclassified";
+  return EMAIL_CLASSIFICATION_LABELS[value] ?? value;
+}
+
+function newManualMessageId(): string {
+  return `manual:${crypto.randomUUID()}`;
+}
+
+function datetimeLocalToIso(value: string): string | null {
+  if (!value.trim()) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
 function gatingReason(
   application: Application,
   version: ResumeVersion | null,
@@ -54,9 +95,11 @@ export function ApplicationDetailPage() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const [application, setApplication] = useState<Application | null>(null);
   const [events, setEvents] = useState<ApplicationEvent[] | null>(null);
+  const [emailLinks, setEmailLinks] = useState<EmailLink[] | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [version, setVersion] = useState<ResumeVersion | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [emailListError, setEmailListError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -65,6 +108,18 @@ export function ApplicationDetailPage() {
   const [isAddingEvent, setIsAddingEvent] = useState(false);
   const [eventError, setEventError] = useState<string | null>(null);
 
+  const [emailMessageId, setEmailMessageId] = useState<string>(() =>
+    newManualMessageId(),
+  );
+  const [emailClassifiedStatus, setEmailClassifiedStatus] =
+    useState<string>("confirmation");
+  const [emailSender, setEmailSender] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailReceivedAt, setEmailReceivedAt] = useState("");
+  const [emailConfidence, setEmailConfidence] = useState("");
+  const [isAddingEmail, setIsAddingEmail] = useState(false);
+  const [emailCreateError, setEmailCreateError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!applicationId) return;
     let cancelled = false;
@@ -72,17 +127,28 @@ export function ApplicationDetailPage() {
       .then(async (app) => {
         if (cancelled) return;
         setApplication(app);
-        const [eventList, jobRow, versionRow] = await Promise.all([
+        const [eventList, jobRow, versionRow, links] = await Promise.all([
           listApplicationEvents(applicationId),
           getJob(app.job_id),
           app.resume_version_id
             ? getResumeVersion(app.resume_version_id)
             : Promise.resolve(null),
+          listApplicationEmailLinks(applicationId).catch((err: unknown) => {
+            if (!cancelled) {
+              const message =
+                err instanceof ApiError
+                  ? err.message
+                  : "Failed to load email evidence";
+              setEmailListError(message);
+            }
+            return [] as EmailLink[];
+          }),
         ]);
         if (cancelled) return;
         setEvents(eventList);
         setJob(jobRow);
         setVersion(versionRow);
+        setEmailLinks(links);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -115,6 +181,56 @@ export function ApplicationDetailPage() {
       setActionError(message);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleAddEmail(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!applicationId) return;
+    const trimmedId = emailMessageId.trim();
+    if (!trimmedId) {
+      setEmailCreateError("Gmail message id is required.");
+      return;
+    }
+    let confidenceValue: number | null = null;
+    if (emailConfidence.trim()) {
+      const parsed = Number(emailConfidence);
+      if (Number.isNaN(parsed)) {
+        setEmailCreateError("Confidence must be a number.");
+        return;
+      }
+      confidenceValue = parsed;
+    }
+    setIsAddingEmail(true);
+    setEmailCreateError(null);
+    try {
+      await createApplicationEmailLink(applicationId, {
+        gmail_message_id: trimmedId,
+        classified_status: emailClassifiedStatus,
+        sender: emailSender.trim() || null,
+        subject: emailSubject.trim() || null,
+        received_at: datetimeLocalToIso(emailReceivedAt),
+        confidence: confidenceValue,
+      });
+      const [updatedApp, links] = await Promise.all([
+        getApplication(applicationId),
+        listApplicationEmailLinks(applicationId),
+      ]);
+      setApplication(updatedApp);
+      setEmailLinks(links);
+      setEmailListError(null);
+      setEmailMessageId(newManualMessageId());
+      setEmailClassifiedStatus("confirmation");
+      setEmailSender("");
+      setEmailSubject("");
+      setEmailReceivedAt("");
+      setEmailConfidence("");
+    } catch (err: unknown) {
+      const message =
+        err instanceof ApiError ? err.message : "Failed to record email";
+      setEmailCreateError(message);
+    } finally {
+      setIsAddingEmail(false);
     }
   }
 
@@ -155,7 +271,7 @@ export function ApplicationDetailPage() {
     );
   }
 
-  if (!application || events === null) {
+  if (!application || events === null || emailLinks === null) {
     return (
       <section className="application-detail">
         <h2>Application</h2>
@@ -170,10 +286,9 @@ export function ApplicationDetailPage() {
   const heading = job
     ? `Application — ${job.title} — ${job.company}`
     : "Application";
-  const submitted = application.status === "submitted";
   const badge = {
-    label: applicationStatusLabel(application.status),
-    variant: submitted ? "submitted" : "default",
+    label: timelineStageLabel(application.timeline_stage),
+    variant: timelineStageVariant(application.timeline_stage),
   };
 
   return (
@@ -231,6 +346,116 @@ export function ApplicationDetailPage() {
           {actionError}
         </p>
       ) : null}
+
+      <h3>Email evidence</h3>
+      {emailListError ? (
+        <p role="alert" className="error">
+          {emailListError}
+        </p>
+      ) : null}
+      {emailLinks.length === 0 ? (
+        <p className="settings-empty">
+          No emails recorded yet. The Gmail integration is not enabled — you
+          can record an email by hand.
+        </p>
+      ) : (
+        <ul className="email-link-list">
+          {emailLinks.map((link) => (
+            <li key={link.id} className="email-link-item">
+              <div className="email-link-row">
+                <span
+                  className={`status-badge status-badge-${
+                    link.classified_status ?? "default"
+                  }`}
+                >
+                  {classificationLabel(link.classified_status)}
+                </span>
+                <strong className="email-link-subject">
+                  {link.subject || "(no subject)"}
+                </strong>
+              </div>
+              <div className="email-link-meta">
+                <span>{link.sender || "Unknown sender"}</span>
+                <span> · {formatTimestamp(link.received_at)}</span>
+                {link.confidence !== null ? (
+                  <span> · confidence {link.confidence.toFixed(2)}</span>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h3>Record email</h3>
+      <form onSubmit={handleAddEmail} noValidate>
+        <label className="field">
+          <span>Gmail message id</span>
+          <input
+            type="text"
+            value={emailMessageId}
+            onChange={(e) => setEmailMessageId(e.target.value)}
+            required
+          />
+        </label>
+        <label className="field">
+          <span>Classification</span>
+          <select
+            value={emailClassifiedStatus}
+            onChange={(e) => setEmailClassifiedStatus(e.target.value)}
+          >
+            {EMAIL_CLASSIFICATION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Sender</span>
+          <input
+            type="text"
+            value={emailSender}
+            onChange={(e) => setEmailSender(e.target.value)}
+            placeholder="e.g. recruiting@acme.com"
+          />
+        </label>
+        <label className="field">
+          <span>Subject</span>
+          <input
+            type="text"
+            value={emailSubject}
+            onChange={(e) => setEmailSubject(e.target.value)}
+            placeholder="e.g. Your application to Acme"
+          />
+        </label>
+        <label className="field">
+          <span>Received at</span>
+          <input
+            type="datetime-local"
+            value={emailReceivedAt}
+            onChange={(e) => setEmailReceivedAt(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Confidence (optional)</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            max="1"
+            value={emailConfidence}
+            onChange={(e) => setEmailConfidence(e.target.value)}
+          />
+        </label>
+        {emailCreateError ? (
+          <p role="alert" className="error">
+            {emailCreateError}
+          </p>
+        ) : null}
+        <button type="submit" disabled={isAddingEmail}>
+          {isAddingEmail ? "Recording…" : "Record email"}
+        </button>
+      </form>
 
       <h3>Timeline</h3>
       {events.length === 0 ? (
