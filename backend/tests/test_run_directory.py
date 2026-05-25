@@ -225,6 +225,199 @@ def test_missing_candidate_context_errors(fixture_layout, tmp_path):
         )
 
 
+def test_new_run_defaults_to_auto_tailoring_method(fixture_layout):
+    from app.run_directory import (
+        DEFAULT_RUN_STATUS,
+        DEFAULT_TAILORING_METHOD,
+        create_run_directory,
+        get_run_status,
+        get_tailoring_method,
+    )
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+    )
+
+    metadata = json.loads((info.run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["tailoring_method"] == "auto"
+    assert metadata["status"] == "created"
+    assert metadata["updated_at"] == metadata["created_at"]
+    assert DEFAULT_TAILORING_METHOD == "auto"
+    assert DEFAULT_RUN_STATUS == "created"
+
+    assert get_tailoring_method(info.run_dir) == "auto"
+    assert get_run_status(info.run_dir) == "created"
+
+
+def test_create_run_directory_accepts_word_handoff_method(fixture_layout):
+    from app.run_directory import create_run_directory, get_tailoring_method
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+        tailoring_method="word_handoff",
+    )
+
+    assert get_tailoring_method(info.run_dir) == "word_handoff"
+    metadata = json.loads((info.run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["tailoring_method"] == "word_handoff"
+
+
+def test_create_run_directory_rejects_invalid_method(fixture_layout):
+    from app.run_directory import RunDirectoryError, create_run_directory
+
+    job, resume, evidence = _make_objects()
+    with pytest.raises(RunDirectoryError, match="invalid tailoring_method"):
+        create_run_directory(
+            job=job,
+            master_resume=resume,
+            evidence_bank=evidence,
+            candidate_context_root=fixture_layout["candidate_root"],
+            runs_root=fixture_layout["runs_root"],
+            runtime_prompts_root=fixture_layout["prompts_root"],
+            tailoring_method="bogus",
+        )
+
+
+def test_set_tailoring_method_roundtrip_and_rejects_invalid(fixture_layout):
+    from app.run_directory import (
+        RunDirectoryError,
+        create_run_directory,
+        get_tailoring_method,
+        set_tailoring_method,
+    )
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+    )
+
+    set_tailoring_method(info.run_dir, "word_handoff")
+    assert get_tailoring_method(info.run_dir) == "word_handoff"
+
+    set_tailoring_method(info.run_dir, "auto")
+    assert get_tailoring_method(info.run_dir) == "auto"
+
+    with pytest.raises(RunDirectoryError, match="invalid tailoring_method"):
+        set_tailoring_method(info.run_dir, "telegram")
+
+
+def test_set_run_status_roundtrips_all_allowed_statuses(fixture_layout):
+    from app.run_directory import (
+        ALLOWED_RUN_STATUSES,
+        RunDirectoryError,
+        create_run_directory,
+        get_run_status,
+        set_run_status,
+    )
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+    )
+
+    expected = {
+        "created",
+        "input_ready",
+        "auto_tailoring_running",
+        "auto_tailoring_failed",
+        "auto_tailoring_complete",
+        "word_handoff_ready",
+        "waiting_for_word_result",
+        "word_result_imported",
+        "validation_failed",
+        "completed",
+        "failed",
+    }
+    assert expected <= set(ALLOWED_RUN_STATUSES)
+
+    for status in expected:
+        set_run_status(info.run_dir, status)
+        assert get_run_status(info.run_dir) == status
+
+    with pytest.raises(RunDirectoryError, match="invalid run status"):
+        set_run_status(info.run_dir, "shipped_to_mars")
+
+
+def test_status_updates_bump_updated_at(fixture_layout):
+    from datetime import timedelta
+
+    from app.run_directory import create_run_directory, set_run_status
+
+    job, resume, evidence = _make_objects()
+    fixed_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+        now=fixed_now,
+    )
+
+    set_run_status(info.run_dir, "input_ready", now=fixed_now + timedelta(seconds=30))
+    metadata = json.loads((info.run_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["updated_at"] != metadata["created_at"]
+    assert metadata["updated_at"].startswith("2026-01-01T00:00:30")
+
+
+def test_legacy_metadata_without_tailoring_method_reads_as_auto(fixture_layout):
+    """Metadata predating this field must read back as the auto default."""
+    from app.run_directory import (
+        DEFAULT_RUN_STATUS,
+        DEFAULT_TAILORING_METHOD,
+        create_run_directory,
+        get_run_status,
+        get_tailoring_method,
+    )
+
+    job, resume, evidence = _make_objects()
+    info = create_run_directory(
+        job=job,
+        master_resume=resume,
+        evidence_bank=evidence,
+        candidate_context_root=fixture_layout["candidate_root"],
+        runs_root=fixture_layout["runs_root"],
+        runtime_prompts_root=fixture_layout["prompts_root"],
+    )
+
+    # Rewrite metadata.json without the new fields to mimic a legacy run.
+    metadata_path = info.run_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("tailoring_method", None)
+    metadata.pop("status", None)
+    metadata.pop("updated_at", None)
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert get_tailoring_method(info.run_dir) == DEFAULT_TAILORING_METHOD
+    assert get_run_status(info.run_dir) == DEFAULT_RUN_STATUS
+
+
 def test_post_run_missing_master_resume_returns_404(client, tmp_path, monkeypatch):
     # Prime a candidate context + prompts dir + runs dir so the router could
     # succeed if the resume existed.
