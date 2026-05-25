@@ -1571,7 +1571,7 @@ tasks:
     file: "agent_tasks/079-harden-word-mcp-python-env-and-claude-permissions.md"
     branch: "agent/079-harden-word-mcp-python-env-and-claude-permissions"
     worktree: "agent-079-harden-word-mcp-python-env-and-claude-permissions"
-    status: "ready"
+    status: "done"
     depends_on:
       - "075-add-claude-code-office-word-mcp-support"
     verification:
