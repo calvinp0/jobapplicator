@@ -1442,7 +1442,7 @@ tasks:
     file: "agent_tasks/073-frontend-application-detail-email-evidence.md"
     branch: "agent/073-frontend-application-detail-email-evidence"
     worktree: "agent-073-frontend-application-detail-email-evidence"
-    status: "ready"
+    status: "done"
     depends_on:
       - "072-frontend-applications-list-timeline"
     verification:
