@@ -1420,7 +1420,7 @@ tasks:
     file: "agent_tasks/072-frontend-applications-list-timeline.md"
     branch: "agent/072-frontend-applications-list-timeline"
     worktree: "agent-072-frontend-applications-list-timeline"
-    status: "ready"
+    status: "done"
     depends_on:
       - "071-backend-application-timeline-and-email-links"
     verification:
@@ -1442,7 +1442,7 @@ tasks:
     file: "agent_tasks/073-frontend-application-detail-email-evidence.md"
     branch: "agent/073-frontend-application-detail-email-evidence"
     worktree: "agent-073-frontend-application-detail-email-evidence"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "072-frontend-applications-list-timeline"
     verification:
