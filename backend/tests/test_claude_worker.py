@@ -335,6 +335,31 @@ def test_invoke_run_passes_default_permission_mode(client, tmp_path, monkeypatch
     assert "jobapply: output directory=" in log_text
 
 
+def test_invoke_run_logs_docx_skill_requested(client, tmp_path, monkeypatch):
+    """Worker must log that DOCX skill usage was requested for Word output.
+
+    Tracking task 074: the runtime prompt asks Claude Code to use the
+    DOCX / Word document skill when generating tailored_resume.docx. The
+    worker has no reliable cross-version way to detect skill
+    installation, so it logs that usage was requested and leaves
+    availability unknown.
+    """
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: DOCX skill requested for Word output generation" in log_text
+    # The worker should be honest that detection is not implemented rather
+    # than claiming the skill is definitely installed.
+    assert "jobapply: DOCX skill availability unknown" in log_text
+
+
 def test_invoke_run_pipes_prompt_contents_via_stdin(client, tmp_path, monkeypatch):
     """Worker must pipe the prompt file contents to Claude, not the file path.
 
