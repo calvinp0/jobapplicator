@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   Application,
   ClaudeRun,
+  EmailLink,
   Job,
   ResumeVersion,
 } from "../api";
@@ -11,12 +12,15 @@ import {
   draftStatusLabel,
   formatElapsedSince,
   jobStageLabel,
+  lastEmailSummary,
   parseTimestamp,
   runIsActive,
   runIsComplete,
   runNeedsImport,
   runStartTimestamp,
   runStatusLabel,
+  timelineStageLabel,
+  timelineStageVariant,
 } from "../lib/workflow";
 
 function makeJob(overrides: Partial<Job> = {}): Job {
@@ -84,6 +88,25 @@ function makeApp(overrides: Partial<Application> = {}): Application {
     submitted_at: null,
     created_at: "2026-05-22T12:00:00Z",
     updated_at: "2026-05-22T12:00:00Z",
+    timeline_stage: "draft",
+    last_email_link: null,
+    email_link_count: 0,
+    ...overrides,
+  };
+}
+
+function makeEmailLink(overrides: Partial<EmailLink> = {}): EmailLink {
+  return {
+    id: "el-1",
+    application_id: "app-1",
+    gmail_message_id: "manual:abc",
+    gmail_thread_id: null,
+    subject: "Hi",
+    sender: "acme@example.com",
+    received_at: "2026-05-22T12:00:00Z",
+    classified_status: "confirmation",
+    confidence: null,
+    created_at: "2026-05-22T12:00:01Z",
     ...overrides,
   };
 }
@@ -388,5 +411,122 @@ describe("formatElapsedSince", () => {
     expect(formatElapsedSince(justStarted, sameInstantPlus3s)).toBe(
       "just now",
     );
+  });
+});
+
+describe("timelineStageLabel", () => {
+  it("maps every contract stage to a human label", () => {
+    expect(timelineStageLabel("draft")).toBe("Draft");
+    expect(timelineStageLabel("sent")).toBe("Sent");
+    expect(timelineStageLabel("confirmation_received")).toBe(
+      "Confirmation received",
+    );
+    expect(timelineStageLabel("response_received")).toBe("Response received");
+    expect(timelineStageLabel("rejected")).toBe("Rejected");
+    expect(timelineStageLabel("interview")).toBe("Interview");
+    expect(timelineStageLabel("offer")).toBe("Offer");
+    expect(timelineStageLabel("withdrawn")).toBe("Withdrawn");
+  });
+
+  it("falls back to the raw value for unknown stages", () => {
+    expect(timelineStageLabel("weird")).toBe("weird");
+  });
+});
+
+describe("timelineStageVariant", () => {
+  it("maps every contract stage to a badge variant class suffix", () => {
+    // Existing variants reused where they fit.
+    expect(timelineStageVariant("draft")).toBe("draft");
+    expect(timelineStageVariant("sent")).toBe("submitted");
+    expect(timelineStageVariant("confirmation_received")).toBe("completed");
+    expect(timelineStageVariant("response_received")).toBe("running");
+    expect(timelineStageVariant("withdrawn")).toBe("draft");
+    // New variants for the terminal-ish outcomes.
+    expect(timelineStageVariant("rejected")).toBe("rejected");
+    expect(timelineStageVariant("interview")).toBe("interview");
+    expect(timelineStageVariant("offer")).toBe("offer");
+  });
+
+  it("falls back to `default` for unknown stages", () => {
+    expect(timelineStageVariant("weird")).toBe("default");
+  });
+});
+
+describe("lastEmailSummary", () => {
+  const now = new Date("2026-05-22T14:00:00Z");
+
+  it("returns null when the application has no attached email", () => {
+    expect(lastEmailSummary(makeApp(), now)).toBeNull();
+  });
+
+  it("formats a confirmation email summary with sender and relative time", () => {
+    const app = makeApp({
+      last_email_link: makeEmailLink({
+        classified_status: "confirmation",
+        sender: "ats@example.com",
+        received_at: "2026-05-22T12:00:00Z",
+      }),
+      email_link_count: 1,
+    });
+    expect(lastEmailSummary(app, now)).toBe(
+      "Confirmation from ats@example.com · 2h ago",
+    );
+  });
+
+  it("maps every canonical classified_status to a human label", () => {
+    const cases: Array<[string, string]> = [
+      ["confirmation", "Confirmation"],
+      ["rejection", "Rejection"],
+      ["next_step", "Next step"],
+      ["offer", "Offer"],
+      ["other", "Email"],
+    ];
+    for (const [status, label] of cases) {
+      const app = makeApp({
+        last_email_link: makeEmailLink({
+          classified_status: status,
+          sender: "x@y.com",
+          received_at: "2026-05-22T13:00:00Z",
+        }),
+        email_link_count: 1,
+      });
+      expect(lastEmailSummary(app, now)).toBe(`${label} from x@y.com · 1h ago`);
+    }
+  });
+
+  it("falls back to `Email` when classified_status is null", () => {
+    const app = makeApp({
+      last_email_link: makeEmailLink({
+        classified_status: null,
+        sender: "x@y.com",
+        received_at: "2026-05-22T13:00:00Z",
+      }),
+      email_link_count: 1,
+    });
+    expect(lastEmailSummary(app, now)).toBe("Email from x@y.com · 1h ago");
+  });
+
+  it("omits the sender part when sender is null", () => {
+    const app = makeApp({
+      last_email_link: makeEmailLink({
+        classified_status: "confirmation",
+        sender: null,
+        received_at: "2026-05-22T13:00:00Z",
+      }),
+      email_link_count: 1,
+    });
+    expect(lastEmailSummary(app, now)).toBe("Confirmation · 1h ago");
+  });
+
+  it("omits the time part when received_at is null", () => {
+    const app = makeApp({
+      last_email_link: makeEmailLink({
+        classified_status: "confirmation",
+        sender: "x@y.com",
+        received_at: null,
+      }),
+      email_link_count: 1,
+    });
+    expect(lastEmailSummary(app, now)).toBe("Confirmation from x@y.com");
   });
 });

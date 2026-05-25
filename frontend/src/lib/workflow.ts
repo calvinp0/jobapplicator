@@ -169,3 +169,84 @@ export function computeJobStage(
   if (hasActiveRun) return "tailoring";
   return "captured";
 }
+
+/**
+ * Application timeline-stage labels. The stage strings are server-derived
+ * per docs/contracts/application_status.md and the canonical set is
+ * `draft | sent | confirmation_received | response_received | rejected |
+ *  interview | offer | withdrawn`.
+ */
+const TIMELINE_STAGE_LABELS: Record<string, string> = {
+  draft: "Draft",
+  sent: "Sent",
+  confirmation_received: "Confirmation received",
+  response_received: "Response received",
+  rejected: "Rejected",
+  interview: "Interview",
+  offer: "Offer",
+  withdrawn: "Withdrawn",
+};
+
+export function timelineStageLabel(stage: string): string {
+  return TIMELINE_STAGE_LABELS[stage] ?? stage;
+}
+
+const TIMELINE_STAGE_VARIANTS: Record<string, string> = {
+  draft: "draft",
+  sent: "submitted",
+  confirmation_received: "completed",
+  response_received: "running",
+  rejected: "rejected",
+  interview: "interview",
+  offer: "offer",
+  withdrawn: "draft",
+};
+
+export function timelineStageVariant(stage: string): string {
+  return TIMELINE_STAGE_VARIANTS[stage] ?? "default";
+}
+
+const EMAIL_CLASSIFICATION_LABELS: Record<string, string> = {
+  confirmation: "Confirmation",
+  rejection: "Rejection",
+  next_step: "Next step",
+  offer: "Offer",
+  other: "Email",
+};
+
+function formatEmailRelative(
+  value: string | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  const then = parseTimestamp(value ?? null);
+  if (!then) return null;
+  const diffMs = now.getTime() - then.getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days}d ago`;
+  return then.toLocaleDateString();
+}
+
+/**
+ * One-line summary of the most recently received email attached to an
+ * application, suitable for inline display in the list. Returns null when
+ * the application has no attached email.
+ */
+export function lastEmailSummary(
+  app: Application,
+  now: Date = new Date(),
+): string | null {
+  const link = app.last_email_link;
+  if (!link) return null;
+  const label = link.classified_status
+    ? EMAIL_CLASSIFICATION_LABELS[link.classified_status] ?? "Email"
+    : "Email";
+  const senderPart = link.sender ? ` from ${link.sender}` : "";
+  const ago = formatEmailRelative(link.received_at, now);
+  const timePart = ago ? ` · ${ago}` : "";
+  return `${label}${senderPart}${timePart}`;
+}
