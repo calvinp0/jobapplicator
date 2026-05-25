@@ -639,8 +639,48 @@ def test_runtime_prompt_requests_docx_skill():
     # The prompt must say a source DOCX in input/ should be used as a
     # formatting reference when available.
     assert "source DOCX" in text and "input/" in text
-    assert "formatting reference" in text
     # The non-interactive contract from task 057 must still be present so
     # the prompt cannot drift back into a conversational response.
+    assert "Do not ask clarifying questions" in text
+    assert "non-interactive" in text
+
+
+def test_runtime_prompt_requests_office_word_mcp():
+    """The shipped runtime prompt must prefer the Office Word MCP server.
+
+    Tracking task 075: the auto path should explicitly tell Claude Code
+    to use the ``word-document-server`` MCP server when available, and
+    to prioritize it over the DOCX skill / fallback generation.
+    """
+    prompt_path = _repo_root() / "runtime_prompts" / "resume_tailoring.md"
+    text = prompt_path.read_text(encoding="utf-8")
+
+    # The prompt must name the connected MCP server explicitly so Claude
+    # Code can pick the right tool when it inspects available MCPs.
+    assert "word-document-server" in text
+    assert "Office Word MCP" in text
+
+    # The Office Word MCP must come before the DOCX skill, and the DOCX
+    # skill must come before fallback DOCX generation, in the priority
+    # ordering Claude Code is told to follow.
+    mcp_pos = text.find("Office Word MCP")
+    skill_pos = text.find("DOCX / Word document skill")
+    fallback_pos = text.find("fallback DOCX generation")
+    assert mcp_pos != -1 and skill_pos != -1 and fallback_pos != -1
+    assert mcp_pos < skill_pos < fallback_pos
+
+    # If a source DOCX exists, the prompt must say to copy/edit it as the
+    # base rather than rebuilding from scratch.
+    assert "copy it as the editable base" in text
+    assert "edit relevant text in place" in text
+
+    # The prompt must still say the DOCX is not a plain-text dump.
+    assert "not a plain-text dump" in text
+
+    # The prompt must still require post-generation validation that the
+    # DOCX exists with nonzero size.
+    assert "exists and has nonzero size" in text
+
+    # The non-interactive contract from task 057 must still be present.
     assert "Do not ask clarifying questions" in text
     assert "non-interactive" in text

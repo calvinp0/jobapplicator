@@ -335,13 +335,14 @@ def test_invoke_run_passes_default_permission_mode(client, tmp_path, monkeypatch
     assert "jobapply: output directory=" in log_text
 
 
-def test_invoke_run_logs_docx_skill_requested(client, tmp_path, monkeypatch):
-    """Worker must log that DOCX skill usage was requested for Word output.
+def test_invoke_run_logs_word_docx_tooling_requested(client, tmp_path, monkeypatch):
+    """Worker must log that Word/DOCX tooling was requested for DOCX output.
 
-    Tracking task 074: the runtime prompt asks Claude Code to use the
-    DOCX / Word document skill when generating tailored_resume.docx. The
-    worker has no reliable cross-version way to detect skill
-    installation, so it logs that usage was requested and leaves
+    Tracking task 075: the runtime prompt asks Claude Code to prefer the
+    Office Word MCP server (``word-document-server``), then the DOCX /
+    Word document skill, then fall back to existing generation. The
+    worker has no reliable cross-version way to detect MCP or skill
+    installation, so it logs that each was requested and leaves
     availability unknown.
     """
     run = _seed_run(client, tmp_path, monkeypatch)
@@ -354,9 +355,12 @@ def test_invoke_run_logs_docx_skill_requested(client, tmp_path, monkeypatch):
     assert body["status"] == "completed"
 
     log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
-    assert "jobapply: DOCX skill requested for Word output generation" in log_text
+    assert "jobapply: Word/DOCX tooling requested for DOCX generation" in log_text
+    assert "jobapply: Office Word MCP server requested if available" in log_text
+    assert "jobapply: DOCX skill requested if available" in log_text
     # The worker should be honest that detection is not implemented rather
-    # than claiming the skill is definitely installed.
+    # than claiming either capability is definitely installed.
+    assert "jobapply: Office Word MCP availability unknown" in log_text
     assert "jobapply: DOCX skill availability unknown" in log_text
 
 

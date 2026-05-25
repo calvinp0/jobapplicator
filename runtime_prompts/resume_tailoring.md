@@ -185,11 +185,38 @@ In `output/change_log.md`, summarize:
 
 ## DOCX
 
-When creating `output/tailored_resume.docx`, use the DOCX / Word document skill if available.
+When creating `output/tailored_resume.docx`, prefer the Office Word MCP server
+if available. Use Word/DOCX tooling in this priority order:
+
+1. Office Word MCP tools through the `word-document-server` MCP server, if
+   available (look for tools such as `copy_document`, `add_heading`,
+   `add_paragraph`, `search_and_replace`, `format_text`).
+2. The DOCX / Word document skill, if available.
+3. The existing fallback DOCX generation behavior.
+
+If `input/` contains a source resume DOCX:
+
+- copy it as the editable base when possible (e.g. with the Office Word MCP
+  `copy_document` tool);
+- preserve the original margins, fonts, headings, bullet indentation, and
+  spacing;
+- edit relevant text in place rather than rebuilding the entire document
+  from scratch.
+
+If no source DOCX exists:
+
+- create a professional resume DOCX using Office Word MCP tools or the
+  DOCX / Word document skill;
+- use real Word headings, paragraphs, and bullet structures;
+- do not create a plain-text dump inside a DOCX.
+
 The DOCX must be a professional resume document, not a plain-text dump.
-Preserve consistent heading styles, bullet indentation, margins, spacing, and readable typography.
-If a source DOCX exists in `input/`, use it as a formatting reference when possible.
-Prefer ATS-safe formatting.
-Avoid unnecessary tables or graphics.
-If DOCX generation fails, still write `output/tailored_resume.md`, `output/change_log.md`,
-and `output/claim_audit.md`, and explain the DOCX failure clearly in `output/claim_audit.md`.
+Preserve consistent heading styles, bullet indentation, margins, spacing,
+and readable typography. Prefer ATS-safe formatting. Avoid unnecessary
+tables or graphics.
+
+Always validate that `output/tailored_resume.docx` exists and has nonzero size before finishing.
+
+If DOCX generation fails, still write `output/tailored_resume.md`,
+`output/change_log.md`, and `output/claim_audit.md`, and explain the DOCX
+failure clearly in `output/claim_audit.md`.
