@@ -14,6 +14,12 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from .docx_extract import (
+    EXTRACTED_FILENAME as EXTRACTED_RESUME_FILENAME,
+    EXTRACTION_ERROR_FILENAME as EXTRACTION_ERROR_RESUME_FILENAME,
+    ExtractionResult,
+    extract_master_resume_if_present,
+)
 from .llm_providers import (
     DEFAULT_PROVIDER_ID,
     LLMProvider,
@@ -39,6 +45,7 @@ DEFAULT_PERMISSION_MODE = "acceptEdits"
 
 RUN_LOG_FILENAME = "run.log"
 PROMPT_RELPATH = Path("input") / "tailoring_prompt.md"
+INPUT_DIRNAME = "input"
 OUTPUT_DIRNAME = "output"
 PROGRESS_DIRNAME = "progress"
 PROGRESS_LOG_FILENAME = "progress.log"
@@ -225,6 +232,40 @@ def _record_failure(db: Session, run: ClaudeRun, message: str) -> ClaudeRun:
     return run
 
 
+def _extract_master_resume_docx(
+    run_dir: Path, log_path: Path
+) -> ExtractionResult:
+    """Run pre-tailoring DOCX extraction and emit ``jobapply:`` log lines.
+
+    The worker logs whether a DOCX was found, the relative path it
+    extracted from, and the destination markdown path — or a clear
+    failure line when ``python-docx`` rejects the file. The caller
+    decides whether the run can continue (see ``invoke_claude_run``).
+    """
+    input_dir = run_dir / INPUT_DIRNAME
+    _append_progress(log_path, "checking for master resume DOCX")
+    result = extract_master_resume_if_present(input_dir)
+    if not result.docx_found:
+        return result
+
+    relpath = f"{INPUT_DIRNAME}/{result.docx_path.name}"
+    _append_progress(log_path, f"found source resume DOCX={relpath}")
+    if result.extracted:
+        _append_progress(
+            log_path,
+            "extracted source resume DOCX to "
+            f"{INPUT_DIRNAME}/{EXTRACTED_RESUME_FILENAME}",
+        )
+    else:
+        _append_progress(log_path, "failed to extract source resume DOCX")
+        _append_progress(
+            log_path,
+            "wrote extraction error to "
+            f"{INPUT_DIRNAME}/{EXTRACTION_ERROR_RESUME_FILENAME}",
+        )
+    return result
+
+
 def _missing_outputs(run_dir: Path) -> list[str]:
     """Return relative paths of required output files that are absent."""
     output_dir = run_dir / OUTPUT_DIRNAME
@@ -385,6 +426,20 @@ def invoke_claude_run(
     run.completed_at = None
     run.error_message = None
     db.commit()
+
+    extraction = _extract_master_resume_docx(run_dir, log_path)
+    if extraction.failed and not extraction.has_other_resume_source:
+        # The DOCX could not be projected to markdown and no fallback
+        # markdown resume is on disk — there is no usable evidence source
+        # for tailoring, so the run is failed loudly rather than letting
+        # Claude run blind. The extraction error file (written by the
+        # extractor) preserves the diagnostic for the operator.
+        return _record_failure(
+            db,
+            run,
+            "failed to extract source resume DOCX and no markdown resume present: "
+            f"{extraction.error_message}",
+        )
 
     if is_dry_run():
         _append_progress(log_path, "dry-run mode: skipping Claude subprocess")

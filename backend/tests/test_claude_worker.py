@@ -573,3 +573,181 @@ def test_invoke_does_not_mutate_resume_versions(client, tmp_path, monkeypatch):
     body = resp.json()
     # output_hash stays empty — that's task 008's job.
     assert body["output_hash"] is None
+
+
+def _write_master_resume_docx(input_dir: Path) -> Path:
+    """Create a small but valid master_resume.docx under ``input_dir``.
+
+    Generated inline via python-docx so tests do not depend on a
+    committed binary fixture.
+    """
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Jane Doe", style="Title")
+    doc.add_paragraph("Experience", style="Heading 1")
+    doc.add_paragraph("Acme Corp — Staff Engineer", style="Heading 2")
+    doc.add_paragraph("Built distributed systems.", style="List Bullet")
+    path = input_dir / "master_resume.docx"
+    doc.save(str(path))
+    return path
+
+
+def test_invoke_run_detects_and_extracts_master_resume_docx(
+    client, tmp_path, monkeypatch
+):
+    """When a source DOCX is staged in input/, the worker must extract it
+    before launching Claude and emit the documented run-log lines."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+    _write_master_resume_docx(input_dir)
+
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    extracted = input_dir / "master_resume_extracted.md"
+    assert extracted.is_file()
+    extracted_text = extracted.read_text(encoding="utf-8")
+    # Filename of the source DOCX must be recorded in the extracted markdown.
+    assert "Source DOCX: input/master_resume.docx" in extracted_text
+    assert "Jane Doe" in extracted_text
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: checking for master resume DOCX" in log_text
+    assert (
+        "jobapply: found source resume DOCX=input/master_resume.docx"
+        in log_text
+    )
+    assert (
+        "jobapply: extracted source resume DOCX to "
+        "input/master_resume_extracted.md"
+    ) in log_text
+
+
+def test_invoke_run_markdown_only_resume_still_runs(
+    client, tmp_path, monkeypatch
+):
+    """Existing markdown-only flow must keep working — no DOCX, no
+    extracted markdown, but the worker still completes the four-output
+    contract and logs that it checked for a DOCX."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    input_dir = Path(run["run_dir"]) / "input"
+    assert not (input_dir / "master_resume.docx").exists()
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    # No DOCX, so no extracted file should be created.
+    assert not (input_dir / "master_resume_extracted.md").exists()
+    assert not (input_dir / "master_resume_extraction_error.md").exists()
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: checking for master resume DOCX" in log_text
+    # The "found" line must NOT appear when no DOCX is present.
+    assert "jobapply: found source resume DOCX" not in log_text
+
+    # Output contract still satisfied.
+    for name in ALL_OUTPUTS:
+        assert (Path(body["run_dir"]) / "output" / name).is_file()
+
+
+def test_invoke_run_extraction_failure_logs_and_continues_with_markdown(
+    client, tmp_path, monkeypatch
+):
+    """A DOCX that python-docx cannot open must produce an error file and
+    a failure log line — but with a markdown resume present, the run
+    proceeds and Claude still runs against the markdown evidence."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+    # Stage an invalid DOCX (master_resume.md already exists from _seed_run).
+    (input_dir / "master_resume.docx").write_bytes(b"not a real docx")
+
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # markdown fallback exists, so the run still completes.
+    assert body["status"] == "completed", body
+
+    error_file = input_dir / "master_resume_extraction_error.md"
+    assert error_file.is_file()
+    assert "Source DOCX: input/master_resume.docx" in error_file.read_text(
+        encoding="utf-8"
+    )
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: failed to extract source resume DOCX" in log_text
+
+
+def test_invoke_run_extraction_failure_without_markdown_marks_failed(
+    client, tmp_path, monkeypatch
+):
+    """If extraction fails and no markdown resume is on disk, the run
+    must fail loudly — the worker has no usable evidence source for
+    tailoring and must not silently launch Claude."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+
+    # Remove the auto-written master_resume.md so the only resume input is
+    # the broken DOCX. Also clear the other accepted markdown names just
+    # in case (none should be present in a default _seed_run).
+    for name in (
+        "master_resume.md",
+        "resume.md",
+        "base_resume.md",
+        "original_resume.md",
+    ):
+        path = input_dir / name
+        if path.exists():
+            path.unlink()
+    (input_dir / "master_resume.docx").write_bytes(b"not a real docx")
+
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "failed"
+    assert "failed to extract source resume DOCX" in body["error_message"]
+    assert "no markdown resume present" in body["error_message"]
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: failed to extract source resume DOCX" in log_text
+
+
+def test_runtime_prompt_references_extracted_markdown_and_mcp():
+    """The shipped runtime prompt must reference the extracted markdown
+    file the backend writes, and tell Claude to prefer the
+    word-document-server MCP for DOCX work."""
+    from pathlib import Path
+
+    prompt_path = (
+        Path(__file__).resolve().parents[2]
+        / "runtime_prompts"
+        / "resume_tailoring.md"
+    )
+    text = prompt_path.read_text(encoding="utf-8")
+
+    assert "input/master_resume_extracted.md" in text
+    assert "word-document-server" in text
+    # The non-interactive contract must still be present so a future
+    # edit does not let the prompt drift back into asking questions.
+    assert "Do not ask clarifying questions" in text
+    assert "Do not wait for user input" in text
+    # The prompt must distinguish DOCX (formatting) from extracted
+    # markdown (evidence) so Claude treats them as complementary.
+    assert "formatting" in text.lower()
+    assert "evidence" in text.lower()

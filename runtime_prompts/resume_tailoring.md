@@ -34,12 +34,56 @@ Also read, if present:
 
 ```text
 input/revision_feedback.md
+input/master_resume_extracted.md
 ```
 
 `input/revision_feedback.md` is only present on follow-up tailoring
 runs created in response to user feedback on a prior draft (see
 ADR-008). When absent, treat this as a first-draft run and proceed
 without it. When present, see the "Revision Feedback" section below.
+
+## Source Resume DOCX
+
+The source resume may be provided as a DOCX file in `input/`. Accepted
+filenames, searched in order:
+
+```text
+input/master_resume.docx
+input/resume.docx
+input/base_resume.docx
+input/original_resume.docx
+```
+
+If a source DOCX exists:
+
+- use Office Word MCP tools through the `word-document-server` MCP server
+  if available to inspect, copy, and edit the DOCX (look for tools such
+  as `copy_document`, `add_heading`, `add_paragraph`,
+  `search_and_replace`, `format_text`);
+- use the DOCX as the formatting source and editable base;
+- preserve margins, fonts, headings, bullet indentation, spacing, and
+  layout where possible.
+
+Also read the extracted markdown file when present:
+
+```text
+input/master_resume_extracted.md
+```
+
+The backend writes `input/master_resume_extracted.md` before this
+prompt runs, projecting the visible text and structure of the source
+DOCX into deterministic markdown. Use the extracted markdown as the
+reliable evidence source for claims. Use the DOCX as the
+formatting/layout source.
+
+Do not invent claims that are not supported by the source resume or
+extracted markdown. Do not rebuild the DOCX from scratch unless copying
+or editing the source DOCX fails.
+
+If `input/master_resume_extraction_error.md` is present, the backend
+detected a DOCX but could not extract it. Read both files, prefer the
+DOCX content visible through the Office Word MCP tools, and note any
+limitations in `output/claim_audit.md`.
 
 ## Required Outputs
 
