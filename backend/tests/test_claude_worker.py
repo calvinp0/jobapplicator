@@ -751,3 +751,163 @@ def test_runtime_prompt_references_extracted_markdown_and_mcp():
     # markdown (evidence) so Claude treats them as complementary.
     assert "formatting" in text.lower()
     assert "evidence" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 079: hardened Word MCP Python env + non-interactive Claude contract
+# ---------------------------------------------------------------------------
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _word_mcp_doc_text() -> str:
+    return (_repo_root() / "docs" / "office_word_mcp_setup.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def _install_doc_text() -> str:
+    return (_repo_root() / "docs" / "install.md").read_text(encoding="utf-8")
+
+
+def _runtime_prompt_text() -> str:
+    return (
+        _repo_root() / "runtime_prompts" / "resume_tailoring.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_word_mcp_docs_recommend_explicit_virtualenv_python():
+    """Both docs must walk the reader through Option A (virtualenv) and
+    point Claude Code at the in-repo ``.venv`` interpreter rather than a
+    PATH-derived ``python``."""
+    for text in (_word_mcp_doc_text(), _install_doc_text()):
+        lower = text.lower()
+        assert "virtualenv" in lower or "venv" in lower
+        assert "option a" in lower
+        # The virtualenv Python path must appear with its OS-specific
+        # interpreter name so a copy/paste user lands on the right
+        # binary on either Linux/macOS or Windows.
+        assert ".venv/bin/python" in text
+        assert r".venv\Scripts\python.exe" in text
+
+
+def test_word_mcp_docs_recommend_explicit_conda_python():
+    """Option B (conda) must appear in both docs and resolve the
+    interpreter via ``sys.executable`` so the registered path is the
+    real env Python, not whatever ``python`` resolves to next shell."""
+    for text in (_word_mcp_doc_text(), _install_doc_text()):
+        lower = text.lower()
+        assert "option b" in lower
+        assert "conda create" in text
+        assert "word-mcp" in text
+        assert "sys.executable" in text
+
+
+def test_word_mcp_docs_warn_against_system_python():
+    """Docs must explicitly tell the reader not to register the MCP
+    with bare ``python`` / ``python3`` on PATH."""
+    for text in (_word_mcp_doc_text(), _install_doc_text()):
+        # The warning must list both bare interpreter names so neither
+        # is implied to be safe.
+        lower = text.lower()
+        assert "do not rely on" in lower
+        # Both names must appear inside the file (covered by the conda
+        # / venv setup blocks plus the warning).
+        assert "python3" in text
+        assert "PATH" in text
+
+
+def test_word_mcp_docs_avoid_hardcoded_user_paths():
+    """No primary command may bake in a developer-specific home path.
+
+    The docs may *describe* such paths in prose (e.g. "paths look like
+    /home/<user>/..."), but real shell snippets must use portable
+    placeholders or shell variables.
+    """
+    for path_str, text in (
+        ("docs/office_word_mcp_setup.md", _word_mcp_doc_text()),
+        ("docs/install.md", _install_doc_text()),
+    ):
+        # Literal "/home/calvin" / "C:\Users\Calvin" must never appear —
+        # those are the most likely hardcoded leak from a local install.
+        assert "/home/calvin" not in text, (
+            f"{path_str} contains a hardcoded /home/calvin path"
+        )
+        assert "C:\\Users\\Calvin" not in text, (
+            f"{path_str} contains a hardcoded C:\\Users\\Calvin path"
+        )
+        # Portable variables must be present.
+        assert "$WORD_MCP_DIR" in text
+        assert "$WORD_MCP_PYTHON" in text
+        assert "$WORD_MCP_SERVER" in text
+
+
+def test_word_mcp_docs_include_linux_macos_verification_commands():
+    """Linux/macOS setup must include ``test -x``/``test -f`` checks so
+    the reader can confirm the venv Python and server entrypoint are
+    actually on disk before registering the MCP."""
+    for text in (_word_mcp_doc_text(), _install_doc_text()):
+        assert 'test -x "$WORD_MCP_PYTHON"' in text
+        assert 'test -f "$WORD_MCP_SERVER"' in text
+        # The echo lines surfacing the resolved paths must be present so
+        # the user can sanity-check before copying into ``claude mcp add``.
+        assert 'echo "$WORD_MCP_PYTHON"' in text
+        assert 'echo "$WORD_MCP_SERVER"' in text
+
+
+def test_word_mcp_docs_include_windows_powershell_verification_commands():
+    """Windows PowerShell setup must include ``Test-Path`` checks and
+    the matching ``Write-Host`` lines for the same sanity-check pass."""
+    for text in (_word_mcp_doc_text(), _install_doc_text()):
+        assert "Test-Path $WORD_MCP_PYTHON" in text
+        assert "Test-Path $WORD_MCP_SERVER" in text
+        assert "Write-Host $WORD_MCP_PYTHON" in text
+        assert "Write-Host $WORD_MCP_SERVER" in text
+
+
+def test_word_mcp_docs_include_claude_mcp_registration_with_placeholders():
+    """The ``claude mcp add`` snippet must use the resolved variables so
+    a copy/paste reader does not have to guess interpreter paths."""
+    for text in (_word_mcp_doc_text(), _install_doc_text()):
+        assert "claude mcp add word-document-server" in text
+        # The registration block must reference both the explicit
+        # interpreter and server-script variables, not bare ``python``.
+        assert '"$WORD_MCP_PYTHON"' in text
+        assert '"$WORD_MCP_SERVER"' in text
+        # Help reference for version-specific flag drift.
+        assert "claude mcp add --help" in text
+
+
+def test_runtime_prompt_blocks_permission_and_clarifying_questions():
+    """The runtime prompt must explicitly refuse every shape of
+    permission/clarifying prompt a backend run could hang on."""
+    text = _runtime_prompt_text()
+    for phrase in (
+        "non-interactive",
+        "Do not ask clarifying questions",
+        "Do not wait for user input",
+        "Do not ask the user whether to apply changes",
+        "Do not ask for permission to edit the resume",
+    ):
+        assert phrase in text, f"missing phrase: {phrase!r}"
+
+
+def test_runtime_prompt_grants_run_directory_edit_permission():
+    """The prompt must tell Claude the task contract already grants
+    permission to create/edit files inside the run directory, so it
+    does not stop to ask."""
+    text = _runtime_prompt_text()
+    assert (
+        "task contract already grants permission to create and edit "
+        "files inside this run directory"
+    ) in text
+
+
+def test_runtime_prompt_restricts_writes_to_run_directory():
+    """The prompt must scope writes to the run directory only — the
+    worker enforces this via ``cwd``, but the prompt must reinforce it
+    so Claude doesn't drift into project-level edits."""
+    text = _runtime_prompt_text()
+    assert "Only write inside this run directory" in text

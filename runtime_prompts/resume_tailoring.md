@@ -3,7 +3,14 @@
 You are running inside a non-interactive backend job.
 Do not ask clarifying questions.
 Do not wait for user input.
-Make a best effort using the provided input files.
+Do not ask the user whether to apply changes.
+Do not ask for permission to edit the resume.
+The task contract already grants permission to create and edit files inside this run directory.
+Only write inside this run directory.
+Use the provided files and make a best effort.
+If a tool is unavailable, use another available method.
+If DOCX/MCP editing fails, write the markdown/audit outputs and
+clearly document the DOCX failure in `output/claim_audit.md`.
 Write the required output files exactly as specified.
 If required input is missing, write a clear failure note to
 `output/claim_audit.md` and still write the other required files if possible.
