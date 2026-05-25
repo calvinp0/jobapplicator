@@ -1480,3 +1480,28 @@ tasks:
       - "docs/claude_docx_skill_setup.md"
       - "agent_tasks/074-add-claude-docx-skill-support.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "075-add-claude-code-office-word-mcp-support"
+    title: "Add Claude Code Office Word MCP support for DOCX tailoring"
+    file: "agent_tasks/075-add-claude-code-office-word-mcp-support.md"
+    branch: "agent/075-add-claude-code-office-word-mcp-support"
+    worktree: "agent-075-add-claude-code-office-word-mcp-support"
+    status: "ready"
+    depends_on:
+      - "074-add-claude-docx-skill-support"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_directory.py"
+      - "backend/tests/test_claude_worker.py"
+      - "backend/tests/test_run_directory.py"
+      - "runtime_prompts/resume_tailoring.md"
+      - "docs/contracts/claude_run_directory.md"
+      - "docs/contracts/agent_orchestration.md"
+      - "docs/claude_docx_skill_setup.md"
+      - "docs/office_word_mcp_setup.md"
+      - "agent_tasks/075-add-claude-code-office-word-mcp-support.md"
+      - "agent_tasks/queue.yaml"
