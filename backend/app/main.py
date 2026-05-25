@@ -27,12 +27,16 @@ from .run_directory import (
 )
 from .word_handoff import (
     EXPECTED_WORD_OUTPUT_RELPATH,
+    FINAL_RESUME_FILENAME,
     INSTRUCTIONS_FILENAME,
+    OUTPUT_DIRNAME,
     PROMPT_FILENAME,
     RESUME_DOCX_FILENAME,
     WORD_HANDOFF_DIRNAME,
+    WORD_RESULT_FILENAME,
     WordHandoffError,
     create_word_handoff_package,
+    import_word_result,
 )
 
 
@@ -58,6 +62,15 @@ class WordHandoffMetadata(BaseModel):
 class WordHandoffTextRead(BaseModel):
     run_id: str
     content: str
+
+
+class WordResultImportResponse(BaseModel):
+    run_id: str
+    status: str
+    message: str
+    word_result: Optional[str] = None
+    final_resume: Optional[str] = None
+    expected_output: Optional[str] = None
 
 
 word_handoff_router = APIRouter(prefix="/runs", tags=["word_handoff"])
@@ -182,6 +195,41 @@ def get_word_handoff_instructions(
     return WordHandoffTextRead(
         run_id=run.id,
         content=instructions_path.read_text(encoding="utf-8"),
+    )
+
+
+@word_handoff_router.post(
+    "/{run_id}/import-word-result",
+    response_model=WordResultImportResponse,
+)
+def import_word_result_endpoint(
+    run_id: str, db: Session = Depends(get_db)
+) -> WordResultImportResponse:
+    run = _get_run_or_404(run_id, db)
+    try:
+        info = import_word_result(Path(run.run_dir))
+    except WordHandoffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not info.imported:
+        return WordResultImportResponse(
+            run_id=run.id,
+            status="waiting_for_word_result",
+            message=(
+                "Save the completed Word document to the expected output "
+                "path, then import again"
+            ),
+            expected_output=_rel_run_path(
+                run.id, OUTPUT_DIRNAME, WORD_RESULT_FILENAME
+            ),
+        )
+
+    return WordResultImportResponse(
+        run_id=run.id,
+        status="completed",
+        message="Imported Claude for Word result",
+        word_result=_rel_run_path(run.id, OUTPUT_DIRNAME, WORD_RESULT_FILENAME),
+        final_resume=_rel_run_path(run.id, OUTPUT_DIRNAME, FINAL_RESUME_FILENAME),
     )
 
 
