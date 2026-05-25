@@ -1192,7 +1192,7 @@ tasks:
     file: "agent_tasks/061-import-claude-word-result.md"
     branch: "agent/061-import-claude-word-result"
     worktree: "agent-061-import-claude-word-result"
-    status: "ready"
+    status: "done"
     depends_on:
       - "060-add-word-handoff-api-endpoints"
     verification:
