@@ -1728,7 +1728,7 @@ tasks:
     file: "agent_tasks/086-add-manual-gmail-sync-for-applications.md"
     branch: "agent/086-add-manual-gmail-sync-for-applications"
     worktree: "agent-086-add-manual-gmail-sync-for-applications"
-    status: "ready"
+    status: "done"
     depends_on:
       - "085-add-gmail-evidence-to-applications-ui"
     verification:
