@@ -1565,3 +1565,27 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/078-extract-master-resume-docx-before-tailoring.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "079-harden-word-mcp-python-env-and-claude-permissions"
+    title: "Harden Word MCP Python environment and Claude Code permissions"
+    file: "agent_tasks/079-harden-word-mcp-python-env-and-claude-permissions.md"
+    branch: "agent/079-harden-word-mcp-python-env-and-claude-permissions"
+    worktree: "agent-079-harden-word-mcp-python-env-and-claude-permissions"
+    status: "ready"
+    depends_on:
+      - "075-add-claude-code-office-word-mcp-support"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest"
+    allowed_paths:
+      - "backend/app/claude_worker.py"
+      - "backend/app/run_directory.py"
+      - "backend/tests/test_claude_worker.py"
+      - "backend/tests/test_run_directory.py"
+      - "runtime_prompts/resume_tailoring.md"
+      - "docs/office_word_mcp_setup.md"
+      - "docs/install.md"
+      - "README_INSTALL.md"
+      - "agent_tasks/079-harden-word-mcp-python-env-and-claude-permissions.md"
+      - "agent_tasks/queue.yaml"
