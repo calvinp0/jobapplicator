@@ -1356,3 +1356,103 @@ tasks:
       - "frontend/src/test/jobDetailLlmProvider.test.tsx"
       - "agent_tasks/068-frontend-per-job-llm-provider-override.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "069-adr-application-status-timeline"
+    title: "Add ADR-010 for application status timeline"
+    file: "agent_tasks/069-adr-application-status-timeline.md"
+    branch: "agent/069-adr-application-status-timeline"
+    worktree: "agent-069-adr-application-status-timeline"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "test -f docs/adr/010-application-status-timeline.md"
+      - "grep -q ADR-003 docs/adr/010-application-status-timeline.md"
+      - "grep -q EmailLink docs/adr/010-application-status-timeline.md"
+      - "grep -q classified_status docs/adr/010-application-status-timeline.md"
+    allowed_paths:
+      - "docs/adr/010-application-status-timeline.md"
+      - "agent_tasks/069-adr-application-status-timeline.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "070-contract-application-status-and-email-links"
+    title: "Add application status and email-link contract"
+    file: "agent_tasks/070-contract-application-status-and-email-links.md"
+    branch: "agent/070-contract-application-status-and-email-links"
+    worktree: "agent-070-contract-application-status-and-email-links"
+    status: "planned"
+    depends_on:
+      - "069-adr-application-status-timeline"
+    verification:
+      - "test -f docs/contracts/application_status.md"
+      - "grep -q ADR-010 docs/contracts/application_status.md"
+      - "grep -q timeline_stage docs/contracts/application_status.md"
+      - "grep -q classified_status docs/contracts/application_status.md"
+      - "grep -q email-links docs/contracts/application_status.md"
+    allowed_paths:
+      - "docs/contracts/application_status.md"
+      - "agent_tasks/070-contract-application-status-and-email-links.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "071-backend-application-timeline-and-email-links"
+    title: "Add backend application timeline and email-link endpoints"
+    file: "agent_tasks/071-backend-application-timeline-and-email-links.md"
+    branch: "agent/071-backend-application-timeline-and-email-links"
+    worktree: "agent-071-backend-application-timeline-and-email-links"
+    status: "planned"
+    depends_on:
+      - "069-adr-application-status-timeline"
+      - "070-contract-application-status-and-email-links"
+    verification:
+      - "pytest"
+    allowed_paths:
+      - "backend/app/models.py"
+      - "backend/app/schemas.py"
+      - "backend/app/db.py"
+      - "backend/app/main.py"
+      - "backend/app/routers/applications.py"
+      - "backend/app/routers/email_links.py"
+      - "backend/tests/**"
+      - "agent_tasks/071-backend-application-timeline-and-email-links.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "072-frontend-applications-list-timeline"
+    title: "Add timeline stage badges to applications list"
+    file: "agent_tasks/072-frontend-applications-list-timeline.md"
+    branch: "agent/072-frontend-applications-list-timeline"
+    worktree: "agent-072-frontend-applications-list-timeline"
+    status: "planned"
+    depends_on:
+      - "071-backend-application-timeline-and-email-links"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ApplicationsPage.tsx"
+      - "frontend/src/lib/workflow.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/applicationsPage.test.tsx"
+      - "frontend/src/test/workflow.test.ts"
+      - "agent_tasks/072-frontend-applications-list-timeline.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "073-frontend-application-detail-email-evidence"
+    title: "Add email evidence section to application detail"
+    file: "agent_tasks/073-frontend-application-detail-email-evidence.md"
+    branch: "agent/073-frontend-application-detail-email-evidence"
+    worktree: "agent-073-frontend-application-detail-email-evidence"
+    status: "planned"
+    depends_on:
+      - "072-frontend-applications-list-timeline"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ApplicationDetailPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/applicationDetailPage.test.tsx"
+      - "agent_tasks/073-frontend-application-detail-email-evidence.md"
+      - "agent_tasks/queue.yaml"
