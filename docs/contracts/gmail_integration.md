@@ -1120,3 +1120,244 @@ UI crashing:
 | `GET /gmail/auth-url` failure | "Could not get Gmail auth URL. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the backend first." |
 | Search fails | Forwarded `ApiError` message (e.g. "Request to /applications/X/gmail/search failed with status 500"). |
 | Classification fails | Forwarded `ApiError` message or "Could not classify this email. Try again or review manually." |
+
+## Manual Application Sync (task 086)
+
+Task 086 adds a higher-level workflow on top of the task-083 search and
+task-084 classify endpoints: a single user-triggered action that walks
+every relevant application, runs a Gmail search, classifies the top
+candidate, and returns a summary. It is **strictly manual** — there is
+still no background polling, no scheduled job, and no listener.
+
+### Scope
+
+- Read-only Gmail use only (`gmail.readonly` scope, unchanged).
+- User-triggered only — every call originates from a button press on the
+  Applications page or a direct `curl` request. No background polling,
+  no cron, no listeners.
+- No send, archive, delete, label, modify, draft, or reply routes are
+  added.
+- Safe metadata only — the same `subject` / `from` / `date` / `snippet`
+  surface as the task-083/084 endpoints. Full bodies, HTML, and
+  attachments are never fetched, returned, or persisted.
+- Every status change carries evidence; uncertain matches land in
+  `needs_review` and do not auto-change the application's main status.
+
+### Endpoint
+
+```
+POST /gmail/sync-applications
+```
+
+Request body (every field optional, sensible defaults applied):
+
+```jsonc
+{
+  "max_applications": 25,
+  "max_results_per_application": 10,
+  "classify": true,
+  "include_terminal": false
+}
+```
+
+Connected response shape:
+
+```jsonc
+{
+  "gmail_connected": true,
+  "checked_count": 5,
+  "updated_count": 2,
+  "no_match_count": 3,
+  "needs_review_count": 1,
+  "results": [
+    {
+      "application_id": "...",
+      "job_title": "...",
+      "company": "...",
+      "previous_email_status": "watching",
+      "new_email_status": "classified_rejection",
+      "previous_application_status": "submitted",
+      "new_application_status": "rejected",
+      "matched_email_count": 1,
+      "classification": "rejection",
+      "confidence": 0.86,
+      "evidence": [
+        {
+          "field": "snippet",
+          "text": "…not moving forward…",
+          "reason": "contains rejection phrase"
+        }
+      ],
+      "application_status_changed": true,
+      "gmail_query": "(\"…\") after:2026/5/24 …",
+      "skipped_reason": null
+    }
+  ]
+}
+```
+
+Disconnected response (no stored token, or token lost between status
+check and search):
+
+```jsonc
+{
+  "gmail_connected": false,
+  "checked_count": 0,
+  "updated_count": 0,
+  "no_match_count": 0,
+  "needs_review_count": 0,
+  "results": [],
+  "message": "Connect Gmail before syncing applications"
+}
+```
+
+The endpoint never starts OAuth on its own — the user visits
+`/gmail/auth-url` first (the task-082 surface) and the response message
+nudges them back to it.
+
+### Included / excluded application statuses
+
+The sync intentionally skips applications that cannot meaningfully
+benefit from a Gmail check (pre-submission drafts, closed lanes).
+
+| `Application.status` | Default sync | `include_terminal=true` |
+|---|---|---|
+| `draft` | excluded | excluded |
+| `generated` | excluded | excluded |
+| `approved` | excluded | excluded |
+| `submitted` | **included** | **included** |
+| `response_received` | **included** | **included** |
+| `interview` | **included** | **included** |
+| `rejected` | excluded | **included** |
+| `offer` | excluded | **included** |
+| `withdrawn` | **excluded** | **excluded** *(always)* |
+
+`withdrawn` is the only status that the sync **never** touches —
+regardless of `include_terminal`. The endpoint's per-application loop
+also short-circuits with `skipped_reason = "withdrawn"` as a defensive
+double-check so a future filter change cannot accidentally auto-change
+a withdrawn application.
+
+`approved` (the project's "ready to submit" lane) is excluded today
+because the project has no signal that the user is actively watching it
+for inbound mail yet. A future task can opt it in once an explicit
+"watching" flag exists.
+
+### Per-application behavior
+
+For each included application:
+
+1. Build the Gmail-search query with the task-083 query builder
+   (`build_application_query`).
+2. Search Gmail (read-only) via `gmail_client.search_messages`.
+3. Update `Application.last_gmail_check_at` and `email_search_state`:
+   - `email_search_state = "no_match"` when the result list is empty.
+   - `email_search_state = "email_received"` when at least one candidate
+     comes back.
+4. If `classify=true` and there is at least one candidate, classify the
+   top-scoring candidate (highest match score, Gmail's newest-first
+   order as the stable tiebreak) via the task-084 classifier.
+5. When the classifier maps to a persisted
+   `EmailLink.classified_status`, write the EmailLink using the
+   existing `_EMAIL_SIDE_EFFECTS` rules in `application_status.md`. The
+   side-effect rules are the single source of truth for status
+   transitions — `withdrawn` stays sticky, `rejected`/`offer` block
+   `next_step`, and so on.
+6. Record `result.evidence` (the matched phrase quote) on the response.
+   No full bodies, no HTML, no attachments.
+
+`classify=false` leaves the application's main status untouched and
+writes no EmailLink rows; the response still includes the candidate
+count so the user can see which applications had matches.
+
+### Rate / cap rules
+
+| Field | Default | Hard cap | Behavior above cap |
+|---|---|---|---|
+| `max_applications` | 25 | 50 | Request returns 422 |
+| `max_results_per_application` | 10 | 10 | Request returns 422 |
+
+The schema layer rejects values above the cap instead of silently
+clamping so the user sees a clear error. The per-application loop also
+caps the result count to the smallest of `MAX_APPLICATION_SEARCH_RESULTS`
+(25, from task 083) and `gmail_client.MAX_TEST_SEARCH_RESULTS` (10, from
+task 082); the effective per-application ceiling is therefore 10.
+
+Applications are processed in deterministic order by
+`Application.updated_at` (descending) so the most recently active
+applications are processed first.
+
+### Result summary format
+
+`checked_count` is `len(results)` — the number of applications the sync
+actually touched. `updated_count` counts results where the
+`email_status` *or* the main `application_status` changed; `no_match_count`
+counts the empty-search outcome; `needs_review_count` counts results
+whose classifier output mapped to `needs_review` (today: `unknown` and
+`newsletter_or_unrelated`). Per-application `results` rows carry the
+job/company labels so the dashboard can render
+`"<Company> — <verdict>"` lines with the matching evidence quote.
+
+### Frontend surface
+
+The Applications page (`frontend/src/pages/ApplicationsPage.tsx`)
+exposes one new action: a **Sync Gmail** button at the top of the page.
+Clicking it:
+
+1. Calls `POST /gmail/sync-applications` with the defaults above.
+2. Renders the loading affordance ("Syncing Gmail…") while the request
+   is in flight.
+3. On success, renders the summary line plus a per-application list of
+   verdicts + evidence quotes.
+4. Triggers a `listApplications()` refresh so derived fields
+   (`email_status`, `last_gmail_check_at`, `latest_email_*`) reflect
+   the persisted side-effects.
+5. When the backend reports `gmail_connected=false`, renders the
+   inline "Connect Gmail before syncing applications" message.
+
+There is no per-row "sync just this one" action in this task —
+per-application search/classify already exists on the detail page.
+
+### Privacy and safety constraints
+
+- **Read-only Gmail use only.** The sync uses the same
+  `gmail.readonly` scope as task 082; no write scope is ever
+  requested.
+- **No send, archive, delete, label, modify, draft, or reply routes
+  are added.** A safety test enumerates the FastAPI routes and rejects
+  any path that contains one of those tokens.
+- **User-triggered only.** No background polling, scheduler, or
+  listener exists. The route fires exactly once per button press.
+- **Safe metadata only.** The classifier inspects
+  `subject` / `from` / `snippet`; full bodies and HTML are never
+  accepted or persisted. Tests verify that even when the (mocked)
+  Gmail client returns a `body` field the sync route never leaks it
+  into the response or the persisted EmailLink.
+- **Evidence is required.** Every classifier-driven status change ships
+  with the matched phrase quote so the user can audit it. No silent
+  transitions.
+- **`withdrawn` is sticky.** The sync excludes withdrawn applications
+  entirely and never moves them to a different status.
+
+### Why background polling is deferred
+
+A background poll would have to manage rate limits, retries,
+fail-quiet behavior, OAuth-refresh edge cases, and a quiet-hours
+schedule that respects the user's mail volume. Shipping a manual sync
+first lets the user drive the cadence, confirms the search+classify
+pipeline behaves on real mail, and gives the project a baseline for
+the latency/quota budget a polling job would need. A future task can
+lift the manual button into a scheduler once the manual flow has
+proven stable on representative mail.
+
+### Known limitations
+
+- Single-account; the connected mailbox from task 082 is searched.
+- The classifier is the same deterministic phrase matcher as task 084
+  — it will miss legitimate signals expressed in unusual phrasing.
+- Only the top candidate per application is classified. A future task
+  may classify the top-N candidates if real-world traffic shows the
+  highest-scoring candidate is the wrong one too often.
+- No bulk "Sync N applications now" affordance beyond the single
+  button. Adjusting `max_applications` requires a request override
+  (curl / a future settings field).

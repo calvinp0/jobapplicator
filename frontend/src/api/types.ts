@@ -219,6 +219,33 @@ export interface GmailClassificationResponse {
   email_link_id: string | null;
 }
 
+export interface GmailSyncApplicationResult {
+  application_id: string;
+  job_title: string | null;
+  company: string | null;
+  previous_email_status: string;
+  new_email_status: string;
+  previous_application_status: string;
+  new_application_status: string;
+  matched_email_count: number;
+  classification: string | null;
+  confidence: number | null;
+  evidence: GmailEvidenceItem[];
+  application_status_changed: boolean;
+  gmail_query: string | null;
+  skipped_reason: string | null;
+}
+
+export interface GmailSyncApplicationsResponse {
+  gmail_connected: boolean;
+  checked_count: number;
+  updated_count: number;
+  no_match_count: number;
+  needs_review_count: number;
+  results: GmailSyncApplicationResult[];
+  message?: string | null;
+}
+
 export interface ApplicationCreate {
   job_id: string;
   resume_version_id?: string | null;

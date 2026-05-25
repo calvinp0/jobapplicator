@@ -15,6 +15,8 @@ import type {
   GmailEvidenceItem,
   GmailSearchResponse,
   GmailStatusResponse,
+  GmailSyncApplicationResult,
+  GmailSyncApplicationsResponse,
   Job,
   JobCapture,
   LlmProvider,
@@ -48,6 +50,8 @@ export type {
   GmailEvidenceItem,
   GmailSearchResponse,
   GmailStatusResponse,
+  GmailSyncApplicationResult,
+  GmailSyncApplicationsResponse,
   Job,
   JobCapture,
   LlmProvider,
@@ -302,6 +306,30 @@ export function searchApplicationGmail(
     extra_terms: payload.extra_terms ?? [],
   };
   return apiRequest(`/applications/${applicationId}/gmail/search`, {
+    method: "POST",
+    body,
+  });
+}
+
+export interface SyncApplicationsGmailPayload {
+  max_applications?: number;
+  max_results_per_application?: number;
+  classify?: boolean;
+  include_terminal?: boolean;
+}
+
+export function syncApplicationsGmail(
+  payload: SyncApplicationsGmailPayload = {},
+): Promise<GmailSyncApplicationsResponse> {
+  const body: Record<string, unknown> = {};
+  if (payload.max_applications !== undefined)
+    body.max_applications = payload.max_applications;
+  if (payload.max_results_per_application !== undefined)
+    body.max_results_per_application = payload.max_results_per_application;
+  if (payload.classify !== undefined) body.classify = payload.classify;
+  if (payload.include_terminal !== undefined)
+    body.include_terminal = payload.include_terminal;
+  return apiRequest("/gmail/sync-applications", {
     method: "POST",
     body,
   });

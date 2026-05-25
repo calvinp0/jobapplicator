@@ -7,8 +7,13 @@ import {
   markApplicationInterview,
   markApplicationRejected,
   submitApplication,
+  syncApplicationsGmail,
 } from "../api";
-import type { Application, Job } from "../api";
+import type {
+  Application,
+  GmailSyncApplicationsResponse,
+  Job,
+} from "../api";
 import {
   applicationUpdatedLabel,
   emailStatusLabel,
@@ -44,6 +49,10 @@ export function ApplicationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncResult, setSyncResult] =
+    useState<GmailSyncApplicationsResponse | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +93,33 @@ export function ApplicationsPage() {
     }
   }
 
+  async function handleSyncGmail() {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      const response = await syncApplicationsGmail();
+      setSyncResult(response);
+      if (response.gmail_connected) {
+        // Refresh applications so derived fields reflect the new
+        // email_status / last_gmail_check_at / classification.
+        try {
+          const refreshed = await listApplications();
+          setApplications(refreshed);
+        } catch {
+          // The sync response is the user-facing source of truth — if
+          // the refresh fails, leave the existing list in place.
+        }
+      }
+    } catch (err: unknown) {
+      const message =
+        err instanceof ApiError ? err.message : "Failed to sync Gmail";
+      setSyncError(message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   if (error) {
     return (
       <section className="applications-page">
@@ -109,6 +145,73 @@ export function ApplicationsPage() {
   return (
     <section className="applications-page">
       <h2>Applications</h2>
+      <div className="applications-toolbar">
+        <button
+          type="button"
+          onClick={handleSyncGmail}
+          disabled={syncing}
+          data-testid="sync-gmail-button"
+        >
+          {syncing ? "Syncing Gmail…" : "Sync Gmail"}
+        </button>
+      </div>
+      {syncError ? (
+        <p role="alert" className="error">
+          {syncError}
+        </p>
+      ) : null}
+      {syncResult ? (
+        <div className="applications-sync-summary" role="status">
+          {syncResult.gmail_connected ? (
+            <>
+              <p>
+                Checked {syncResult.checked_count} application
+                {syncResult.checked_count === 1 ? "" : "s"} · Updated{" "}
+                {syncResult.updated_count} · No match{" "}
+                {syncResult.no_match_count} · Needs review{" "}
+                {syncResult.needs_review_count}
+              </p>
+              {syncResult.results.length > 0 ? (
+                <ul className="applications-sync-results">
+                  {syncResult.results.map((res) => {
+                    const label = `${res.job_title ?? "—"} — ${
+                      res.company ?? "—"
+                    }`;
+                    if (res.skipped_reason) {
+                      return (
+                        <li key={res.application_id}>
+                          {label}: Skipped ({res.skipped_reason})
+                        </li>
+                      );
+                    }
+                    if (res.classification) {
+                      const top = res.evidence[0];
+                      return (
+                        <li key={res.application_id}>
+                          {label}:{" "}
+                          {res.application_status_changed
+                            ? `${res.new_application_status} (was ${res.previous_application_status})`
+                            : res.classification.replace(/_/g, " ")}
+                          {top ? ` — Evidence: "${top.text}"` : null}
+                        </li>
+                      );
+                    }
+                    return (
+                      <li key={res.application_id}>
+                        {label}: {res.new_email_status.replace(/_/g, " ")}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p>
+              {syncResult.message ?? "Connect Gmail before syncing applications."}
+            </p>
+          )}
+        </div>
+      ) : null}
       {actionError ? (
         <p role="alert" className="error">
           {actionError}
