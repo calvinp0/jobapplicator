@@ -1320,7 +1320,7 @@ tasks:
     file: "agent_tasks/067-frontend-settings-llm-provider-card.md"
     branch: "agent/067-frontend-settings-llm-provider-card"
     worktree: "agent-067-frontend-settings-llm-provider-card"
-    status: "ready"
+    status: "done"
     depends_on:
       - "066-backend-llm-provider-default-setting"
     verification:
@@ -1341,7 +1341,7 @@ tasks:
     file: "agent_tasks/068-frontend-per-job-llm-provider-override.md"
     branch: "agent/068-frontend-per-job-llm-provider-override"
     worktree: "agent-068-frontend-per-job-llm-provider-override"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "067-frontend-settings-llm-provider-card"
     verification:
