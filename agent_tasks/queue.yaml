@@ -1941,7 +1941,7 @@ tasks:
     file: "agent_tasks/096-prefill-and-simplify-manual-gmail-linking-ui.md"
     branch: "agent/096-prefill-and-simplify-manual-gmail-linking-ui"
     worktree: "agent-096-prefill-and-simplify-manual-gmail-linking-ui"
-    status: "ready"
+    status: "done"
     depends_on:
       - "093-add-manual-gmail-email-linking"
     verification:
