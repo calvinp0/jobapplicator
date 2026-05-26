@@ -22,7 +22,8 @@ runs/<run_id>/
 │   ├── tailored_resume.docx
 │   ├── tailored_resume.md
 │   ├── change_log.md
-│   └── claim_audit.md
+│   ├── claim_audit.md
+│   └── ats_audit.md
 ├── progress/
 │   └── progress.log              # user-facing phase events + worker heartbeats
 ├── word_handoff/                 # only used when tailoring_method == word_handoff
@@ -269,8 +270,17 @@ output/tailored_resume.docx
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
+output/ats_audit.md
 progress/progress.log
 ```
+
+`output/ats_audit.md` is the structured ATS audit emitted by the
+tailoring worker. It records the keywords extracted from the job
+description, their classification (required / preferred / industry /
+role), how each keyword was covered by the tailored resume (or why it
+was not used), and an ATS-formatting check. The audit is mandatory:
+runs missing this file are marked failed by the same output validation
+that gates the other required outputs.
 
 Claude Code must not write outside the run directory.
 

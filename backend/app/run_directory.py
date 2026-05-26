@@ -33,6 +33,7 @@ EXPECTED_OUTPUTS = (
     "tailored_resume.md",
     "change_log.md",
     "claim_audit.md",
+    "ats_audit.md",
 )
 
 RUNTIME_PROMPT_FILENAME = "resume_tailoring.md"

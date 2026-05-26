@@ -86,6 +86,9 @@ def test_run_log_endpoint_surfaces_missing_output_milestones(
     assert (
         "jobapply: missing expected output file: output/claim_audit.md" in joined
     )
+    assert (
+        "jobapply: missing expected output file: output/ats_audit.md" in joined
+    )
     assert "jobapply: marking run failed" in joined
 
 
