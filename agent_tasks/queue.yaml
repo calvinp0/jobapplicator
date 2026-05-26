@@ -1898,3 +1898,23 @@ tasks:
       - "docs/contracts/gmail_integration.md"
       - "agent_tasks/093-add-manual-gmail-email-linking.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "094-add-safe-database-backup-and-reset"
+    title: "Add safe database backup and reset tooling"
+    file: "agent_tasks/094-add-safe-database-backup-and-reset.md"
+    branch: "agent/094-add-safe-database-backup-and-reset"
+    worktree: "agent-094-add-safe-database-backup-and-reset"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "pytest"
+      - "python scripts/backup_and_reset_db.py --dry-run"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "scripts/**"
+      - "README_INSTALL.md"
+      - "docs/install.md"
+      - ".gitignore"
+      - "agent_tasks/094-add-safe-database-backup-and-reset.md"
+      - "agent_tasks/queue.yaml"
