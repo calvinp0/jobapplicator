@@ -133,6 +133,7 @@ output/tailored_resume.docx
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
+output/ats_audit.md
 ```
 
 ## Progress Events
@@ -148,11 +149,13 @@ Append one line per phase, in order, as you reach each phase:
 Reading job description
 Reviewing master resume
 Reviewing evidence bank
+Extracting ATS keywords from job description
 Planning tailored resume changes
 Drafting tailored resume markdown
 Creating DOCX
 Writing change log
 Writing claim audit
+Writing ATS audit
 Validating required outputs
 ```
 
@@ -190,6 +193,96 @@ input/skills_inventory.md
 input/tailoring_preferences.md
 input/resume_dos_and_donts.md
 ```
+
+## ATS Optimization
+
+Before writing the tailored resume, analyze the job description for ATS
+keywords. The tailored resume must be optimized for Applicant Tracking
+Systems while remaining truthful, readable, and evidence-backed.
+
+Extract:
+
+- exact job title
+- company name
+- required skills
+- preferred skills
+- tools/technologies
+- certifications/degrees
+- domain keywords
+- repeated phrases
+- responsibility keywords
+
+Classify keywords as:
+
+- required
+- preferred
+- industry/role-specific
+
+Use ATS keywords only when they are truthful and supported by the master
+resume or evidence sources.
+
+Do not add unsupported skills, certifications, degrees, employers, dates,
+metrics, or responsibilities.
+
+Do not keyword-stuff.
+
+Place supported keywords naturally in:
+
+- Professional Summary
+- Skills
+- Work Experience bullets
+- Projects
+- Education, if relevant
+
+Use both acronym and full phrase when useful and truthful.
+
+Examples:
+
+- Large Language Models (LLMs)
+- Applicant Tracking System (ATS)
+- Machine Learning (ML)
+
+Match spelling and terminology from the job description when truthful.
+
+- If the job description says "PostgreSQL", prefer "PostgreSQL" over
+  "Postgres" unless both are useful.
+- If the job description says "LLM", include "Large Language Models
+  (LLMs)" if supported.
+
+## ATS Formatting Requirements
+
+Generated DOCX and markdown must follow ATS-safe structure.
+
+Use these standard section headings when the corresponding section exists:
+
+```text
+Professional Summary
+Skills
+Work Experience
+Projects
+Education
+```
+
+Do not place critical resume content in:
+
+- headers/footers
+- text boxes
+- images
+- graphics
+- complex tables
+- multi-column layouts
+
+For DOCX:
+
+- Use real Word headings, paragraphs, and bullet lists.
+- Do not create a plain-text dump.
+- Do not place important resume content only in headers/footers/text boxes.
+- Prefer ATS-readable layout over decorative layout.
+
+For markdown:
+
+- Use plain headings and bullet lists.
+- Avoid tables for key experience content.
 
 ## Allowed Edits
 
@@ -268,6 +361,21 @@ either honored or rejected:
   applied, and explain the evidence gap (which files were checked and
   what was missing).
 
+On a revision run, also:
+
+- preserve ATS-relevant keywords from the prior draft that remain
+  truthful;
+- apply the user's revision request;
+- avoid removing important ATS coverage unless the revision request
+  requires it;
+- update `output/ats_audit.md` to reflect the revised resume;
+- update `output/claim_audit.md` to reflect the revised resume.
+
+If the revision request introduces new factual claims not supported by
+the master resume or evidence sources, treat them as user-provided
+evidence, flag them in `output/claim_audit.md`, and include them in
+`output/ats_audit.md` only if they are relevant ATS keywords.
+
 When `input/revision_feedback.md` is absent, behave exactly as
 specified by the rest of this prompt; no feedback-tracking section is
 required in the claim audit.
@@ -278,9 +386,80 @@ In `output/claim_audit.md`, list important claims in the tailored resume and ide
 
 If a job requirement is weakly supported or unsupported, list it as a gap instead of adding it to the resume.
 
+For every important ATS keyword inserted or emphasized, the audit must
+identify:
+
+- keyword
+- resume location
+- supporting evidence
+- risk level
+
+If a keyword appears in the job description but is not supported by the
+master resume or evidence sources, the audit must say:
+
+```text
+Keyword not used because unsupported by evidence.
+```
+
+The claim audit must remain honest. Do not invent evidence to back up an
+inserted keyword.
+
 If `input/revision_feedback.md` was present, include the honored vs.
 rejected feedback breakdown described in the "Revision Feedback"
 section above.
+
+## ATS Audit
+
+In `output/ats_audit.md`, write a structured ATS audit using the
+following template:
+
+```text
+# ATS Audit
+
+## Target Role
+- Job title:
+- Company:
+
+## Extracted Keywords
+### Required / strongly signaled
+- keyword
+- keyword
+
+### Preferred / nice-to-have
+- keyword
+- keyword
+
+### Industry / role keywords
+- keyword
+- keyword
+
+## Keyword Coverage
+| Keyword | Included? | Resume section | Evidence source | Notes |
+| --- | --- | --- | --- | --- |
+
+## Formatting Check
+- Standard section headings: pass/fail
+- Simple bullet structure: pass/fail
+- Avoided tables/text boxes/graphics for critical content: pass/fail
+- ATS-friendly file type: pass/fail
+- Standard fonts/readable typography: pass/fail
+
+## Risks
+- Missing important keywords:
+- Keywords not used because unsupported by evidence:
+- Possible keyword stuffing:
+- Formatting risks:
+
+## Summary
+Short assessment of ATS readiness.
+```
+
+Fill in each section based on the job description and the tailored
+resume you wrote.
+
+If a keyword from the job description was not included because it was
+not supported by evidence, list it under "Keywords not used because
+unsupported by evidence" in the Risks section.
 
 ## Change Log
 

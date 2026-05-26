@@ -17,6 +17,7 @@ EXPECTED_OUTPUT_FILES = (
     "tailored_resume.md",
     "change_log.md",
     "claim_audit.md",
+    "ats_audit.md",
 )
 
 

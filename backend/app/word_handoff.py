@@ -18,6 +18,7 @@ WORD_RESULT_FILENAME = "word_tailored_resume.docx"
 FINAL_RESUME_FILENAME = "final_resume.docx"
 CHANGE_LOG_FILENAME = "change_log.md"
 CLAIM_AUDIT_FILENAME = "claim_audit.md"
+ATS_AUDIT_FILENAME = "ats_audit.md"
 
 WAITING_FOR_WORD_RESULT_STATUS = "waiting_for_word_result"
 WORD_RESULT_IMPORTED_STATUS = "word_result_imported"
@@ -253,6 +254,7 @@ class WordResultImportInfo:
     final_resume_path: Path
     change_log_placeholder_created: bool
     claim_audit_placeholder_created: bool
+    ats_audit_placeholder_created: bool
 
 
 def _write_audit_placeholder_if_missing(path: Path) -> bool:
@@ -308,6 +310,7 @@ def import_word_result(
             final_resume_path=final_resume_path,
             change_log_placeholder_created=False,
             claim_audit_placeholder_created=False,
+            ats_audit_placeholder_created=False,
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -323,6 +326,9 @@ def import_word_result(
     )
     claim_audit_created = _write_audit_placeholder_if_missing(
         output_dir / CLAIM_AUDIT_FILENAME
+    )
+    ats_audit_created = _write_audit_placeholder_if_missing(
+        output_dir / ATS_AUDIT_FILENAME
     )
 
     set_run_status(run_dir, WORD_RESULT_IMPORTED_STATUS, now=now)
@@ -340,4 +346,5 @@ def import_word_result(
         final_resume_path=final_resume_path,
         change_log_placeholder_created=change_log_created,
         claim_audit_placeholder_created=claim_audit_created,
+        ats_audit_placeholder_created=ats_audit_created,
     )

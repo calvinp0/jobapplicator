@@ -23,6 +23,7 @@ ALL_OUTPUTS = (
     "tailored_resume.docx",
     "change_log.md",
     "claim_audit.md",
+    "ats_audit.md",
 )
 
 
@@ -273,6 +274,7 @@ def test_invoke_run_zero_exit_with_missing_outputs_marks_failed(
         "output/tailored_resume.docx",
         "output/change_log.md",
         "output/claim_audit.md",
+        "output/ats_audit.md",
     ):
         assert missing in message, f"{missing!r} not in {message!r}"
     # The one file that was written must NOT be listed as missing.
@@ -424,6 +426,7 @@ def test_invoke_run_missing_outputs_marks_failed_under_print_mode(
         "output/tailored_resume.docx",
         "output/change_log.md",
         "output/claim_audit.md",
+        "output/ats_audit.md",
     ):
         assert missing in message
 
@@ -911,3 +914,193 @@ def test_runtime_prompt_restricts_writes_to_run_directory():
     so Claude doesn't drift into project-level edits."""
     text = _runtime_prompt_text()
     assert "Only write inside this run directory" in text
+
+
+# ---------------------------------------------------------------------------
+# Task 092: ATS optimization harness
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_prompt_mentions_ats_optimization():
+    """The runtime prompt must call out ATS optimization explicitly."""
+    text = _runtime_prompt_text()
+    assert "ATS Optimization" in text
+    assert "Applicant Tracking System" in text
+
+
+def test_runtime_prompt_extracts_keyword_classes():
+    """The prompt must instruct Claude to classify keywords by importance."""
+    text = _runtime_prompt_text()
+    assert "required" in text
+    assert "preferred" in text
+    assert "industry/role-specific" in text
+    # The extraction list must cover the named keyword classes.
+    for phrase in (
+        "exact job title",
+        "company name",
+        "required skills",
+        "preferred skills",
+        "tools/technologies",
+        "certifications/degrees",
+        "domain keywords",
+        "repeated phrases",
+        "responsibility keywords",
+    ):
+        assert phrase in text, f"missing phrase: {phrase!r}"
+
+
+def test_runtime_prompt_forbids_keyword_stuffing():
+    """The prompt must explicitly forbid keyword stuffing."""
+    text = _runtime_prompt_text()
+    assert "Do not keyword-stuff" in text
+
+
+def test_runtime_prompt_requires_evidence_backed_keywords():
+    """ATS keywords must only be inserted when truthful and evidence-backed."""
+    text = _runtime_prompt_text()
+    assert (
+        "Use ATS keywords only when they are truthful and supported by the master"
+        in text
+    )
+    assert (
+        "Do not add unsupported skills, certifications, degrees, employers, dates"
+        in text
+    )
+
+
+def test_runtime_prompt_requires_standard_section_headings():
+    """The prompt must require ATS-safe standard section headings."""
+    text = _runtime_prompt_text()
+    for heading in (
+        "Professional Summary",
+        "Skills",
+        "Work Experience",
+        "Projects",
+        "Education",
+    ):
+        assert heading in text, f"missing section heading: {heading!r}"
+
+
+def test_runtime_prompt_warns_against_unsafe_formatting():
+    """Critical resume content must not live in headers/footers/text boxes/etc."""
+    text = _runtime_prompt_text()
+    for unsafe in (
+        "headers/footers",
+        "text boxes",
+        "images",
+        "graphics",
+        "complex tables",
+        "multi-column layouts",
+    ):
+        assert unsafe in text, f"missing formatting warning: {unsafe!r}"
+
+
+def test_runtime_prompt_requires_acronym_and_full_phrase_usage():
+    """The prompt must encourage acronym + full phrase usage when truthful."""
+    text = _runtime_prompt_text()
+    assert "acronym and full phrase" in text
+    assert "Large Language Models (LLMs)" in text
+    assert "Applicant Tracking System (ATS)" in text
+    assert "Machine Learning (ML)" in text
+
+
+def test_runtime_prompt_revision_preserves_ats_coverage_and_updates_audit():
+    """Revision runs must keep ATS coverage and refresh the ATS audit."""
+    text = _runtime_prompt_text()
+    assert "preserve ATS-relevant keywords" in text
+    assert "update `output/ats_audit.md`" in text
+
+
+def test_runtime_prompt_requires_ats_audit_output():
+    """ats_audit.md must be listed in the required outputs of the prompt."""
+    text = _runtime_prompt_text()
+    assert "output/ats_audit.md" in text
+    # The audit template must include the structured headings the task spec
+    # requires so a reader of the prompt can see the contract end-to-end.
+    for heading in (
+        "## Target Role",
+        "## Extracted Keywords",
+        "## Keyword Coverage",
+        "## Formatting Check",
+        "## Risks",
+        "## Summary",
+    ):
+        assert heading in text, f"missing ATS audit heading: {heading!r}"
+    # Unsupported-keyword handling must be spelled out.
+    assert "Keyword not used because unsupported by evidence" in text
+
+
+def test_invoke_run_logs_ats_optimization_requested(client, tmp_path, monkeypatch):
+    """The worker must log that ATS optimization was requested for the run."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: ATS optimization requested" in log_text
+    assert "jobapply: ATS audit expected at output/ats_audit.md" in log_text
+
+
+def test_invoke_run_missing_ats_audit_marks_failed(client, tmp_path, monkeypatch):
+    """A fake Claude that writes everything except ats_audit.md must fail."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    # Omit ats_audit.md from the write list.
+    write_outputs = tuple(name for name in ALL_OUTPUTS if name != "ats_audit.md")
+    binary = _write_fake_binary(
+        tmp_path,
+        exit_code=0,
+        write_outputs=write_outputs,
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "failed"
+    assert "output/ats_audit.md" in body["error_message"]
+
+
+def test_invoke_run_with_ats_audit_marks_completed(client, tmp_path, monkeypatch):
+    """A fake Claude that writes ats_audit.md plus the other required
+    outputs must reach completed."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(
+        tmp_path,
+        exit_code=0,
+        write_outputs=ALL_OUTPUTS,
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["error_message"] is None
+
+    run_dir = Path(body["run_dir"])
+    assert (run_dir / "output" / "ats_audit.md").is_file()
+
+
+def test_invoke_run_dry_run_writes_ats_audit_placeholder(
+    client, tmp_path, monkeypatch
+):
+    """Dry-run mode must populate ats_audit.md so the output contract holds."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    monkeypatch.setenv(
+        "JOBAPPLY_CLAUDE_BINARY", str(tmp_path / "would_explode_if_used")
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_DRY_RUN", "1")
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    ats_audit = Path(body["run_dir"]) / "output" / "ats_audit.md"
+    assert ats_audit.is_file()
+    assert "ATS Audit" in ats_audit.read_text(encoding="utf-8")

@@ -77,6 +77,7 @@ def _seed_draft(client, tmp_path: Path, monkeypatch) -> dict:
         "tailored_resume.md",
         "change_log.md",
         "claim_audit.md",
+        "ats_audit.md",
     ):
         (out / name).write_bytes(f"content for {name}\n".encode("utf-8"))
 
@@ -289,6 +290,7 @@ def test_revision_feedback_stages_master_resume_markdown(
         "tailored_resume.md",
         "change_log.md",
         "claim_audit.md",
+        "ats_audit.md",
     ):
         (run_dir / "output" / name).write_bytes(f"content {name}\n".encode("utf-8"))
 
@@ -374,6 +376,7 @@ def test_revision_feedback_stages_filesystem_master_resume_docx(
         "tailored_resume.md",
         "change_log.md",
         "claim_audit.md",
+        "ats_audit.md",
     ):
         (run_dir / "output" / name).write_bytes(f"content {name}\n".encode("utf-8"))
 
@@ -487,6 +490,7 @@ def test_revision_feedback_stages_original_evidence_sources(
         "tailored_resume.md",
         "change_log.md",
         "claim_audit.md",
+        "ats_audit.md",
     ):
         (run_dir / "output" / name).write_bytes(f"content {name}\n".encode("utf-8"))
 
@@ -585,6 +589,7 @@ def test_revision_feedback_creates_new_resume_version_not_overwriting_source(
         "tailored_resume.md",
         "change_log.md",
         "claim_audit.md",
+        "ats_audit.md",
     ):
         (follow_dir / "output" / name).write_bytes(
             f"revised {name}\n".encode("utf-8")

@@ -886,6 +886,13 @@ def test_runtime_prompt_requests_docx_skill():
     assert "non-interactive" in text
 
 
+def test_expected_outputs_includes_ats_audit():
+    """Task 092: ats_audit.md is part of the required output contract."""
+    from app.run_directory import EXPECTED_OUTPUTS
+
+    assert "ats_audit.md" in EXPECTED_OUTPUTS
+
+
 def test_runtime_prompt_requests_office_word_mcp():
     """The shipped runtime prompt must prefer the Office Word MCP server.
 
