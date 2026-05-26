@@ -115,10 +115,17 @@ def _render_prompt(
         "Use this document as the source resume and tailor it for the target job.",
         "",
         "Preserve the master resume's existing visual style, including "
-        "colored headings, fonts, spacing, margins, and bullet indentation:",
+        "the centered name/contact header, colored headings (colored "
+        "section headings), separator lines, fonts, spacing, margins, "
+        "bullet indentation, and date alignment:",
+        "- Keep the centered name/contact header block centered.",
         "- Keep colored section headings (e.g. blue headers stay blue).",
+        "- Keep horizontal separator/divider lines that appear in the "
+        "master resume.",
+        "- Keep bullet lists as bullet lists; do not flatten them into "
+        "plain paragraphs.",
         "- Keep fonts, font sizes, margins, section spacing, headings, "
-        "bullets, bullet indentation, and page layout.",
+        "bullets, bullet indentation, date alignment, and page layout.",
         "- Preserve bold/italic emphasis patterns and simple separators.",
         "- Edit inside the resume rather than rebuilding the document from scratch.",
         "- Use tracked changes if available.",

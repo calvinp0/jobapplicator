@@ -1270,3 +1270,413 @@ def test_invoke_run_skips_style_preservation_log_when_no_master_docx(
     assert (
         "jobapply: master resume DOCX staged as formatting source" not in log_text
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 107: DOCX template fidelity audit
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_prompt_declares_master_docx_as_template_source_of_truth():
+    """The tailoring prompt must name the master DOCX as the template
+    source of truth so Claude does not regenerate a generic document
+    from scratch."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "template source of truth" in normalized
+
+
+def test_runtime_prompt_says_copy_or_edit_source_docx_workflow():
+    """The tailoring prompt must spell out the copy → edit → save
+    workflow rather than rebuild-from-scratch."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "copy `input/master_resume.docx` as the editable base".lower() in normalized
+    assert "replace/tailor text inside the copied document" in normalized
+    assert (
+        "do not rebuild the resume from scratch unless copying/editing "
+        "the source docx fails" in normalized
+    )
+
+
+def test_runtime_prompt_requires_centered_name_header_preservation():
+    text = _runtime_prompt_text()
+    assert "centered name/header block" in text
+    assert "centered contact line / links" in text
+
+
+def test_runtime_prompt_requires_horizontal_separator_preservation():
+    text = _runtime_prompt_text()
+    # Both the bulleted preservation list and the workflow language must
+    # reference horizontal dividers/separators so future drift cannot
+    # silently strip the rule.
+    assert "horizontal divider/separator lines" in text
+    assert "horizontal separators if present" in text
+
+
+def test_runtime_prompt_requires_bullet_list_preservation():
+    text = _runtime_prompt_text()
+    assert "bullet list formatting" in text
+    normalized = _normalize_whitespace(text).lower()
+    assert (
+        "the tailored resume should keep bullet points rather than "
+        "converting them to plain paragraphs" in normalized
+    )
+
+
+def test_runtime_prompt_requires_blue_colored_heading_preservation():
+    text = _runtime_prompt_text()
+    assert "blue or colored section heading style" in text
+
+
+def test_runtime_prompt_word_mcp_preserves_centered_header_and_separators():
+    """The Word MCP usage block must explicitly mention centered header
+    alignment and horizontal separators so Claude knows to keep them
+    when editing through the MCP tools."""
+    text = _runtime_prompt_text()
+    assert "preserve centered header alignment" in text
+    assert "preserve horizontal separators if present" in text
+    assert "replace/tailor content without flattening styles" in text
+
+
+def test_runtime_prompt_lists_template_fidelity_audit_output():
+    """The tailoring prompt must list output/template_fidelity_audit.md
+    in the Required Outputs section."""
+    text = _runtime_prompt_text()
+    assert "output/template_fidelity_audit.md" in text
+
+
+def test_runtime_prompt_describes_template_fidelity_audit_structure():
+    """The prompt must include the audit template so Claude knows the
+    required structure (source/output paths, checklist, deviations,
+    remediation)."""
+    text = _runtime_prompt_text()
+    assert "# Template Fidelity Audit" in text
+    for section in (
+        "## Source Template",
+        "## Formatting Preservation Checklist",
+        "## Known Deviations",
+        "## Remediation",
+    ):
+        assert section in text, f"missing audit section: {section!r}"
+    # The checklist rows must cover each documented preservation feature.
+    for row in (
+        "Centered name/header block",
+        "Centered contact line",
+        "Blue/colored section headings",
+        "Horizontal divider lines",
+        "Bullet lists",
+        "Date alignment",
+        "Margins",
+        "Font family/size consistency",
+        "Section spacing",
+    ):
+        assert row in text, f"missing audit checklist row: {row!r}"
+
+
+def test_revision_prompt_lists_template_fidelity_audit_output():
+    text = _revision_prompt_text()
+    assert "output/template_fidelity_audit.md" in text
+
+
+def test_revision_prompt_preserves_centered_header_and_separators():
+    """Revision prompt must mention centered header, colored headings,
+    separator lines, and bullet lists in its preservation list."""
+    text = _revision_prompt_text()
+    for element in (
+        "centered name/header block",
+        "colored section headings",
+        "horizontal separator/divider lines",
+        "bullet lists",
+        "date alignment",
+    ):
+        assert element in text, f"missing revision preservation element: {element!r}"
+
+
+def test_revision_prompt_preserves_layout_and_does_not_restyle():
+    """Revision prompt must explicitly preserve DOCX styling and layout
+    and refuse to restyle absent a user request."""
+    normalized = _normalize_whitespace(_revision_prompt_text())
+    assert "Do not restyle the resume unless the user explicitly asks" in normalized
+    assert (
+        "Apply the requested content changes while preserving existing "
+        "DOCX styling and layout" in normalized
+    )
+
+
+def test_word_handoff_prompt_preserves_centered_header_and_separators():
+    """The Claude for Word handoff prompt must explicitly preserve the
+    centered name/contact header, colored section headings, separator
+    lines, and bullet lists."""
+    from app.word_handoff import _render_prompt
+
+    text = _render_prompt("Some job description")
+    assert "centered name/contact header" in text
+    assert "colored section headings" in text
+    assert (
+        "horizontal separator/divider lines" in text
+        or "separator/divider lines" in text
+    )
+    # Bullet preservation must be called out so Word handoff edits do not
+    # flatten lists into paragraphs.
+    assert (
+        "Keep bullet lists as bullet lists" in text
+        or "bullet lists" in text.lower()
+    )
+    # Centered header preservation must be in the action bullet list, not
+    # only in the opening sentence.
+    assert "Keep the centered name/contact header block centered" in text
+
+
+def test_invoke_run_logs_template_fidelity_audit_expected_when_master_docx_present(
+    client, tmp_path, monkeypatch
+):
+    """Worker must log that the template fidelity audit is expected when
+    a master DOCX is staged for the run."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+    _write_master_resume_docx(input_dir)
+
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert (
+        "jobapply: template fidelity audit expected at "
+        "output/template_fidelity_audit.md"
+    ) in log_text
+
+
+def test_invoke_run_warns_when_template_fidelity_audit_missing(
+    client, tmp_path, monkeypatch
+):
+    """When a master DOCX is staged but Claude omits the template
+    fidelity audit, the worker must record a warning line so the
+    operator can see the audit was expected and missing. The run still
+    completes because the audit is optional (task 107 elected not to
+    expand EXPECTED_OUTPUTS to avoid breaking import tests)."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+    _write_master_resume_docx(input_dir)
+
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert (
+        "jobapply: warning: template fidelity audit missing at "
+        "output/template_fidelity_audit.md"
+    ) in log_text
+
+
+def test_invoke_run_no_audit_warning_when_no_master_docx(
+    client, tmp_path, monkeypatch
+):
+    """Without a master DOCX there is no template to audit fidelity
+    against, so the worker must not log the missing-audit warning."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "template fidelity audit missing" not in log_text
+    # The "audit expected" line is also gated on the DOCX being present.
+    assert (
+        "jobapply: template fidelity audit expected at "
+        "output/template_fidelity_audit.md"
+    ) not in log_text
+
+
+def test_invoke_run_no_audit_warning_when_claude_writes_audit(
+    client, tmp_path, monkeypatch
+):
+    """When Claude writes the template fidelity audit, the warning must
+    not appear."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+    _write_master_resume_docx(input_dir)
+
+    extra_outputs = ALL_OUTPUTS + ("template_fidelity_audit.md",)
+    binary = _write_fake_binary(
+        tmp_path, exit_code=0, write_outputs=extra_outputs
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    run_dir = Path(body["run_dir"])
+    assert (run_dir / "output" / "template_fidelity_audit.md").is_file()
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert "template fidelity audit missing" not in log_text
+
+
+# ---------------------------------------------------------------------------
+# Task 107: deterministic DOCX style audit helper
+# ---------------------------------------------------------------------------
+
+
+def _build_styled_docx(
+    path: Path,
+    *,
+    centered_header: bool = True,
+    centered_contact: bool = True,
+    colored_heading: bool = True,
+    bullets: bool = True,
+) -> Path:
+    """Build a DOCX fixture with toggleable visual features.
+
+    The toggles cover the features the audit checklist tracks:
+    centered name/header, centered contact line, colored section
+    heading, and bullet list paragraphs. Tests opt features in/out so
+    the deterministic audit can be exercised against both source-like
+    and stripped-output-like documents.
+    """
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import RGBColor
+
+    doc = Document()
+    name = doc.add_paragraph()
+    name.add_run("Jane Doe").bold = True
+    if centered_header:
+        name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    contact = doc.add_paragraph("jane@example.com | linkedin.com/in/jane")
+    if centered_contact:
+        contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    heading = doc.add_paragraph("Experience", style="Heading 1")
+    if colored_heading:
+        for run in heading.runs:
+            run.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
+
+    doc.add_paragraph("Acme Corp — Staff Engineer", style="Heading 2")
+    if bullets:
+        doc.add_paragraph("Built distributed systems.", style="List Bullet")
+        doc.add_paragraph("Shipped features.", style="List Bullet")
+    else:
+        doc.add_paragraph("Built distributed systems.")
+        doc.add_paragraph("Shipped features.")
+
+    doc.save(str(path))
+    return path
+
+
+def test_docx_style_audit_detects_centered_header(tmp_path):
+    from app.docx_style_audit import summarize_docx_style
+
+    path = _build_styled_docx(tmp_path / "centered.docx")
+    summary = summarize_docx_style(path)
+    assert summary.header_centered is True
+    assert summary.contact_centered is True
+
+
+def test_docx_style_audit_detects_missing_centered_header(tmp_path):
+    from app.docx_style_audit import summarize_docx_style
+
+    path = _build_styled_docx(
+        tmp_path / "left.docx",
+        centered_header=False,
+        centered_contact=False,
+    )
+    summary = summarize_docx_style(path)
+    assert summary.header_centered is False
+    assert summary.contact_centered is False
+
+
+def test_docx_style_audit_detects_colored_heading(tmp_path):
+    from app.docx_style_audit import summarize_docx_style
+
+    path = _build_styled_docx(tmp_path / "colored.docx")
+    summary = summarize_docx_style(path)
+    assert summary.has_colored_headings is True
+    assert summary.colored_heading_count >= 1
+
+
+def test_docx_style_audit_detects_missing_colored_heading(tmp_path):
+    from app.docx_style_audit import summarize_docx_style
+
+    path = _build_styled_docx(tmp_path / "nocolor.docx", colored_heading=False)
+    summary = summarize_docx_style(path)
+    assert summary.has_colored_headings is False
+
+
+def test_docx_style_audit_detects_bullets(tmp_path):
+    from app.docx_style_audit import summarize_docx_style
+
+    path = _build_styled_docx(tmp_path / "bullets.docx")
+    summary = summarize_docx_style(path)
+    assert summary.has_bullets is True
+    assert summary.bullet_paragraph_count >= 2
+
+
+def test_docx_style_audit_detects_missing_bullets(tmp_path):
+    from app.docx_style_audit import summarize_docx_style
+
+    path = _build_styled_docx(tmp_path / "nobullets.docx", bullets=False)
+    summary = summarize_docx_style(path)
+    assert summary.has_bullets is False
+
+
+def test_docx_style_audit_compare_flags_missing_centered_header(tmp_path):
+    """The comparator must surface the regression when the source
+    centered the header but the output did not."""
+    from app.docx_style_audit import (
+        compare_template_fidelity,
+        summarize_docx_style,
+    )
+
+    source = summarize_docx_style(_build_styled_docx(tmp_path / "src.docx"))
+    output = summarize_docx_style(
+        _build_styled_docx(
+            tmp_path / "out.docx",
+            centered_header=False,
+            centered_contact=False,
+        )
+    )
+    issues = compare_template_fidelity(source, output)
+    features = {issue.feature for issue in issues}
+    assert "centered header" in features
+    assert "centered contact" in features
+
+
+def test_docx_style_audit_compare_flags_missing_bullets(tmp_path):
+    from app.docx_style_audit import (
+        compare_template_fidelity,
+        summarize_docx_style,
+    )
+
+    source = summarize_docx_style(_build_styled_docx(tmp_path / "src.docx"))
+    output = summarize_docx_style(
+        _build_styled_docx(tmp_path / "out.docx", bullets=False)
+    )
+    issues = compare_template_fidelity(source, output)
+    features = {issue.feature for issue in issues}
+    assert "bullet lists" in features
+
+
+def test_docx_style_audit_compare_no_issues_when_output_matches(tmp_path):
+    from app.docx_style_audit import (
+        compare_template_fidelity,
+        summarize_docx_style,
+    )
+
+    source = summarize_docx_style(_build_styled_docx(tmp_path / "src.docx"))
+    output = summarize_docx_style(_build_styled_docx(tmp_path / "out.docx"))
+    issues = compare_template_fidelity(source, output)
+    assert issues == []

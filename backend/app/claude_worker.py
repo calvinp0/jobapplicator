@@ -47,6 +47,12 @@ RUN_LOG_FILENAME = "run.log"
 PROMPT_RELPATH = Path("input") / "tailoring_prompt.md"
 INPUT_DIRNAME = "input"
 OUTPUT_DIRNAME = "output"
+# Optional output (not in EXPECTED_OUTPUTS) — when a master resume DOCX is
+# present we ask Claude to also write a template fidelity audit. The worker
+# does not fail a run that omits this file (the contract is recorded as
+# optional in task 107), but it logs a warning so the operator can see the
+# audit was expected and missing.
+TEMPLATE_FIDELITY_AUDIT_FILENAME = "template_fidelity_audit.md"
 PROGRESS_DIRNAME = "progress"
 PROGRESS_LOG_FILENAME = "progress.log"
 PROGRESS_RELPATH = Path(PROGRESS_DIRNAME) / PROGRESS_LOG_FILENAME
@@ -261,6 +267,10 @@ def _extract_master_resume_docx(
     )
     _append_progress(
         log_path, "master resume DOCX staged as formatting source"
+    )
+    _append_progress(
+        log_path,
+        "template fidelity audit expected at output/template_fidelity_audit.md",
     )
     if result.extracted:
         _append_progress(
@@ -636,6 +646,19 @@ def invoke_claude_run(
             _append_progress(log_path, "output contract satisfied")
             run.status = "completed"
             run.error_message = None
+        # Optional template fidelity audit. We only nag about it when a
+        # master DOCX was actually staged for this run — without one
+        # there is no template to audit fidelity against.
+        if extraction.docx_found:
+            audit_path = (
+                run_dir / OUTPUT_DIRNAME / TEMPLATE_FIDELITY_AUDIT_FILENAME
+            )
+            if not audit_path.is_file():
+                _append_progress(
+                    log_path,
+                    "warning: template fidelity audit missing at "
+                    f"{OUTPUT_DIRNAME}/{TEMPLATE_FIDELITY_AUDIT_FILENAME}",
+                )
     run.completed_at = _now()
     db.commit()
     db.refresh(run)

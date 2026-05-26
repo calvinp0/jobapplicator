@@ -100,24 +100,50 @@ If a source DOCX exists:
   as `copy_document`, `add_heading`, `add_paragraph`,
   `search_and_replace`, `format_text`);
 - treat `input/master_resume.docx` as the formatting/style source of
-  truth and as the editable base for the tailored output;
+  truth (and as the template source of truth) and as the editable base
+  for the tailored output;
 - prefer copying/editing the source DOCX in place rather than rebuilding
   a generic resume from scratch;
 - preserve the master resume's professional styling, including:
+  - centered name/header block
+  - centered contact line / links
+  - header spacing
+  - horizontal divider/separator lines
+  - blue or colored section heading style
+  - standard section heading names
   - section heading colors
   - font families
   - font sizes
   - margins
   - paragraph spacing
+  - bullet list formatting
   - bullet indentation
+  - date alignment
   - bold/italic emphasis patterns
   - simple horizontal rules or separators
   - section heading hierarchy.
 
-If the master resume uses blue section headers or similar simple color
+Preferred workflow when `input/master_resume.docx` exists:
+
+1. Copy `input/master_resume.docx` as the editable base.
+2. Replace/tailor text inside the copied document.
+3. Preserve paragraph styles, heading styles, list styles, colors,
+   spacing, margins, and alignment.
+4. Save the result as `output/tailored_resume.docx`.
+
+Do not rebuild the resume from scratch unless copying/editing the source
+DOCX fails.
+
+If the master resume uses blue section headings or similar simple color
 styling, preserve that styling in `output/tailored_resume.docx`. Do not
 strip professional color styling unless it causes ATS readability
 problems. Do not create a plain-text dump inside a DOCX.
+
+If the master resume has bullet points, the tailored resume should keep
+bullet points rather than converting them to plain paragraphs.
+
+If the master resume has a centered header block, preserve centered
+alignment for the name and contact details.
 
 Also read the extracted markdown file when present:
 
@@ -150,7 +176,12 @@ output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
+output/template_fidelity_audit.md
 ```
+
+`output/template_fidelity_audit.md` records how well the tailored DOCX
+preserves the master resume's visual template. See the "Template
+Fidelity Audit" section below for the required structure.
 
 ## Progress Events
 
@@ -172,6 +203,7 @@ Creating DOCX
 Writing change log
 Writing claim audit
 Writing ATS audit
+Writing template fidelity audit
 Validating required outputs
 ```
 
@@ -497,6 +529,47 @@ If a keyword from the job description was not included because it was
 not supported by evidence, list it under "Keywords not used because
 unsupported by evidence" in the Risks section.
 
+## Template Fidelity Audit
+
+In `output/template_fidelity_audit.md`, record how well the tailored
+DOCX preserves the master resume's visual template. Use the following
+structure exactly:
+
+```text
+# Template Fidelity Audit
+
+## Source Template
+- Source DOCX:
+- Tailored DOCX:
+
+## Formatting Preservation Checklist
+| Feature | Source had it? | Output preserved it? | Notes |
+| --- | --- | --- | --- |
+| Centered name/header block | yes/no | yes/no | ... |
+| Centered contact line | yes/no | yes/no | ... |
+| Blue/colored section headings | yes/no | yes/no | ... |
+| Horizontal divider lines | yes/no | yes/no | ... |
+| Bullet lists | yes/no | yes/no | ... |
+| Date alignment | yes/no | yes/no | ... |
+| Margins | yes/no | yes/no | ... |
+| Font family/size consistency | yes/no | yes/no | ... |
+| Section spacing | yes/no | yes/no | ... |
+
+## Known Deviations
+- ...
+
+## Remediation
+- ...
+```
+
+Fill in each row honestly. If `input/master_resume.docx` is not
+available, record that under "Source Template" and list each row's
+"Source had it?" column as `unknown`.
+
+If the MCP/DOCX tools could not preserve a particular style element,
+list it under "Known Deviations" with a brief explanation and propose a
+remediation step.
+
 ## Change Log
 
 In `output/change_log.md`, summarize:
@@ -534,11 +607,15 @@ When the `word-document-server` MCP server is available:
 - replace/tailor text while preserving paragraph styles and run formatting;
 - preserve heading styles/colors where possible (e.g. blue section
   headers stay blue);
-- preserve bullet/list styles where possible.
+- preserve bullet/list styles where possible;
+- preserve centered header alignment (centered name/contact block);
+- preserve horizontal separators if present;
+- replace/tailor content without flattening styles.
 
 If the MCP tools cannot preserve styling, document the limitation in
-`output/claim_audit.md` or `output/ats_audit.md` and still produce the
-required outputs.
+`output/claim_audit.md`, `output/ats_audit.md`, and the "Known
+Deviations" section of `output/template_fidelity_audit.md` and still
+produce the required outputs.
 
 If no source DOCX exists:
 
