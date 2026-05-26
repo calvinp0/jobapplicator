@@ -1936,3 +1936,21 @@ tasks:
       - "docs/contracts/**"
       - "agent_tasks/095-redesign-applications-page-as-table.md"
       - "agent_tasks/queue.yaml"
+  - id: "096-prefill-and-simplify-manual-gmail-linking-ui"
+    title: "Prefill and simplify manual Gmail linking UI"
+    file: "agent_tasks/096-prefill-and-simplify-manual-gmail-linking-ui.md"
+    branch: "agent/096-prefill-and-simplify-manual-gmail-linking-ui"
+    worktree: "agent-096-prefill-and-simplify-manual-gmail-linking-ui"
+    status: "ready"
+    depends_on:
+      - "093-add-manual-gmail-email-linking"
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "agent_tasks/096-prefill-and-simplify-manual-gmail-linking-ui.md"
+      - "agent_tasks/queue.yaml"
