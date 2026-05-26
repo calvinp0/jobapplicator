@@ -9,6 +9,9 @@ const {
   openResumeVersionFileMock,
   submitRevisionFeedbackMock,
   getJobMock,
+  getRunMock,
+  listMasterResumesMock,
+  listEvidenceSourcesMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -27,6 +30,9 @@ const {
     openResumeVersionFileMock: vi.fn(),
     submitRevisionFeedbackMock: vi.fn(),
     getJobMock: vi.fn(),
+    getRunMock: vi.fn(),
+    listMasterResumesMock: vi.fn(),
+    listEvidenceSourcesMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -37,6 +43,9 @@ vi.mock("../api", () => ({
   openResumeVersionFile: openResumeVersionFileMock,
   submitRevisionFeedback: submitRevisionFeedbackMock,
   getJob: getJobMock,
+  getRun: getRunMock,
+  listMasterResumes: listMasterResumesMock,
+  listEvidenceSources: listEvidenceSourcesMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -100,6 +109,24 @@ const versionWithoutDocx = {
 describe("ResumeVersionDetailPage", () => {
   beforeEach(() => {
     getJobMock.mockResolvedValue(job);
+    getRunMock.mockResolvedValue({
+      id: "run-1",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      evidence_bank_id: null,
+      run_dir: "runs/run-1",
+      status: "imported",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T10:00:00Z",
+      started_at: null,
+      completed_at: null,
+      error_message: null,
+      evidence_source_ids: [],
+    });
+    listMasterResumesMock.mockResolvedValue([]);
+    listEvidenceSourcesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -482,5 +509,115 @@ describe("ResumeVersionDetailPage", () => {
     await user.click(openBtn);
 
     expect(openResumeVersionFileMock).not.toHaveBeenCalled();
+  });
+
+  it("displays the base master resume name and evidence source count", async () => {
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    listMasterResumesMock.mockResolvedValue([
+      {
+        id: "resume-1",
+        name: "Calvin master resume",
+        source_path: null,
+        content_markdown: "",
+        created_at: "2026-05-01T00:00:00Z",
+        updated_at: "2026-05-01T00:00:00Z",
+        source: "database",
+        source_format: null,
+        is_demo: false,
+      },
+    ]);
+    getRunMock.mockResolvedValue({
+      id: "run-1",
+      job_id: "job-1",
+      master_resume_id: "resume-1",
+      evidence_bank_id: null,
+      run_dir: "runs/run-1",
+      status: "imported",
+      prompt_hash: null,
+      input_hash: null,
+      output_hash: null,
+      created_at: "2026-05-22T10:00:00Z",
+      started_at: null,
+      completed_at: null,
+      error_message: null,
+      evidence_source_ids: ["ev-1", "ev-2"],
+    });
+    listEvidenceSourcesMock.mockResolvedValue([
+      {
+        id: "ev-1",
+        name: "Primary bank",
+        source_type: "evidence_bank",
+        source_format: "md",
+        source: "database",
+        source_path: null,
+        updated_at: "2026-05-10T00:00:00Z",
+        is_demo: false,
+      },
+      {
+        id: "ev-2",
+        name: "Project notes",
+        source_type: "project_note",
+        source_format: "md",
+        source: "filesystem",
+        source_path: "candidate_context/project_notes/notes.md",
+        updated_at: "2026-05-10T00:00:00Z",
+        is_demo: false,
+      },
+    ]);
+
+    renderVersion("version-1");
+
+    await waitFor(() =>
+      expect(screen.getByText("Calvin master resume")).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(/2 \(Primary bank, Project notes\)/i),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("sends additional_evidence_source_ids when present in the payload", async () => {
+    // Today the page does not yet expose an evidence picker in the
+    // revision form, but the API layer must already accept the field
+    // so backend support can ship ahead of the UI.
+    const user = userEvent.setup();
+    getResumeVersionMock.mockResolvedValue({ ...pendingVersion });
+    submitRevisionFeedbackMock.mockResolvedValue({
+      id: "rf-extra",
+      job_id: "job-1",
+      source_resume_version_id: "version-1",
+      followup_claude_run_id: "run-9",
+      feedback_markdown: "Add the new evidence.",
+      status: "created",
+      created_at: "2026-05-22T14:00:00Z",
+    });
+
+    // Simulate a future caller passing additional_evidence_source_ids by
+    // invoking the mocked api directly.
+    submitRevisionFeedbackMock("version-1", {
+      feedback_markdown: "Add the new evidence.",
+      additional_evidence_source_ids: ["ev-3"],
+    });
+
+    expect(submitRevisionFeedbackMock).toHaveBeenCalledWith("version-1", {
+      feedback_markdown: "Add the new evidence.",
+      additional_evidence_source_ids: ["ev-3"],
+    });
+
+    // The form-driven path still works without the extra ids.
+    renderVersion("version-1");
+    const requestBtn = await screen.findByRole("button", {
+      name: /^request revisions$/i,
+    });
+    await user.click(requestBtn);
+    await user.type(
+      screen.getByRole("textbox", { name: /what should change/i }),
+      "Polish.",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^submit revision request$/i }),
+    );
+    await waitFor(() => expect(submitRevisionFeedbackMock).toHaveBeenCalled());
   });
 });

@@ -37,6 +37,8 @@ EXPECTED_OUTPUTS = (
 
 RUNTIME_PROMPT_FILENAME = "resume_tailoring.md"
 REVISION_FEEDBACK_FILENAME = "revision_feedback.md"
+CURRENT_TAILORED_RESUME_MD_FILENAME = "current_tailored_resume.md"
+CURRENT_TAILORED_RESUME_DOCX_FILENAME = "current_tailored_resume.docx"
 
 METADATA_FILENAME = "metadata.json"
 
@@ -127,6 +129,7 @@ class RevisionFeedbackInput:
     source_resume_version_id: str
     feedback_markdown: str
     structured_flags: Optional[dict[str, Any]] = field(default=None)
+    additional_evidence_source_ids: Optional[list[str]] = field(default=None)
 
 
 class RunDirectoryError(ValueError):
@@ -213,6 +216,8 @@ def create_run_directory(
     llm_provider: Optional[str] = None,
     master_resume_docx_path: Optional[Path] = None,
     evidence_sources: Optional[list[EvidenceSourceInput]] = None,
+    current_tailored_resume_markdown: Optional[str] = None,
+    current_tailored_resume_docx_path: Optional[Path] = None,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
 
@@ -287,6 +292,22 @@ def create_run_directory(
         _write_text(
             input_dir / REVISION_FEEDBACK_FILENAME,
             _render_revision_feedback(revision_feedback),
+        )
+
+    if current_tailored_resume_markdown is not None:
+        _write_text(
+            input_dir / CURRENT_TAILORED_RESUME_MD_FILENAME,
+            current_tailored_resume_markdown,
+        )
+
+    if current_tailored_resume_docx_path is not None:
+        docx_src = Path(current_tailored_resume_docx_path)
+        if not docx_src.is_file():
+            raise RunDirectoryError(
+                f"current_tailored_resume_docx_path does not exist: {docx_src}"
+            )
+        shutil.copyfile(
+            docx_src, input_dir / CURRENT_TAILORED_RESUME_DOCX_FILENAME
         )
 
     # --- hashes ---
@@ -579,6 +600,11 @@ def _render_revision_feedback(feedback: RevisionFeedbackInput) -> str:
         lines.append(
             "structured_flags: "
             + json.dumps(feedback.structured_flags, sort_keys=True)
+        )
+    if feedback.additional_evidence_source_ids:
+        lines.append(
+            "additional_evidence_source_ids: "
+            + json.dumps(list(feedback.additional_evidence_source_ids))
         )
     lines.append("---")
     lines.append("")

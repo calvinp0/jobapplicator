@@ -42,6 +42,8 @@ Also read, if present:
 
 ```text
 input/revision_feedback.md
+input/current_tailored_resume.md
+input/current_tailored_resume.docx
 input/master_resume_extracted.md
 ```
 
@@ -221,11 +223,32 @@ This section applies only when `input/revision_feedback.md` is present.
 
 The file contains user-authored feedback on a prior tailored draft. It
 may include a free-text markdown body and optional structured flags
-(such as common-asks checkboxes) at the top.
+(such as common-asks checkboxes) at the top. The frontmatter may also
+list `additional_evidence_source_ids` — these point at evidence sources
+the user selected specifically for this revision (already staged under
+`input/evidence_sources/` alongside the original evidence). Treat those
+additional sources as supporting evidence, but flag any claim drawn
+solely from them in `output/claim_audit.md`.
+
+On a revision run the prior tailored draft is staged as:
+
+```text
+input/current_tailored_resume.md
+input/current_tailored_resume.docx   (when the prior draft was a DOCX)
+```
+
+Use the current tailored draft as the document you are revising. Keep
+truthful, relevant content unless the user's feedback asks you to
+remove it or the revision requires it. Do not rebuild the draft from
+scratch when a usable current draft is present — prefer in-place edits
+that apply the requested changes.
 
 Treat the file as user-supplied steering for the rewrite, not as new
 evidence. Use it to decide what to change about positioning, emphasis,
-wording, ordering, and inclusion or removal of existing content.
+wording, ordering, and inclusion or removal of existing content. If the
+user's revision text introduces new factual claims that are not in the
+master resume or evidence sources, treat them as user-provided evidence
+but flag them clearly in `output/claim_audit.md`.
 
 The ADR-004 evidence rule overrides the feedback. The evidence files
 (`input/master_resume.md`, `input/evidence_bank.md`,
