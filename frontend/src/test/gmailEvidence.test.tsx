@@ -838,6 +838,172 @@ describe("GmailEvidence", () => {
     expect(card.textContent).not.toMatch(/<html>|<body>/i);
   });
 
+  it("sends candidate sender/subject/snippet/date as received_at when linking", async () => {
+    getGmailStatusMock.mockResolvedValue(connectedStatus());
+    listGmailCandidatesMock.mockResolvedValue({
+      application_id: "app-1",
+      gmail_connected: true,
+      query_used: null,
+      count: 1,
+      strong_count: 0,
+      possible_count: 1,
+      candidates: [
+        {
+          message_id: "gmail-real-id-xyz",
+          thread_id: "thr-z",
+          subject: "We've decided not to move forward",
+          from: "Recruiter <recruiter@acme.example>",
+          date: "Mon, 25 May 2026 12:00:00 +0000",
+          snippet: "Thank you for taking the time…",
+          match_score: 0.55,
+          matched_signals: ["company_name"],
+          classification_guess: "rejection",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+
+    renderEvidence(baseApp(), noop);
+    await user.click(
+      await screen.findByTestId("gmail-review-candidates-button"),
+    );
+
+    await user.click(
+      await screen.findByTestId("gmail-link-rejection-gmail-real-id-xyz"),
+    );
+
+    await waitFor(() => expect(linkGmailEmailMock).toHaveBeenCalled());
+    const [appId, payload] = linkGmailEmailMock.mock.calls[0];
+    expect(appId).toBe("app-1");
+    // The candidate's real Gmail id is sent verbatim — no manual:<uuid>.
+    expect(payload.message_id).toBe("gmail-real-id-xyz");
+    expect(payload.message_id).not.toMatch(/^manual:/);
+    expect(payload.thread_id).toBe("thr-z");
+    expect(payload.sender).toBe("Recruiter <recruiter@acme.example>");
+    expect(payload.subject).toBe("We've decided not to move forward");
+    expect(payload.snippet).toBe("Thank you for taking the time…");
+    expect(payload.classification).toBe("rejection");
+    expect(payload.user_confirmed).toBe(true);
+    // Gmail's RFC 2822 date is converted to ISO 8601 for the backend.
+    expect(payload.received_at).toBe("2026-05-25T12:00:00.000Z");
+  });
+
+  it("surfaces a useful error when the link-email request fails", async () => {
+    getGmailStatusMock.mockResolvedValue(connectedStatus());
+    listGmailCandidatesMock.mockResolvedValue({
+      application_id: "app-1",
+      gmail_connected: true,
+      query_used: null,
+      count: 1,
+      strong_count: 0,
+      possible_count: 1,
+      candidates: [
+        {
+          message_id: "broken",
+          thread_id: null,
+          subject: "S",
+          from: "f@x.com",
+          date: null,
+          snippet: "snip",
+          match_score: 0.3,
+          matched_signals: [],
+          classification_guess: "unknown",
+        },
+      ],
+    });
+    linkGmailEmailMock.mockRejectedValue(
+      new ApiErrorMock("Request failed with status 500", 500, null),
+    );
+    const user = userEvent.setup();
+
+    renderEvidence(baseApp(), noop);
+    await user.click(
+      await screen.findByTestId("gmail-review-candidates-button"),
+    );
+    await user.click(
+      await screen.findByTestId("gmail-link-submission_confirmation-broken"),
+    );
+
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      const message = alerts.find((el) =>
+        /failed with status 500/i.test(el.textContent ?? ""),
+      );
+      expect(message).toBeDefined();
+    });
+    // Candidate metadata is preserved on failure so the user can retry.
+    expect(screen.getByTestId("gmail-manual-candidate-broken")).toBeInTheDocument();
+  });
+
+  it("labels Gmail-candidate links as 'Linked from Gmail · confirmed manually'", async () => {
+    getGmailStatusMock.mockResolvedValue(connectedStatus());
+    listLinkedGmailEmailsMock.mockResolvedValue({
+      application_id: "app-1",
+      linked_emails: [
+        {
+          id: "ev-1",
+          application_id: "app-1",
+          gmail_message_id: "real-gmail-id-1",
+          gmail_thread_id: "thr-1",
+          subject: "Application confirmation",
+          sender: "hr@example.com",
+          snippet: "We received your application.",
+          received_at: "2026-05-25T12:00:00Z",
+          classified_status: "confirmation",
+          confidence: null,
+          match_method: "manual_candidate_link",
+          linked_by_user: true,
+          evidence: null,
+          created_at: "2026-05-25T12:00:00Z",
+        },
+      ],
+    });
+
+    renderEvidence(baseApp(), noop);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("gmail-linked-source-ev-1"),
+      ).toHaveTextContent(/linked from gmail · confirmed manually/i),
+    );
+    const card = screen.getByTestId("gmail-linked-email-ev-1");
+    // The raw Gmail message id is never the primary label.
+    expect(card.textContent ?? "").not.toContain("real-gmail-id-1");
+  });
+
+  it("labels rows from the manual record form as 'Recorded manually'", async () => {
+    getGmailStatusMock.mockResolvedValue(connectedStatus());
+    listLinkedGmailEmailsMock.mockResolvedValue({
+      application_id: "app-1",
+      linked_emails: [
+        {
+          id: "ev-manual",
+          application_id: "app-1",
+          gmail_message_id: "manual:abc",
+          gmail_thread_id: null,
+          subject: "Your application",
+          sender: "noreply@example.com",
+          snippet: null,
+          received_at: null,
+          classified_status: "confirmation",
+          confidence: null,
+          match_method: "manual_entry",
+          linked_by_user: true,
+          evidence: null,
+          created_at: "2026-05-25T12:00:00Z",
+        },
+      ],
+    });
+
+    renderEvidence(baseApp(), noop);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("gmail-linked-source-ev-manual"),
+      ).toHaveTextContent(/recorded manually/i),
+    );
+  });
+
   it("shows 'No related Gmail emails found' when manual candidates is empty", async () => {
     getGmailStatusMock.mockResolvedValue(connectedStatus());
     listGmailCandidatesMock.mockResolvedValue({

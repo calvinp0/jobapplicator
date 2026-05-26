@@ -621,6 +621,8 @@ def create_email_link(
         received_at=payload.received_at,
         classified_status=payload.classified_status,
         confidence=payload.confidence,
+        match_method="manual_entry",
+        linked_by_user=True,
     )
     db.add(link)
 
@@ -1330,7 +1332,7 @@ def link_gmail_email(
         # Idempotent: re-linking the same message updates the manual-link
         # metadata (snippet, score, classification) but does not append a
         # duplicate event or re-apply side effects.
-        existing.match_method = "manual"
+        existing.match_method = "manual_candidate_link"
         existing.linked_by_user = True
         if payload.match_score is not None:
             existing.match_score = float(payload.match_score)
@@ -1374,7 +1376,7 @@ def link_gmail_email(
         received_at=payload.received_at,
         classified_status=email_link_status,
         confidence=None,
-        match_method="manual",
+        match_method="manual_candidate_link",
         match_score=float(payload.match_score) if payload.match_score is not None else None,
         linked_by_user=True,
         evidence_json=json.dumps(evidence_items),

@@ -43,6 +43,42 @@ const LINK_ACTIONS: LinkAction[] = [
   { label: "Link as neutral/update", classification: "application_update" },
 ];
 
+function candidateDateToIso(value: string | null | undefined): string | null {
+  // Gmail returns dates in RFC 2822 format (e.g. "Mon, 25 May 2026 12:00:00
+  // +0000"). The backend ``received_at`` field is a pydantic ``datetime``
+  // and accepts ISO 8601 — let the browser do the conversion and skip
+  // values that fail to parse rather than failing the link request.
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function linkSourceLabel(link: EmailLink): string | null {
+  // ``match_method`` is set by the backend:
+  //   "manual_candidate_link" → user confirmed a Gmail search candidate
+  //   "manual_entry"          → user typed metadata in the Record form
+  //   "manual" (legacy)       → treat as a Gmail-candidate confirmation
+  // Older rows with no ``match_method`` but ``linked_by_user`` true fall
+  // back to "Linked manually" rather than fabricating a source.
+  const method = link.match_method;
+  if (method === "manual_candidate_link" || method === "manual") {
+    return "Linked from Gmail · confirmed manually";
+  }
+  if (method === "manual_entry") {
+    return "Recorded manually";
+  }
+  if (link.linked_by_user) return "Linked manually";
+  return null;
+}
+
+function formatReceivedAt(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString();
+}
+
 function formatRelative(value: string | null | undefined): string {
   if (!value) return "—";
   const date = new Date(value);
@@ -246,10 +282,19 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
         sender: candidate.from,
         subject: candidate.subject,
         snippet: candidate.snippet,
+        received_at: candidateDateToIso(candidate.date),
         match_score: candidate.match_score,
         user_confirmed: true,
       });
       await Promise.all([refreshApplication(), refreshLinkedEmails()]);
+      // Drop the linked candidate from the on-screen list so the user
+      // is not tempted to link it again or fall through to the manual
+      // record form.
+      setManualCandidates((prev) =>
+        prev
+          ? prev.filter((c) => c.message_id !== candidate.message_id)
+          : prev,
+      );
     } catch (err: unknown) {
       const message =
         err instanceof ApiError
@@ -686,42 +731,52 @@ export function GmailEvidence({ application, onApplicationChanged }: Props) {
         >
           <h4>Email evidence</h4>
           <ul className="gmail-linked-emails-list">
-            {linkedEmails.map((link) => (
-              <li
-                key={link.id}
-                className="gmail-linked-email-item"
-                data-testid={`gmail-linked-email-${link.id}`}
-              >
-                <div className="gmail-candidate-row">
-                  <strong>{link.subject || "(no subject)"}</strong>
-                  {link.linked_by_user ? (
-                    <span className="muted">Linked manually</span>
+            {linkedEmails.map((link) => {
+              const sourceLabel = linkSourceLabel(link);
+              const receivedDate = formatReceivedAt(link.received_at);
+              return (
+                <li
+                  key={link.id}
+                  className="gmail-linked-email-item"
+                  data-testid={`gmail-linked-email-${link.id}`}
+                >
+                  <div className="gmail-candidate-row">
+                    <strong>{link.subject || "(no subject)"}</strong>
+                    {sourceLabel ? (
+                      <span
+                        className="muted"
+                        data-testid={`gmail-linked-source-${link.id}`}
+                      >
+                        {sourceLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="gmail-candidate-meta">
+                    <span>{link.sender || "Unknown sender"}</span>
+                    {link.classified_status ? (
+                      <span>
+                        {" "}
+                        ·{" "}
+                        {sharedClassificationLabel(link.classified_status)}
+                      </span>
+                    ) : null}
+                    {receivedDate ? <span> · {receivedDate}</span> : null}
+                  </div>
+                  {link.snippet ? (
+                    <p className="gmail-candidate-snippet">{link.snippet}</p>
                   ) : null}
-                </div>
-                <div className="gmail-candidate-meta">
-                  <span>{link.sender || "Unknown sender"}</span>
-                  {link.classified_status ? (
-                    <span>
-                      {" "}
-                      ·{" "}
-                      {sharedClassificationLabel(link.classified_status)}
-                    </span>
-                  ) : null}
-                </div>
-                {link.snippet ? (
-                  <p className="gmail-candidate-snippet">{link.snippet}</p>
-                ) : null}
-                <div className="gmail-candidate-actions">
-                  <button
-                    type="button"
-                    onClick={() => handleUnlink(link)}
-                    disabled={pendingUnlinkId === link.id}
-                  >
-                    {pendingUnlinkId === link.id ? "Unlinking…" : "Unlink"}
-                  </button>
-                </div>
-              </li>
-            ))}
+                  <div className="gmail-candidate-actions">
+                    <button
+                      type="button"
+                      onClick={() => handleUnlink(link)}
+                      disabled={pendingUnlinkId === link.id}
+                    >
+                      {pendingUnlinkId === link.id ? "Unlinking…" : "Unlink"}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}
