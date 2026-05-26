@@ -177,11 +177,17 @@ output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
 output/template_fidelity_audit.md
+output/recruiter_review.md
 ```
 
 `output/template_fidelity_audit.md` records how well the tailored DOCX
 preserves the master resume's visual template. See the "Template
 Fidelity Audit" section below for the required structure.
+
+`output/recruiter_review.md` records a simulated recruiter/hiring
+manager review of the tailored resume against the target company and
+role. See the "Recruiter Review" section below for the required
+structure.
 
 ## Progress Events
 
@@ -204,6 +210,7 @@ Writing change log
 Writing claim audit
 Writing ATS audit
 Writing template fidelity audit
+Writing recruiter review
 Validating required outputs
 ```
 
@@ -569,6 +576,128 @@ available, record that under "Source Template" and list each row's
 If the MCP/DOCX tools could not preserve a particular style element,
 list it under "Known Deviations" with a brief explanation and propose a
 remediation step.
+
+## Recruiter Review
+
+After producing the tailored resume and the audits above, also produce
+a simulated recruiter/hiring-manager review of the tailored resume at
+`output/recruiter_review.md`.
+
+Review the tailored resume as if you were:
+
+```text
+1. a recruiter doing an initial screen
+2. a hiring manager doing a technical screen
+3. an ATS/human keyword-alignment reviewer
+4. a credibility/evidence reviewer
+5. a readability/formatting reviewer
+```
+
+The review must answer:
+
+```text
+Would this candidate likely be shortlisted?
+What is compelling?
+What is weak?
+What is missing?
+What sounds generic?
+What sounds unsupported?
+What should be revised before submission?
+```
+
+Infer the likely company and role expectations from the job
+description. Do not invent facts about the company beyond what the
+job description states. Do not invent candidate experience beyond
+what the tailored resume and supporting audits contain.
+
+Use these heuristics as a starting point when sizing up the company
+persona:
+
+```text
+If the company is a startup:
+  value ownership, speed, pragmatic engineering, breadth.
+
+If the role is research-heavy:
+  value publications, rigorous methods, technical depth.
+
+If the role is enterprise/backend:
+  value reliability, production systems, maintainability, collaboration.
+
+If the role is ML:
+  value modeling, data pipelines, evaluation, deployment, measurable impact.
+```
+
+Use this exact structure for `output/recruiter_review.md`:
+
+```text
+# Recruiter Review
+
+## Target Role
+- Company:
+- Job title:
+
+## Overall Recommendation
+One of:
+- Strong submit
+- Submit after minor edits
+- Needs revision before submit
+- Do not submit yet
+
+## Scorecard
+| Category | Score / 5 | Notes |
+| --- | ---: | --- |
+| Role fit |  |  |
+| Technical keyword alignment |  |  |
+| Evidence strength |  |  |
+| Recruiter readability |  |  |
+| Hiring manager credibility |  |  |
+| Seniority/level fit |  |  |
+| Formatting/professionalism |  |  |
+
+## First 30-Second Impression
+Short paragraph describing what a recruiter would likely notice first.
+
+## Strengths
+- ...
+
+## Weaknesses / Risks
+- ...
+
+## Missing or Under-emphasized Requirements
+- ...
+
+## Claims That Need Stronger Evidence
+- ...
+
+## Lines or Bullets to Improve
+| Current text | Issue | Suggested rewrite |
+| --- | --- | --- |
+
+## Company-Specific Fit
+Explain how well the resume speaks to this company and role, based
+only on what the job description says about the company.
+
+## Final Recommendation
+Clear submit / revise recommendation, with the top one to three
+changes you would make before submission.
+```
+
+Score each scorecard category on a 1-5 integer scale where 5 is
+"clearly meets the bar" and 1 is "would not pass a screen for this
+role". Use the Notes column to justify the score in one sentence.
+
+"Lines or Bullets to Improve" should propose concrete suggested
+rewrites for the weakest lines on the tailored resume. Each suggested
+rewrite must be truthful given the existing evidence — if you cannot
+rewrite a bullet without inventing a new claim, propose either
+removing the bullet or flagging the evidence gap instead. These
+suggested rewrites are intended to be applied later by a revision
+flow, so phrase them as drop-in replacements for the "Current text"
+column.
+
+Be honest, not flattering. A glowing review for a mediocre resume is
+a failed review. A "Do not submit yet" recommendation is acceptable
+and useful when the resume genuinely does not meet the role.
 
 ## Change Log
 

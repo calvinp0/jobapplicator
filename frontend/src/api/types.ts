@@ -151,6 +151,13 @@ export interface RunProgress {
   truncated: boolean;
 }
 
+export interface RecruiterReview {
+  run_id: string;
+  available: boolean;
+  content: string | null;
+  path: string | null;
+}
+
 export interface ResumeVersion {
   id: string;
   job_id: string;

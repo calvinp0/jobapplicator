@@ -25,7 +25,8 @@ runs/<run_id>/
 │   ├── change_log.md
 │   ├── claim_audit.md
 │   ├── ats_audit.md
-│   └── template_fidelity_audit.md   # optional; requested when a master DOCX is present
+│   ├── template_fidelity_audit.md   # optional; requested when a master DOCX is present
+│   └── recruiter_review.md          # optional; recruiter/hiring-manager simulated review
 ├── progress/
 │   └── progress.log              # user-facing phase events + worker heartbeats
 ├── word_handoff/                 # only used when tailoring_method == word_handoff
@@ -294,6 +295,7 @@ output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
 output/template_fidelity_audit.md
+output/recruiter_review.md
 progress/progress.log
 ```
 
@@ -316,6 +318,18 @@ absent. The worker logs a ``warning: template fidelity audit missing``
 line when a master DOCX is present but the audit was not produced, so
 the operator can spot the regression. The runtime prompt still lists
 the audit as a required output for Claude.
+
+`output/recruiter_review.md` is the simulated recruiter/hiring-manager
+review of the tailored resume against the target company and role
+(task 108). It includes an overall recommendation, a per-category
+scorecard, a first 30-second impression, strengths and weaknesses,
+missing or under-emphasized requirements, claims that need stronger
+evidence, suggested rewrites for the weakest lines, and a
+company-specific fit assessment. The review is *optional* in the
+worker output contract today: a run is not marked failed when it is
+absent. The worker logs a ``warning: recruiter review missing`` line
+when the review was not produced, and the runtime prompts (first-draft
+and revision) still list the review as a required output for Claude.
 
 Claude Code must not write outside the run directory.
 
