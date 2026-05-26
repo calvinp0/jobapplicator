@@ -600,7 +600,7 @@ describe("ApplicationDetailPage", () => {
 
     renderApp("app-1");
 
-    await screen.findByRole("heading", { level: 3, name: /record email/i });
+    await screen.findByText("Record email manually", { selector: "summary" });
 
     await user.clear(screen.getByLabelText(/gmail message id/i));
     await user.type(
@@ -616,7 +616,9 @@ describe("ApplicationDetailPage", () => {
       "We've received your application",
     );
 
-    await user.click(screen.getByRole("button", { name: /record email/i }));
+    await user.click(
+      screen.getByRole("button", { name: /record email manually/i }),
+    );
 
     await waitFor(() =>
       expect(createApplicationEmailLinkMock).toHaveBeenCalledWith(
@@ -651,6 +653,49 @@ describe("ApplicationDetailPage", () => {
     expect(listApplicationEmailLinksMock).toHaveBeenCalledTimes(2);
   });
 
+  it("collapses the manual Record Email form behind a 'Record email manually' summary with helper text", async () => {
+    getApplicationMock.mockResolvedValue(submittedApplication);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([]);
+
+    renderApp("app-1");
+
+    const summary = await screen.findByText("Record email manually", {
+      selector: "summary",
+    });
+    const detailsEl = summary.closest("details");
+    expect(detailsEl).not.toBeNull();
+    // Collapsed by default so the form is reserved for emails Gmail could
+    // not find.
+    expect(detailsEl).not.toHaveAttribute("open");
+    expect(
+      screen.getByText(
+        /use this only if the email was not found through gmail search/i,
+      ),
+    ).toBeInTheDocument();
+    // The form's submit button is renamed to make it clear this records a
+    // manual entry, not a Gmail-candidate link.
+    expect(
+      screen.getByRole("button", { name: /record email manually/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("prefills a manual:<uuid> gmail message id for manual entries", async () => {
+    getApplicationMock.mockResolvedValue(submittedApplication);
+    getResumeVersionMock.mockResolvedValue(approvedVersion);
+    listApplicationEventsMock.mockResolvedValue([]);
+    listApplicationEmailLinksMock.mockResolvedValue([]);
+
+    renderApp("app-1");
+
+    await screen.findByText("Record email manually", { selector: "summary" });
+    const input = screen.getByLabelText(/gmail message id/i) as HTMLInputElement;
+    // Manual:<uuid> is only used for the typed-by-hand path — Gmail
+    // candidate links pass the real Gmail message id through instead.
+    expect(input.value).toMatch(/^manual:/);
+  });
+
   it("surfaces an inline error when the create-email call fails", async () => {
     const user = userEvent.setup();
     getApplicationMock.mockResolvedValue(submittedApplication);
@@ -667,9 +712,11 @@ describe("ApplicationDetailPage", () => {
 
     renderApp("app-1");
 
-    await screen.findByRole("heading", { level: 3, name: /record email/i });
+    await screen.findByText("Record email manually", { selector: "summary" });
 
-    await user.click(screen.getByRole("button", { name: /record email/i }));
+    await user.click(
+      screen.getByRole("button", { name: /record email manually/i }),
+    );
 
     await waitFor(() => {
       const alerts = screen.getAllByRole("alert");

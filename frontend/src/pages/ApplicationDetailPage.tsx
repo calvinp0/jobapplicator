@@ -392,76 +392,83 @@ export function ApplicationDetailPage() {
         </ul>
       )}
 
-      <h3>Record email</h3>
-      <form onSubmit={handleAddEmail} noValidate>
-        <label className="field">
-          <span>Gmail message id</span>
-          <input
-            type="text"
-            value={emailMessageId}
-            onChange={(e) => setEmailMessageId(e.target.value)}
-            required
-          />
-        </label>
-        <label className="field">
-          <span>Classification</span>
-          <select
-            value={emailClassifiedStatus}
-            onChange={(e) => setEmailClassifiedStatus(e.target.value)}
-          >
-            {EMAIL_CLASSIFICATION_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Sender</span>
-          <input
-            type="text"
-            value={emailSender}
-            onChange={(e) => setEmailSender(e.target.value)}
-            placeholder="e.g. recruiting@acme.com"
-          />
-        </label>
-        <label className="field">
-          <span>Subject</span>
-          <input
-            type="text"
-            value={emailSubject}
-            onChange={(e) => setEmailSubject(e.target.value)}
-            placeholder="e.g. Your application to Acme"
-          />
-        </label>
-        <label className="field">
-          <span>Received at</span>
-          <input
-            type="datetime-local"
-            value={emailReceivedAt}
-            onChange={(e) => setEmailReceivedAt(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>Confidence (optional)</span>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            max="1"
-            value={emailConfidence}
-            onChange={(e) => setEmailConfidence(e.target.value)}
-          />
-        </label>
-        {emailCreateError ? (
-          <p role="alert" className="error">
-            {emailCreateError}
-          </p>
-        ) : null}
-        <button type="submit" disabled={isAddingEmail}>
-          {isAddingEmail ? "Recording…" : "Record email"}
-        </button>
-      </form>
+      <details className="manual-email-record">
+        <summary>Record email manually</summary>
+        <p className="muted manual-email-record-hint">
+          Use this only if the email was not found through Gmail search.
+          Linking a Gmail candidate above will fill in the metadata
+          automatically.
+        </p>
+        <form onSubmit={handleAddEmail} noValidate>
+          <label className="field">
+            <span>Gmail message id</span>
+            <input
+              type="text"
+              value={emailMessageId}
+              onChange={(e) => setEmailMessageId(e.target.value)}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Classification</span>
+            <select
+              value={emailClassifiedStatus}
+              onChange={(e) => setEmailClassifiedStatus(e.target.value)}
+            >
+              {EMAIL_CLASSIFICATION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Sender</span>
+            <input
+              type="text"
+              value={emailSender}
+              onChange={(e) => setEmailSender(e.target.value)}
+              placeholder="e.g. recruiting@acme.com"
+            />
+          </label>
+          <label className="field">
+            <span>Subject</span>
+            <input
+              type="text"
+              value={emailSubject}
+              onChange={(e) => setEmailSubject(e.target.value)}
+              placeholder="e.g. Your application to Acme"
+            />
+          </label>
+          <label className="field">
+            <span>Received at</span>
+            <input
+              type="datetime-local"
+              value={emailReceivedAt}
+              onChange={(e) => setEmailReceivedAt(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Confidence (optional)</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={emailConfidence}
+              onChange={(e) => setEmailConfidence(e.target.value)}
+            />
+          </label>
+          {emailCreateError ? (
+            <p role="alert" className="error">
+              {emailCreateError}
+            </p>
+          ) : null}
+          <button type="submit" disabled={isAddingEmail}>
+            {isAddingEmail ? "Recording…" : "Record email manually"}
+          </button>
+        </form>
+      </details>
 
       <h3>Timeline</h3>
       {events.length === 0 ? (

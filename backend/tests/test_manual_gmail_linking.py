@@ -380,7 +380,9 @@ def test_link_email_records_manual_method_and_user_flag(link_app):
     )
     assert r.status_code == 200, r.text
     link = r.json()["email_link"]
-    assert link["match_method"] == "manual"
+    # Gmail-candidate manual confirmations carry the more specific match_method
+    # so the UI can distinguish them from raw manual-entry rows.
+    assert link["match_method"] == "manual_candidate_link"
     assert link["linked_by_user"] is True
     # Evidence carries the user-confirmation note (no full body).
     assert link["evidence"] is not None
@@ -607,7 +609,7 @@ def test_linked_emails_returns_stored_evidence(link_app):
     assert len(body["linked_emails"]) == 1
     link = body["linked_emails"][0]
     assert link["gmail_message_id"] == "le-1"
-    assert link["match_method"] == "manual"
+    assert link["match_method"] == "manual_candidate_link"
     assert link["linked_by_user"] is True
 
 
@@ -703,6 +705,69 @@ def test_no_gmail_write_routes_added_by_task_093(link_app):
             continue
         for needle in forbidden:
             assert needle not in path.lower(), (path, needle)
+
+
+def test_link_email_preserves_real_gmail_message_id_not_manual_uuid(link_app):
+    """A Gmail-candidate link must store the real Gmail id verbatim — no
+    ``manual:<uuid>`` is substituted for the candidate's message_id."""
+    client, _ = link_app
+    app_obj = _make_application(client)
+    r = client.post(
+        f"/applications/{app_obj['id']}/gmail/link-email",
+        json=_link_payload(message_id="1936ab12345abcdef", thread_id="1936aaa"),
+    )
+    assert r.status_code == 200, r.text
+    link = r.json()["email_link"]
+    assert link["gmail_message_id"] == "1936ab12345abcdef"
+    assert not link["gmail_message_id"].startswith("manual:")
+
+
+def test_link_email_preserves_candidate_metadata_from_request(link_app):
+    """sender / subject / snippet / received_at flow through verbatim."""
+    client, _ = link_app
+    app_obj = _make_application(client)
+    r = client.post(
+        f"/applications/{app_obj['id']}/gmail/link-email",
+        json=_link_payload(
+            message_id="meta-1",
+            sender="recruiter@example.com",
+            subject="Interview availability",
+            snippet="We'd like to schedule a phone screen.",
+            received_at="2026-05-25T20:01:00Z",
+            classification="interview_request",
+        ),
+    )
+    assert r.status_code == 200, r.text
+    link = r.json()["email_link"]
+    assert link["sender"] == "recruiter@example.com"
+    assert link["subject"] == "Interview availability"
+    assert link["snippet"] == "We'd like to schedule a phone screen."
+    assert link["received_at"] is not None
+
+
+# ---- /applications/{id}/email-links (truly manual entry) -------------
+
+
+def test_manual_email_link_records_manual_entry_method(link_app):
+    """The /email-links endpoint (manual Record Email form) tags rows with
+    ``match_method=manual_entry`` so the UI can distinguish them from
+    Gmail-candidate confirmations."""
+    client, _ = link_app
+    app_obj = _make_application(client)
+    r = client.post(
+        f"/applications/{app_obj['id']}/email-links",
+        json={
+            "gmail_message_id": "manual:abc-123",
+            "classified_status": "confirmation",
+            "sender": "noreply@example.com",
+            "subject": "Your application",
+        },
+    )
+    assert r.status_code in (200, 201), r.text
+    body = r.json()
+    assert body["gmail_message_id"] == "manual:abc-123"
+    assert body["match_method"] == "manual_entry"
+    assert body["linked_by_user"] is True
 
 
 def test_link_email_does_not_call_gmail_client(link_app, monkeypatch):
