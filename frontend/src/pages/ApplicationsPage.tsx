@@ -25,7 +25,15 @@ import {
   timelineStageLabel,
   timelineStageVariant,
 } from "../lib/workflow";
-import { EmptyState, PageHeader, StatusBadge } from "../components/ui";
+import {
+  Button,
+  EmptyState,
+  FilterChips,
+  PageHeader,
+  StatusBadge,
+  Toolbar,
+  ToolbarGroup,
+} from "../components/ui";
 import type { StatusBadgeVariant } from "../components/ui";
 
 function formatChecked(value: string | null | undefined): string | null {
@@ -55,7 +63,7 @@ type FilterId =
   | "interviews"
   | "rejected";
 
-const FILTERS: Array<{ id: FilterId; label: string }> = [
+const FILTERS: ReadonlyArray<{ id: FilterId; label: string }> = [
   { id: "all", label: "All" },
   { id: "drafts", label: "Drafts" },
   { id: "ready", label: "Ready" },
@@ -125,6 +133,13 @@ function matchesFilter(app: Application, filter: FilterId): boolean {
   }
 }
 
+function formatSourceLabel(source: string | null | undefined): string | null {
+  if (!source) return null;
+  const trimmed = source.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/_/g, " ");
+}
+
 export function ApplicationsPage() {
   const [applications, setApplications] = useState<Application[] | null>(null);
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -154,9 +169,6 @@ export function ApplicationsPage() {
           err instanceof ApiError ? err.message : "Failed to load applications";
         setError(message);
       });
-    // Gmail status is loaded separately so a failure here never blocks the
-    // application list; the UI just falls back to the generic "Connect Gmail
-    // in Settings" hint.
     getGmailStatus()
       .then((s) => {
         if (!cancelled) setGmailStatus(s);
@@ -197,14 +209,11 @@ export function ApplicationsPage() {
       const response = await syncApplicationsGmail();
       setSyncResult(response);
       if (response.gmail_connected) {
-        // Refresh applications so derived fields reflect the new
-        // email_status / last_gmail_check_at / classification.
         try {
           const refreshed = await listApplications();
           setApplications(refreshed);
         } catch {
-          // The sync response is the user-facing source of truth — if
-          // the refresh fails, leave the existing list in place.
+          // Source of truth is the sync response; ignore refresh failure.
         }
       }
     } catch (err: unknown) {
@@ -228,6 +237,27 @@ export function ApplicationsPage() {
       return tB - tA;
     });
   }, [applications, filter]);
+
+  const filterCounts = useMemo(() => {
+    const counts: Record<FilterId, number> = {
+      all: 0,
+      drafts: 0,
+      ready: 0,
+      submitted: 0,
+      needs_review: 0,
+      interviews: 0,
+      rejected: 0,
+    };
+    if (!applications) return counts;
+    counts.all = applications.length;
+    for (const filterDef of FILTERS) {
+      if (filterDef.id === "all") continue;
+      counts[filterDef.id] = applications.filter((a) =>
+        matchesFilter(a, filterDef.id),
+      ).length;
+    }
+    return counts;
+  }, [applications]);
 
   if (error) {
     return (
@@ -261,37 +291,55 @@ export function ApplicationsPage() {
     gmailStatus && gmailStatus.configured && !gmailStatus.connected;
   const gmailNotConfigured = gmailStatus && !gmailStatus.configured;
 
-  const syncAction = (
-    <button
-      type="button"
-      className="button"
-      onClick={handleSyncGmail}
-      disabled={syncing}
-      data-testid="sync-gmail-button"
-    >
-      {syncing ? "Syncing Gmail…" : "Sync Gmail"}
-    </button>
-  );
+  const filterOptions = FILTERS.map((f) => ({
+    id: f.id,
+    label: f.label,
+    count: filterCounts[f.id],
+  }));
 
-  const headerMeta = (
-    <>
-      {gmailNotConfigured ? (
-        <p
-          className="applications-toolbar-hint"
-          data-testid="sync-gmail-hint"
-        >
-          Gmail OAuth is not configured.{" "}
-          <Link to="/settings">Open Settings</Link> for setup details.
-        </p>
-      ) : gmailDisconnected ? (
-        <p
-          className="applications-toolbar-hint"
-          data-testid="sync-gmail-hint"
-        >
-          <Link to="/settings">Connect Gmail in Settings</Link> before
-          syncing applications.
-        </p>
-      ) : null}
+  return (
+    <section className="applications-page">
+      <PageHeader
+        title="Applications"
+        description="Track drafts, submissions, email evidence, and outcomes."
+      />
+
+      <Toolbar aria-label="Applications toolbar">
+        <FilterChips
+          ariaLabel="Filter applications"
+          value={filter}
+          options={filterOptions}
+          onChange={(next) => setFilter(next)}
+        />
+        <ToolbarGroup align="end">
+          {gmailNotConfigured ? (
+            <p
+              className="applications-toolbar-hint"
+              data-testid="sync-gmail-hint"
+            >
+              Gmail OAuth is not configured.{" "}
+              <Link to="/settings">Open Settings</Link> for setup details.
+            </p>
+          ) : gmailDisconnected ? (
+            <p
+              className="applications-toolbar-hint"
+              data-testid="sync-gmail-hint"
+            >
+              <Link to="/settings">Connect Gmail in Settings</Link> before
+              syncing.
+            </p>
+          ) : null}
+          <Button
+            variant="primary"
+            onClick={handleSyncGmail}
+            disabled={syncing}
+            data-testid="sync-gmail-button"
+          >
+            {syncing ? "Syncing Gmail…" : "Sync Gmail"}
+          </Button>
+        </ToolbarGroup>
+      </Toolbar>
+
       {syncResult && syncResult.gmail_connected ? (
         <p className="applications-toolbar-summary" role="status">
           Last sync: checked {syncResult.checked_count} application
@@ -300,17 +348,6 @@ export function ApplicationsPage() {
           Needs review {syncResult.needs_review_count}
         </p>
       ) : null}
-    </>
-  );
-
-  return (
-    <section className="applications-page">
-      <PageHeader
-        title="Applications"
-        description="Track drafts, submissions, email evidence, and outcomes."
-        actions={syncAction}
-        meta={headerMeta}
-      />
 
       {syncError ? (
         <p role="alert" className="error">
@@ -364,227 +401,223 @@ export function ApplicationsPage() {
           title="No applications yet."
           description="Create or generate a draft from a job to start tracking applications."
         />
+      ) : visibleApplications.length === 0 ? (
+        <p className="applications-empty-filter">
+          No applications match this filter.
+        </p>
       ) : (
-        <>
-          <div
-            className="applications-filters"
-            role="toolbar"
-            aria-label="Filter applications"
-          >
-            {FILTERS.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                className={`applications-filter${
-                  filter === f.id ? " applications-filter-active" : ""
-                }`}
-                aria-pressed={filter === f.id}
-                onClick={() => setFilter(f.id)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-
-          {visibleApplications.length === 0 ? (
-            <p className="applications-empty-filter">
-              No applications match this filter.
-            </p>
-          ) : (
-            <div
-              className="applications-table-wrapper"
-              data-testid="applications-table"
-            >
-              <table className="applications-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Job</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Email</th>
-                    <th scope="col">Next action</th>
-                    <th scope="col" className="applications-table-actions-col">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleApplications.map((app) => {
-                    const job = jobsById.get(app.job_id);
-                    const title = job ? job.title : `Job ${app.job_id}`;
-                    const company = job ? job.company : null;
-                    const label = company ? `${title} — ${company}` : title;
-                    const stageLabel = timelineStageLabel(app.timeline_stage);
-                    const stageVariant = timelineStageVariant(
-                      app.timeline_stage,
-                    );
-                    const submissionLabel = submissionStatusLabel(
-                      app.submission_status,
-                    );
-                    let submissionCell: string | null;
-                    if (
-                      app.submission_status === "submitted" &&
-                      app.submitted_at
-                    ) {
-                      submissionCell = `Submitted ${formatDate(app.submitted_at)}`;
-                    } else if (app.submission_status === "not_submitted") {
-                      submissionCell = "Not submitted yet";
-                    } else {
-                      submissionCell = submissionLabel;
-                    }
-                    const emailSummary = lastEmailSummary(app);
-                    const emailExtra =
-                      emailSummary && app.email_link_count > 1
-                        ? ` · ${app.email_link_count} emails`
-                        : "";
-                    const gmailCheckedAgo = formatChecked(
-                      app.last_gmail_check_at,
-                    );
-                    const updatedCell = applicationUpdatedLabel(app);
-                    const isPending = pendingActionId === app.id;
-                    const showSubmit =
-                      app.submission_status === "not_submitted";
-                    const showReject = !["rejected", "withdrawn"].includes(
-                      app.status,
-                    );
-                    const showInterview = ![
-                      "interview",
-                      "rejected",
-                      "withdrawn",
-                      "offer",
-                    ].includes(app.status);
-                    return (
-                      <tr
-                        key={app.id}
-                        className="applications-row"
-                        data-application-id={app.id}
-                      >
-                        <td
-                          className="applications-cell-job"
-                          data-label="Job"
+        <div
+          className="applications-table-wrapper"
+          data-testid="applications-table"
+        >
+          <table className="applications-table">
+            <thead>
+              <tr>
+                <th scope="col">Application</th>
+                <th scope="col">Pipeline</th>
+                <th scope="col">Email</th>
+                <th scope="col">Activity</th>
+                <th scope="col">Next action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleApplications.map((app) => {
+                const job = jobsById.get(app.job_id);
+                const title = job ? job.title : `Job ${app.job_id}`;
+                const company = job ? job.company : null;
+                const sourceLabel = formatSourceLabel(job?.source_platform);
+                const label = company ? `${title} — ${company}` : title;
+                const stageLabel = timelineStageLabel(app.timeline_stage);
+                const stageVariant = timelineStageVariant(app.timeline_stage);
+                const submissionLabel = submissionStatusLabel(
+                  app.submission_status,
+                );
+                let submissionCell: string | null;
+                if (
+                  app.submission_status === "submitted" &&
+                  app.submitted_at
+                ) {
+                  submissionCell = `Submitted ${formatDate(app.submitted_at)}`;
+                } else if (app.submission_status === "not_submitted") {
+                  submissionCell = "Not submitted yet";
+                } else {
+                  submissionCell = submissionLabel;
+                }
+                const emailSummary = lastEmailSummary(app);
+                const emailExtra =
+                  emailSummary && app.email_link_count > 1
+                    ? ` · ${app.email_link_count} emails`
+                    : "";
+                const gmailCheckedAgo = formatChecked(
+                  app.last_gmail_check_at,
+                );
+                const updatedCell = applicationUpdatedLabel(app);
+                const latestRunLabel = app.latest_run_status
+                  ? app.latest_run_status.replace(/_/g, " ")
+                  : null;
+                const isPending = pendingActionId === app.id;
+                const showSubmit =
+                  app.submission_status === "not_submitted";
+                const showReject = !["rejected", "withdrawn"].includes(
+                  app.status,
+                );
+                const showInterview = ![
+                  "interview",
+                  "rejected",
+                  "withdrawn",
+                  "offer",
+                ].includes(app.status);
+                return (
+                  <tr
+                    key={app.id}
+                    className="applications-row"
+                    data-application-id={app.id}
+                  >
+                    <td
+                      className="applications-cell-job"
+                      data-label="Application"
+                    >
+                      <div className="applications-row-application">
+                        <Link
+                          to={`/applications/${app.id}`}
+                          className="applications-job-link"
                         >
-                          <Link
-                            to={`/applications/${app.id}`}
-                            className="applications-job-link"
-                          >
-                            {title}
-                          </Link>
-                          {company ? (
-                            <span className="applications-job-company">
-                              {company}
-                            </span>
-                          ) : null}
-                        </td>
-                        <td data-label="Status">
-                          <div className="applications-cell-status">
-                            <StatusBadge
-                              variant={stageVariant as StatusBadgeVariant}
-                              data-testid={`status-badge-${app.id}`}
-                            >
-                              {stageLabel}
-                            </StatusBadge>
-                            {submissionCell ? (
-                              <span
-                                className="applications-cell-subtle"
-                                data-testid={`submission-${app.id}`}
-                              >
-                                {submissionCell}
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td data-label="Email">
-                          <div className="applications-cell-email">
-                            <span
-                              className="applications-cell-text"
-                              data-testid={`email-status-${app.id}`}
-                            >
-                              {emailStatusLabel(app.email_status)}
-                            </span>
-                            {emailSummary ? (
-                              <span className="applications-cell-email-summary">
-                                {emailSummary}
-                                {emailExtra}
-                              </span>
-                            ) : null}
-                            {gmailCheckedAgo ? (
-                              <span className="applications-cell-subtle">
-                                Gmail checked: {gmailCheckedAgo}
-                              </span>
-                            ) : null}
-                            <span
-                              className="applications-cell-subtle"
-                              data-testid={`updated-${app.id}`}
-                            >
-                              Updated {updatedCell}
-                            </span>
-                          </div>
-                        </td>
-                        <td data-label="Next action">
-                          <span
-                            className="applications-cell-next-action"
-                            data-testid={`next-action-${app.id}`}
-                          >
-                            {app.next_action}
+                          {title}
+                        </Link>
+                        {company ? (
+                          <span className="applications-row-application-company">
+                            {company}
                           </span>
-                        </td>
-                        <td
-                          data-label="Actions"
-                          className="applications-cell-actions"
+                        ) : null}
+                        {sourceLabel ? (
+                          <span className="applications-row-application-source">
+                            {sourceLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td
+                      data-label="Pipeline"
+                      className="applications-cell-pipeline"
+                    >
+                      <div className="applications-cell-stack applications-cell-status">
+                        <StatusBadge
+                          variant={stageVariant as StatusBadgeVariant}
+                          data-testid={`status-badge-${app.id}`}
                         >
-                          <div className="applications-row-actions">
-                            <Link
-                              className="applications-action-link"
-                              to={`/applications/${app.id}`}
-                              aria-label={`Open ${label}`}
-                            >
-                              Open
-                            </Link>
-                            {showSubmit ? (
-                              <button
-                                type="button"
-                                className="applications-action-button"
-                                disabled={isPending}
-                                onClick={() =>
-                                  runAction(app.id, submitApplication)
-                                }
-                              >
-                                Mark submitted
-                              </button>
-                            ) : null}
-                            {showInterview ? (
-                              <button
-                                type="button"
-                                className="applications-action-button"
-                                disabled={isPending}
-                                onClick={() =>
-                                  runAction(app.id, markApplicationInterview)
-                                }
-                              >
-                                Mark interview
-                              </button>
-                            ) : null}
-                            {showReject ? (
-                              <button
-                                type="button"
-                                className="applications-action-button"
-                                disabled={isPending}
-                                onClick={() =>
-                                  runAction(app.id, markApplicationRejected)
-                                }
-                              >
-                                Mark rejected
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+                          {stageLabel}
+                        </StatusBadge>
+                        {submissionCell ? (
+                          <span
+                            className="applications-cell-subtle"
+                            data-testid={`submission-${app.id}`}
+                          >
+                            {submissionCell}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td
+                      data-label="Email"
+                      className="applications-cell-email"
+                    >
+                      <div className="applications-cell-stack">
+                        <span
+                          className="applications-cell-text"
+                          data-testid={`email-status-${app.id}`}
+                        >
+                          {emailStatusLabel(app.email_status)}
+                        </span>
+                        {emailSummary ? (
+                          <span className="applications-cell-email-summary">
+                            {emailSummary}
+                            {emailExtra}
+                          </span>
+                        ) : null}
+                        {gmailCheckedAgo ? (
+                          <span className="applications-cell-subtle">
+                            Gmail checked: {gmailCheckedAgo}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td
+                      data-label="Activity"
+                      className="applications-cell-activity"
+                    >
+                      <div className="applications-cell-stack">
+                        <span data-testid={`updated-${app.id}`}>
+                          Updated <strong>{updatedCell}</strong>
+                        </span>
+                        {latestRunLabel ? (
+                          <span className="applications-cell-subtle">
+                            Latest run: {latestRunLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td
+                      data-label="Next action"
+                      className="applications-cell-next"
+                    >
+                      <span
+                        className="applications-cell-next-action"
+                        data-testid={`next-action-${app.id}`}
+                      >
+                        {app.next_action}
+                      </span>
+                      <div className="applications-row-actions">
+                        <Link
+                          className="ui-button ui-button-secondary ui-button-sm"
+                          to={`/applications/${app.id}`}
+                          aria-label={`Open ${label}`}
+                        >
+                          Open
+                        </Link>
+                        {showSubmit ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={isPending}
+                            onClick={() =>
+                              runAction(app.id, submitApplication)
+                            }
+                          >
+                            Mark submitted
+                          </Button>
+                        ) : null}
+                        {showInterview ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isPending}
+                            onClick={() =>
+                              runAction(app.id, markApplicationInterview)
+                            }
+                          >
+                            Mark interview
+                          </Button>
+                        ) : null}
+                        {showReject ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isPending}
+                            onClick={() =>
+                              runAction(app.id, markApplicationRejected)
+                            }
+                          >
+                            Mark rejected
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );

@@ -168,6 +168,39 @@ describe("JobDetailPage five-step workspace", () => {
     ]);
   });
 
+  it("renders the tailoring setup aside panel with the resume + method fields", async () => {
+    renderJob("job-1");
+
+    const panel = await screen.findByTestId("tailoring-setup-panel");
+    // Heading lives at h4 inside the aside so the existing 5-step h3 list
+    // remains exact.
+    expect(
+      within(panel).getByRole("heading", { level: 4, name: /tailoring setup/i }),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText(/primary resume/i)).toBeInTheDocument();
+    expect(within(panel).getByText(/evidence sources/i)).toBeInTheDocument();
+    expect(within(panel).getByText(/tailoring method/i)).toBeInTheDocument();
+  });
+
+  it("updates the tailoring setup primary-resume line after the user picks a resume", async () => {
+    const user = userEvent.setup();
+    renderJob("job-1");
+
+    const panel = await screen.findByTestId("tailoring-setup-panel");
+    // Initial state: prompts the user to pick a resume.
+    expect(
+      within(panel).getByText(/choose one in step 2/i),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+
+    // After selecting, the resume name surfaces in the aside summary.
+    expect(within(panel).getByText("Generalist")).toBeInTheDocument();
+  });
+
   it("exposes the job description as a clickable toggle button", async () => {
     const user = userEvent.setup();
     renderJob("job-1");

@@ -2,8 +2,13 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, listJobs, listRuns } from "../api";
 import type { ClaudeRun, Job } from "../api";
+import { EmptyState, PageHeader, StatusBadge } from "../components/ui";
+import type { StatusBadgeVariant } from "../components/ui";
 
-function statusBadge(status: string): { label: string; variant: string } {
+function statusBadge(status: string): {
+  label: string;
+  variant: StatusBadgeVariant;
+} {
   switch (status) {
     case "created":
       return { label: "Pending", variant: "pending" };
@@ -11,6 +16,8 @@ function statusBadge(status: string): { label: string; variant: string } {
       return { label: "Running", variant: "running" };
     case "completed":
       return { label: "Completed", variant: "completed" };
+    case "imported":
+      return { label: "Imported", variant: "completed" };
     case "failed":
       return { label: "Failed", variant: "failed" };
     default:
@@ -48,7 +55,10 @@ export function RunsPage() {
   if (error) {
     return (
       <section className="runs-page">
-        <h2>Runs</h2>
+        <PageHeader
+          title="Runs"
+          description="Every tailoring run, newest first."
+        />
         <p role="alert" className="error">
           {error}
         </p>
@@ -59,7 +69,10 @@ export function RunsPage() {
   if (runs === null || jobs === null) {
     return (
       <section className="runs-page">
-        <h2>Runs</h2>
+        <PageHeader
+          title="Runs"
+          description="Every tailoring run, newest first."
+        />
         <p>Loading runs…</p>
       </section>
     );
@@ -72,9 +85,15 @@ export function RunsPage() {
 
   return (
     <section className="runs-page">
-      <h2>Runs</h2>
+      <PageHeader
+        title="Runs"
+        description="Every tailoring run, newest first."
+      />
       {sorted.length === 0 ? (
-        <p>No runs yet.</p>
+        <EmptyState
+          title="No runs yet."
+          description="Open a job and click Generate Automatically to start your first tailoring run."
+        />
       ) : (
         <ul className="run-list">
           {sorted.map((run) => {
@@ -85,17 +104,16 @@ export function RunsPage() {
             const badge = statusBadge(run.status);
             return (
               <li key={run.id} className="run-list-item">
-                <Link to={`/runs/${run.id}`}>
-                  <strong>{label}</strong>
-                </Link>
-                <span
-                  className={`status-badge status-badge-${badge.variant}`}
-                >
-                  {badge.label}
-                </span>
+                <div className="run-list-item-row">
+                  <Link to={`/runs/${run.id}`} className="run-list-item-link">
+                    <strong>{label}</strong>
+                  </Link>
+                  <StatusBadge variant={badge.variant}>
+                    {badge.label}
+                  </StatusBadge>
+                </div>
                 <span className="run-meta-inline">
-                  {" "}
-                  · {new Date(run.created_at).toLocaleString()}
+                  {new Date(run.created_at).toLocaleString()}
                 </span>
               </li>
             );

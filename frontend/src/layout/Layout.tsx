@@ -5,20 +5,40 @@ import { listCaptures } from "../api";
 interface NavItem {
   to: string;
   label: string;
+  hint?: string;
 }
 
-const PRIMARY_NAV: NavItem[] = [
-  { to: "/", label: "Dashboard" },
-  { to: "/jobs", label: "Jobs" },
-  { to: "/applications", label: "Applications" },
-  { to: "/captures", label: "Captures" },
-  { to: "/runs", label: "Runs" },
-];
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
 
-const ADVANCED_NAV: NavItem[] = [
-  { to: "/prompts", label: "Prompt harnesses" },
-  { to: "/settings", label: "Settings" },
-];
+// Track / Create / Configure follow the redesign brief; only routes that
+// actually exist in App.tsx are listed (no dead links).
+const TRACK_GROUP: NavGroup = {
+  label: "Track",
+  items: [
+    { to: "/", label: "Dashboard", hint: "Overview" },
+    { to: "/jobs", label: "Jobs", hint: "Confirmed roles" },
+    { to: "/applications", label: "Applications", hint: "Status + email" },
+  ],
+};
+
+const CREATE_GROUP: NavGroup = {
+  label: "Create",
+  items: [
+    { to: "/captures", label: "Captures", hint: "Pending intake" },
+    { to: "/runs", label: "Runs", hint: "Tailoring runs" },
+  ],
+};
+
+const CONFIGURE_GROUP: NavGroup = {
+  label: "Configure",
+  items: [
+    { to: "/prompts", label: "Prompt harnesses" },
+    { to: "/settings", label: "Settings" },
+  ],
+};
 
 // Routes that benefit from the wider content shell (dashboards / data tables).
 const WIDE_PATHS = ["/applications", "/runs", "/jobs", "/"];
@@ -63,7 +83,12 @@ export function Layout() {
             isActive ? "nav-link nav-link-active" : "nav-link"
           }
         >
-          <span>{item.label}</span>
+          <span className="nav-link-body">
+            <span className="nav-link-label">{item.label}</span>
+            {item.hint ? (
+              <span className="nav-link-hint">{item.hint}</span>
+            ) : null}
+          </span>
           {showBadge ? (
             <span
               className="nav-badge"
@@ -74,6 +99,15 @@ export function Layout() {
           ) : null}
         </NavLink>
       </li>
+    );
+  }
+
+  function renderGroup(group: NavGroup) {
+    return (
+      <div className="nav-group" key={group.label}>
+        <p className="nav-group-label">{group.label}</p>
+        <ul className="nav-list">{group.items.map(renderItem)}</ul>
+      </div>
     );
   }
 
@@ -89,17 +123,31 @@ export function Layout() {
             <p className="sidebar-subtitle">Application cockpit</p>
           </div>
         </div>
-        <nav aria-label="Primary">
-          <p className="nav-group-label">Workspace</p>
-          <ul className="nav-list">{PRIMARY_NAV.map(renderItem)}</ul>
+
+        <nav aria-label="Primary" className="sidebar-nav">
+          {renderGroup(TRACK_GROUP)}
+          {renderGroup(CREATE_GROUP)}
         </nav>
+
         <div className="sidebar-divider" role="presentation" />
-        <nav aria-label="Configuration">
-          <p className="nav-group-label">Configuration</p>
-          <ul className="nav-list nav-list-advanced">
-            {ADVANCED_NAV.map(renderItem)}
-          </ul>
+
+        <nav aria-label="Configuration" className="sidebar-nav">
+          {renderGroup(CONFIGURE_GROUP)}
         </nav>
+
+        <div className="sidebar-footer">
+          <span className="sidebar-status-dot" aria-hidden="true" />
+          <div>
+            <p className="sidebar-status-label">Local backend</p>
+            <p className="sidebar-status-detail">
+              {pendingCount === null
+                ? "Status unknown"
+                : `${pendingCount} pending capture${
+                    pendingCount === 1 ? "" : "s"
+                  }`}
+            </p>
+          </div>
+        </div>
       </aside>
       <main className="content">
         <div

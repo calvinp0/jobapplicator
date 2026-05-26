@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   createEvidenceBank,
   createMasterResume,
@@ -692,7 +693,7 @@ export function SettingsPage() {
     <section className="settings-page">
       <PageHeader
         title="Settings"
-        description="Manage your candidate context, model providers, and integrations."
+        description="Manage your candidate context, model providers, and integrations from one hub."
       />
       {loadError ? (
         <p role="alert" className="error">
@@ -701,7 +702,14 @@ export function SettingsPage() {
       ) : null}
 
       <SettingsGroup
-        label="Candidate context"
+        label="Gmail integration"
+        description="Read-only Gmail access for application tracking. Drives the Sync Gmail action on the Applications page."
+      >
+        <GmailIntegrationCard />
+      </SettingsGroup>
+
+      <SettingsGroup
+        label="Document tooling"
         description="Master resumes and evidence banks used as inputs to tailoring runs."
       >
         <SeedCard<MasterResume>
@@ -732,17 +740,62 @@ export function SettingsPage() {
       </SettingsGroup>
 
       <SettingsGroup
-        label="Claude / LLM providers"
+        label="Claude / LLM"
         description="Pick which CLI-based provider drives the automatic tailoring flow."
       >
         <LlmProviderCard />
       </SettingsGroup>
 
       <SettingsGroup
-        label="Gmail integration"
-        description="Read-only Gmail access for application tracking."
+        label="Browser extension"
+        description="Capture jobs straight from your browser into the cockpit."
       >
-        <GmailIntegrationCard />
+        <section className="settings-card" data-testid="extension-card">
+          <header className="settings-card-header">
+            <h3>Browser capture extension</h3>
+          </header>
+          <p className="settings-helper">
+            Load the unpacked extension from the <code>extension/</code>{" "}
+            directory in this repo to enable one-click job capture from
+            LinkedIn, Greenhouse, and Lever postings. Captured jobs land in
+            the <Link to="/captures">Captures</Link> queue for confirmation.
+          </p>
+        </section>
+      </SettingsGroup>
+
+      <SettingsGroup
+        label="Prompt harnesses"
+        description="Tune the system prompts the tailoring runs use."
+      >
+        <section className="settings-card" data-testid="prompts-card">
+          <header className="settings-card-header">
+            <h3>Prompt editor</h3>
+          </header>
+          <p className="settings-helper">
+            Edit and version the system prompts driving each tailoring
+            harness.{" "}
+            <Link to="/prompts">Open the prompt editor</Link> to view
+            available harnesses and their current text.
+          </p>
+        </section>
+      </SettingsGroup>
+
+      <SettingsGroup
+        label="Danger zone"
+        description="Operations that are difficult to reverse. The cockpit will always confirm before doing anything destructive."
+      >
+        <section className="settings-card" data-testid="danger-zone-card">
+          <header className="settings-card-header">
+            <h3>Reset local data</h3>
+          </header>
+          <p className="settings-helper">
+            The local SQLite database lives at{" "}
+            <code>candidate_context/jobapply.sqlite</code>. To start fresh,
+            stop the backend and delete that file. There is no in-app reset
+            today — this panel is a placeholder for future destructive
+            tooling.
+          </p>
+        </section>
       </SettingsGroup>
     </section>
   );
