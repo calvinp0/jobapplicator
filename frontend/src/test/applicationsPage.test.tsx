@@ -320,14 +320,27 @@ describe("ApplicationsPage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
     );
-    const headerColumns = ["Job", "Status", "Email", "Next action", "Actions"];
+    const headerColumns = [
+      "Application",
+      "Pipeline",
+      "Email",
+      "Activity",
+      "Next action",
+    ];
     for (const col of headerColumns) {
       expect(
         screen.getByRole("columnheader", { name: col }),
       ).toBeInTheDocument();
     }
-    // Columns removed in the consolidation must no longer appear.
-    for (const removed of ["Submission", "Latest run", "Updated"]) {
+    // Columns removed in the redesign must no longer appear.
+    for (const removed of [
+      "Job",
+      "Status",
+      "Submission",
+      "Latest run",
+      "Updated",
+      "Actions",
+    ]) {
       expect(
         screen.queryByRole("columnheader", { name: removed }),
       ).toBeNull();
@@ -544,7 +557,7 @@ describe("ApplicationsPage", () => {
     ).toHaveTextContent(/^Submitted /);
   });
 
-  it("renders an Updated line inside the Email cell", async () => {
+  it("renders an Updated line inside the Activity cell", async () => {
     renderPage();
     await waitFor(() =>
       expect(
@@ -555,10 +568,38 @@ describe("ApplicationsPage", () => {
     for (const app of applications) {
       const updated = screen.getByTestId(`updated-${app.id}`);
       expect(updated).toHaveTextContent(/^Updated /);
-      // The Updated line lives inside the same <td> as the email status.
+      // The redesigned table puts "Updated" in its own Activity column,
+      // separate from the Email column.
+      const cell = updated.closest("td");
+      expect(cell).not.toBeNull();
+      expect(cell?.getAttribute("data-label")).toBe("Activity");
       const emailStatus = screen.getByTestId(`email-status-${app.id}`);
-      expect(updated.closest("td")).toBe(emailStatus.closest("td"));
+      expect(updated.closest("td")).not.toBe(emailStatus.closest("td"));
     }
+  });
+
+  it("renders the redesigned toolbar with filter chips and Sync Gmail", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
+    );
+    const toolbar = screen.getByRole("toolbar", {
+      name: /applications toolbar/i,
+    });
+    // Sync Gmail lives inside the toolbar in the redesign.
+    const syncButton = screen.getByTestId("sync-gmail-button");
+    expect(toolbar.contains(syncButton)).toBe(true);
+    // Filter chips render inside the toolbar with a toolbar role of
+    // their own.
+    const chipsToolbar = within(toolbar).getByRole("toolbar", {
+      name: /filter applications/i,
+    });
+    expect(
+      within(chipsToolbar).getByRole("button", { name: /^all/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(chipsToolbar).getByRole("button", { name: /^submitted/i }),
+    ).toBeInTheDocument();
   });
 
   it("invokes markApplicationRejected when 'Mark rejected' is clicked", async () => {

@@ -697,6 +697,91 @@ export function JobDetailPage() {
     </>
   );
 
+  const selectedResume = selectedResumeId
+    ? resumes.find((r) => r.id === selectedResumeId) ?? null
+    : null;
+  const selectedEvidenceCount = selectedEvidenceSourceIds.length;
+  const tailoringMethodLabel =
+    selectedProviderId && llmProviders
+      ? llmProviders.find((p) => p.id === selectedProviderId)?.display_name ?? "Auto"
+      : "Auto (CLI)";
+  const tailoringSetupAside = (
+    <aside
+      className="workspace-aside"
+      aria-label="Tailoring setup"
+      data-testid="tailoring-setup-panel"
+    >
+      <div className="section-card tailoring-setup">
+        <header className="section-card-header">
+          <div className="section-card-titles">
+            <h4>Tailoring setup</h4>
+            <p className="section-card-description">
+              Quick view of the inputs that drive the next draft.
+            </p>
+          </div>
+        </header>
+        <div className="section-card-body">
+          <div className="tailoring-setup-field">
+            <span className="tailoring-setup-label">Primary resume</span>
+            <span className="tailoring-setup-value">
+              {selectedResume
+                ? selectedResume.name
+                : "Not selected — choose one in step 2."}
+            </span>
+          </div>
+          <div className="tailoring-setup-field">
+            <span className="tailoring-setup-label">Evidence sources</span>
+            <span className="tailoring-setup-value">
+              {evidenceSources === null
+                ? "Loading…"
+                : evidenceSources.length === 0
+                  ? "None available."
+                  : selectedEvidenceCount === 0
+                    ? "None selected (optional)"
+                    : `${selectedEvidenceCount} selected`}
+            </span>
+          </div>
+          <div className="tailoring-setup-field">
+            <span className="tailoring-setup-label">Tailoring method</span>
+            <span className="tailoring-setup-value">{tailoringMethodLabel}</span>
+          </div>
+          {latestRun ? (
+            <div className="tailoring-setup-field">
+              <span className="tailoring-setup-label">Latest run</span>
+              <span className="tailoring-setup-value">
+                <Link to={`/runs/${latestRun.id}`}>
+                  {latestRun.status.replace(/_/g, " ")}
+                </Link>
+                {latestRunProviderName ? ` · ${latestRunProviderName}` : null}
+              </span>
+            </div>
+          ) : null}
+          <p className="tailoring-setup-hint">
+            Use step 3 below to generate a draft, or hand off to Claude for
+            Word for ATS-preserving edits.
+          </p>
+        </div>
+      </div>
+
+      <div className="section-card">
+        <header className="section-card-header">
+          <div className="section-card-titles">
+            <h4>Workspace summary</h4>
+          </div>
+        </header>
+        <div className="section-card-body">
+          <p className="tailoring-setup-hint">
+            {orderedDrafts.length} draft
+            {orderedDrafts.length === 1 ? "" : "s"} ·{" "}
+            {runs.length} run{runs.length === 1 ? "" : "s"} ·{" "}
+            {applications.length} application
+            {applications.length === 1 ? "" : "s"}
+          </p>
+        </div>
+      </div>
+    </aside>
+  );
+
   return (
     <section className="job-detail">
       <PageHeader
@@ -704,7 +789,9 @@ export function JobDetailPage() {
         meta={headerMeta}
       />
 
-      <ol className="workspace-steps" aria-label="Job workspace">
+      <div className="workspace-layout">
+        <div className="workspace-main">
+          <ol className="workspace-steps" aria-label="Job workspace">
         <li>
           <WorkspaceStep index={1} title={STEP_TITLES[0]}>
             <p className="workspace-step-help">
@@ -1069,6 +1156,9 @@ export function JobDetailPage() {
           </WorkspaceStep>
         </li>
       </ol>
+        </div>
+        {tailoringSetupAside}
+      </div>
     </section>
   );
 }

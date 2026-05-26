@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, listJobs } from "../api";
 import type { Job } from "../api";
+import { EmptyState, PageHeader } from "../components/ui";
 
 export function JobsPage() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -27,7 +28,10 @@ export function JobsPage() {
   if (error) {
     return (
       <section className="jobs-page">
-        <h2>Jobs</h2>
+        <PageHeader
+          title="Jobs"
+          description="Confirmed jobs ready for tailoring."
+        />
         <p role="alert" className="error">
           {error}
         </p>
@@ -38,7 +42,10 @@ export function JobsPage() {
   if (jobs === null) {
     return (
       <section className="jobs-page">
-        <h2>Jobs</h2>
+        <PageHeader
+          title="Jobs"
+          description="Confirmed jobs ready for tailoring."
+        />
         <p>Loading jobs…</p>
       </section>
     );
@@ -46,9 +53,15 @@ export function JobsPage() {
 
   return (
     <section className="jobs-page">
-      <h2>Jobs</h2>
+      <PageHeader
+        title="Jobs"
+        description="Confirmed jobs ready for tailoring."
+      />
       {jobs.length === 0 ? (
-        <p>No confirmed jobs yet.</p>
+        <EmptyState
+          title="No confirmed jobs yet."
+          description="Confirm a pending capture to promote it into a job."
+        />
       ) : (
         <ul className="job-list">
           {jobs.map((job) => (

@@ -148,6 +148,31 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
   });
 
+  it("renders the redesigned settings hub with grouped panels", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /^settings$/i }),
+      ).toBeInTheDocument(),
+    );
+
+    // The settings hub groups panels using SettingsGroup, each rendered
+    // as a labelled region.
+    for (const groupLabel of [
+      /gmail integration/i,
+      /document tooling/i,
+      /claude \/ llm/i,
+      /browser extension/i,
+      /prompt harnesses/i,
+      /danger zone/i,
+    ]) {
+      expect(
+        screen.getByRole("region", { name: groupLabel }),
+      ).toBeInTheDocument();
+    }
+  });
+
   it("renders both cards with their headers and the canonical empty-state copy", async () => {
     renderPage();
 
