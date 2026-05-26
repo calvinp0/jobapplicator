@@ -364,40 +364,69 @@ between `run` invocations.
 scripts/agentctl.sh fix <task-id>
 ```
 
-`fix` launches a Claude Code session in the existing task worktree
-focused on addressing the latest review's `Required fixes`. It exists
-so the operator does not have to hand-craft a follow-up prompt when a
-review returns `REQUEST_CHANGES`, `REJECT`, or `BLOCKED`.
+`fix` launches a Claude Code session in the existing task worktree to
+repair whichever failure mode is blocking completion. It exists so the
+operator does not have to hand-craft a follow-up prompt when something
+goes wrong between `run` and `complete`.
+
+### Failure-mode selection
+
+`fix` inspects two signals before picking a repair strategy. The order
+is fixed: a failed verification always takes precedence over the review
+verdict, because a task that passed review can still have a failed
+verification (verification runs in `complete`, after review).
+
+1. **Verification failed.** If the verification state file
+   (`.agentctl/verifications/<task-id>.md`) records `status: failed`,
+   `fix` launches a verification-failure repair regardless of the review
+   verdict. The operator-facing banner is:
+   ```
+   Latest review verdict is <verdict>, but verification failed.
+   Launching verification-failure repair agent.
+   ```
+   The repair prompt embeds the failing command, the failure excerpt,
+   the task file, and the full verification state file, and instructs
+   the agent to diagnose the failure, make the smallest correct change,
+   re-run the targeted failing test, then re-run the full verification
+   list. The prompt forbids bypassing or weakening tests (no `xfail`,
+   no `--skip`, no commenting out) unless a test expectation is genuinely
+   obsolete and the reason is documented in the commit message.
+
+2. **Review verdict is `REQUEST_CHANGES`, `REJECT`, or `BLOCKED`.** If
+   verification is not in a failed state, `fix` falls back to the
+   review-feedback repair. The prompt embeds the task file and the full
+   review artifact and instructs the agent to address only the
+   `Required fixes` section.
+
+3. **Nothing to fix.** If verification is `passed` (or `missing`, i.e.
+   `complete` was never run) AND the review verdict is `APPROVE` or
+   `APPROVE_WITH_NOTES`, `fix` refuses with `nothing to fix` and tells
+   the operator to run `complete`.
 
 The command:
 
 1. Resolves the task id and loads its metadata.
 2. Refuses if the task is already `done`.
-3. Reads the latest review artifact at `.agentctl/reviews/<task-id>.md`.
-   Refuses if the artifact is missing or its front matter has no valid
-   `verdict`.
-4. Refuses if the latest verdict is `APPROVE` or `APPROVE_WITH_NOTES`
-   (there is nothing to fix; run `complete` instead).
-5. Confirms the task worktree exists, propagates Claude permission
-   settings into it, and launches Claude with the working directory set
-   to the worktree path.
-6. Uses permission mode `CLAUDE_FIX_PERMISSION_MODE` (default
-   `acceptEdits`).
-7. Embeds both the task file and the full review artifact in the prompt
-   and instructs the agent to:
-   - read the review artifact and address only `Required fixes`
-   - stay within the task's `allowed_paths`
-   - not expand scope (no refactors, no optional-note implementation
-     unless trivially in-scope)
-   - run the task's verification commands
-   - prefer `git commit --amend --no-edit` so the task branch keeps one
-     coherent commit; fall back to a small follow-up commit if amending
-     is unsafe
-   - not push
+3. Resolves the task worktree path and propagates Claude permission
+   settings into it.
+4. Reads the verification state file at
+   `.agentctl/verifications/<task-id>.md`. If it records
+   `status: failed`, dispatches the verification-failure repair (step 5).
+   Otherwise reads the review artifact and dispatches the
+   review-feedback repair if the verdict requires changes.
+5. Launches Claude Code from inside the task worktree with permission
+   mode `CLAUDE_FIX_PERMISSION_MODE` (default `acceptEdits`).
+6. For verification-failure repairs, writes a journal entry under
+   `.agentctl/journal/<timestamp>-<task-id>-verification-fix.md` with
+   the failing command, failure excerpt, start/end timestamps, and the
+   post-fix on-disk verification status.
 
 After the session ends, `fix` prints recent commits and `git status`,
-and points the operator at `scripts/agentctl.sh review <task-id>` so
-the reviewer can rate the fix.
+and points the operator at:
+
+- `scripts/agentctl.sh complete <task-id>` after a verification-failure
+  repair (`complete` re-runs verification and refreshes the state file).
+- `scripts/agentctl.sh review <task-id>` after a review-feedback repair.
 
 `fix` never:
 
@@ -405,7 +434,49 @@ the reviewer can rate the fix.
 - modifies `agent_tasks/queue.yaml`
 - changes the verdict in the existing review artifact (the next review
   writes a new one)
+- updates the verification state file itself (only `complete`'s
+  verification runner writes that file; `fix` reads it)
 - runs on a task that is already `done`
+- bypasses or weakens tests (the prompt explicitly forbids `--skip`,
+  `xfail`, commenting out tests, etc.)
+
+### Verification state file
+
+`.agentctl/verifications/<task-id>.md` is harness-owned and never
+committed. The `complete` dirty-main filter ignores untracked files
+under `.agentctl/verifications/` for the same reason it ignores
+`.agentctl/reviews/` artifacts.
+
+Format mirrors review artifacts:
+
+```yaml
+---
+task_id: "097-add-firefox-extension-support"
+status: "failed"
+exit_code: 1
+recorded_at: "2026-05-26T11:00:23Z"
+---
+```
+
+```markdown
+# Verification: 097-add-firefox-extension-support
+
+## Failing command
+
+pytest
+
+## Failure excerpt
+
+```
+(tail of stdout/stderr from the failing command)
+```
+```
+
+For `status: passed`, the body shows a single "verification passed at
+<ts>" line and the failing-command / failure-excerpt sections are
+omitted. The state file is overwritten in place every time
+`run_verification_commands` runs, so the file always reflects the most
+recent verification attempt.
 
 ## Complete Command
 
@@ -453,8 +524,9 @@ so a bad verdict fails fast.
 5. Locates the worktree whose checked-out branch is `main` (via
    `git worktree list --porcelain`) and refuses to proceed if that
    worktree has uncommitted changes. Untracked files under
-   `.agentctl/reviews/` are filtered out of this check because review
-   artifacts are harness-owned and not required to be committed. The
+   `.agentctl/reviews/` and `.agentctl/verifications/` are filtered out
+   of this check because both are harness-owned and not required to be
+   committed. The
    dirty-main report is grouped into "Tracked changes", "Untracked
    files", and — when the task branch exists — "Possible shadow files
    from task branch", which lists untracked files in main whose paths
@@ -476,8 +548,16 @@ so a bad verdict fails fast.
    unrelated directories. If `npm install` fails, the task is **not**
    marked done.
 8. Runs every command in the task's `verification` list inside the task
-   worktree. If any command fails, the task is **not** marked done and
-   nothing is merged or committed.
+   worktree. The outcome is recorded to
+   `.agentctl/verifications/<task-id>.md` (see *Fix Command* above).
+   If any command fails, the task is **not** marked done, nothing is
+   merged or committed, and `complete` prints the recovery hint:
+   ```
+   Verification failed. Run:
+     scripts/agentctl.sh fix <task-id>
+   ```
+   The next `complete` run will re-execute verification and overwrite
+   the state file.
 9. Determines whether the task branch (`worktree-<worktree>`) is already
    reachable from `main`. If so, the merge step is skipped. Otherwise
    the command requires the branch to have at least one commit beyond
@@ -1101,6 +1181,100 @@ scripts/agentctl.sh plan --help
 
 `ready` is a convenience query that filters `list` to only tasks whose
 status is `ready` — i.e. tasks the operator can dispatch right now.
+
+### Manual harness test: verification-failure repair
+
+The `fix` command's verification-repair path does not have a dedicated
+shell test suite. The following scenario exercises every branch covered
+by Task 099 against a real (but throwaway) task. Run it from a fresh
+checkout where the queue's verification command is something cheap
+(e.g. `bash -n scripts/agentctl.sh`).
+
+1. **Bootstrap state files by hand.** Create a fake failed-verification
+   state for a task you do not intend to complete:
+   ```bash
+   MAIN_WT="$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
+   mkdir -p "$MAIN_WT/.agentctl/verifications" "$MAIN_WT/.agentctl/reviews"
+   TASK_ID="099-fix-agentctl-verification-failure-repair"
+   cat > "$MAIN_WT/.agentctl/verifications/$TASK_ID.md" <<'EOF'
+   ---
+   task_id: "099-fix-agentctl-verification-failure-repair"
+   status: "failed"
+   exit_code: 1
+   recorded_at: "2026-05-26T00:00:00Z"
+   ---
+
+   # Verification: 099-fix-agentctl-verification-failure-repair
+
+   ## Failing command
+
+   pytest
+
+   ## Failure excerpt
+
+   ```
+   AssertionError: expected_email_received != needs_review
+   ```
+   EOF
+   cat > "$MAIN_WT/.agentctl/reviews/$TASK_ID.md" <<'EOF'
+   ---
+   task_id: "099-fix-agentctl-verification-failure-repair"
+   verdict: "APPROVE"
+   reviewed_at: "2026-05-26T00:00:00Z"
+   reviewer: "manual-test"
+   ---
+
+   # Review: 099-fix-agentctl-verification-failure-repair
+
+   ## Verdict
+
+   APPROVE
+   EOF
+   ```
+
+2. **Verify precedence.** Run `scripts/agentctl.sh fix $TASK_ID` and
+   confirm the banner says
+   `Latest review verdict is APPROVE, but verification failed.` —
+   `fix` should launch a verification-failure repair, NOT say
+   `nothing to fix`. Cancel the Claude session immediately.
+
+3. **Verify completion guard.** Run `scripts/agentctl.sh complete $TASK_ID`
+   and confirm it refuses with the new recovery hint
+   (`Verification failed. Run: scripts/agentctl.sh fix <task-id>`).
+   (`complete` will re-run verification too — the state file is
+   overwritten with the real outcome.)
+
+4. **Verify review-only fix still works.** Replace the verification
+   state's `status: failed` with `status: passed`, change the review
+   verdict to `REQUEST_CHANGES`, and re-run
+   `scripts/agentctl.sh fix $TASK_ID`. Confirm the banner uses the
+   existing review-fix wording (no "verification failed" line) and
+   that the prompt sent to Claude contains the review artifact, not the
+   verification state.
+
+5. **Verify nothing-to-fix.** Set state to `status: passed` and verdict
+   to `APPROVE`. Run `scripts/agentctl.sh fix $TASK_ID` and confirm it
+   exits with
+   `latest review verdict for <id> is APPROVE; nothing to fix.`
+
+6. **Cleanup.** Remove the test state files when finished:
+   ```bash
+   rm -f "$MAIN_WT/.agentctl/verifications/$TASK_ID.md" \
+         "$MAIN_WT/.agentctl/reviews/$TASK_ID.md"
+   ```
+
+Tests prove:
+
+1. `fix` runs verification repair when review approved but verification
+   failed (step 2).
+2. Verification failure takes precedence over review approval (step 2).
+3. The repair prompt includes the failing command and failure excerpt
+   (visible in the launch banner printed by `fix`).
+4. `complete` refuses after verification failure and suggests `fix`
+   (step 3).
+5. The existing review-feedback fix path still works on
+   `REQUEST_CHANGES` (step 4).
+6. An approved-and-verified task still says "nothing to fix" (step 5).
 
 ## Merge Policy
 

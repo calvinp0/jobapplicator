@@ -1244,6 +1244,194 @@ find_main_worktree() {
   printf '%s\n' "$path"
 }
 
+# --- verification state -----------------------------------------------------
+#
+# The verification state file records the outcome of the most recent
+# `complete`-driven verification run for a task. It lives in the main
+# checkout (single canonical location, accessible to both `complete` and
+# `fix`) at:
+#
+#   <main_wt>/.agentctl/verifications/<task-id>.md
+#
+# Format mirrors review artifacts: YAML front matter with `task_id`,
+# `status` (one of "passed" or "failed"), `exit_code`, and `recorded_at`,
+# followed by markdown sections "## Failing command" and (on failure)
+# "## Failure excerpt". The file is harness-owned, never committed; the
+# `complete` dirty-main filter ignores untracked files under the
+# verifications dir.
+
+# verifications_dir
+#
+# Print the absolute path of the .agentctl/verifications/ directory in
+# the main checkout. Verification state is centralized there (not in the
+# task worktree) so both `complete` (running in main) and `fix`
+# (resolving from main) coordinate through one path.
+verifications_dir() {
+  local main_wt
+  main_wt="$(find_main_worktree)" || return 1
+  printf '%s/.agentctl/verifications\n' "$main_wt"
+}
+
+# verification_state_path <task-id>
+verification_state_path() {
+  local task_id="$1" dir
+  dir="$(verifications_dir)" || return 1
+  printf '%s/%s.md\n' "$dir" "$task_id"
+}
+
+# ensure_verifications_dir
+ensure_verifications_dir() {
+  local dir
+  dir="$(verifications_dir)" || return 1
+  mkdir -p "$dir"
+}
+
+# read_verification_field <task-id> <field>
+#
+# Parse the YAML front matter of the verification state file and print
+# the value of <field>. Returns empty (exit 0) when missing.
+read_verification_field() {
+  local task_id="$1" field="$2"
+  local path
+  path="$(verification_state_path "$task_id" 2>/dev/null)" || return 0
+  [[ -n "$path" ]] || return 0
+  [[ -f "$path" ]] || return 0
+  require_python_yaml
+  CLAUDE_VERIF_PATH="$path" CLAUDE_VERIF_FIELD="$field" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os, sys, yaml
+path = os.environ["CLAUDE_VERIF_PATH"]
+field = os.environ["CLAUDE_VERIF_FIELD"]
+with open(path, "r", encoding="utf-8") as fh:
+    text = fh.read()
+if not text.startswith("---"):
+    sys.exit(0)
+end = text.find("\n---", 3)
+if end < 0:
+    sys.exit(0)
+fm = text[3:end].strip()
+try:
+    data = yaml.safe_load(fm) or {}
+except Exception:
+    sys.exit(0)
+val = data.get(field)
+if val is None:
+    sys.exit(0)
+print(str(val).rstrip())
+PYEOF
+}
+
+# read_verification_section <task-id> <heading>
+#
+# Print the body of the named "## <heading>" section from the
+# verification state file.
+read_verification_section() {
+  local task_id="$1" heading="$2"
+  local path
+  path="$(verification_state_path "$task_id" 2>/dev/null)" || return 0
+  [[ -n "$path" ]] || return 0
+  [[ -f "$path" ]] || return 0
+  CLAUDE_VERIF_PATH="$path" CLAUDE_VERIF_HEADING="$heading" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os
+path = os.environ["CLAUDE_VERIF_PATH"]
+heading = os.environ["CLAUDE_VERIF_HEADING"]
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+in_section = False
+out = []
+target = f"## {heading}".strip()
+for line in lines:
+    stripped = line.rstrip("\n")
+    if not in_section:
+        if stripped.strip() == target:
+            in_section = True
+        continue
+    if stripped.startswith("## "):
+        break
+    out.append(stripped)
+while out and out[0].strip() == "":
+    out.pop(0)
+while out and out[-1].strip() == "":
+    out.pop()
+print("\n".join(out))
+PYEOF
+}
+
+# verification_state_status <task-id>
+#
+# Print one of:
+#   missing            — no state file on disk
+#   invalid:<reason>   — file present but front matter malformed
+#   ok:passed          — file says verification passed
+#   ok:failed          — file says verification failed
+verification_state_status() {
+  local task_id="$1"
+  local path
+  path="$(verification_state_path "$task_id" 2>/dev/null)" \
+    || { printf 'missing\n'; return 0; }
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+  local status
+  status="$(read_verification_field "$task_id" status)"
+  if [[ -z "$status" ]]; then
+    printf 'invalid:no status field in front matter\n'
+    return 0
+  fi
+  case "$status" in
+    passed|failed)
+      printf 'ok:%s\n' "$status"
+      ;;
+    *)
+      printf 'invalid:unknown status %s\n' "$status"
+      ;;
+  esac
+}
+
+# write_verification_state <task-id> <status> [failing-command] [exit-code] [excerpt]
+#
+# Overwrite the verification state file for a task. <status> must be one
+# of "passed" or "failed". For "failed", <failing-command>, <exit-code>,
+# and <excerpt> are recorded; for "passed" they are ignored.
+write_verification_state() {
+  local task_id="$1" status="$2"
+  local failing_command="${3:-}" exit_code="${4:-0}" excerpt="${5:-}"
+  ensure_verifications_dir || return 1
+  local path
+  path="$(verification_state_path "$task_id")" || return 1
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  {
+    printf -- '---\n'
+    printf 'task_id: "%s"\n' "$task_id"
+    printf 'status: "%s"\n' "$status"
+    printf 'exit_code: %s\n' "$exit_code"
+    printf 'recorded_at: "%s"\n' "$ts"
+    printf -- '---\n\n'
+    printf '# Verification: %s\n\n' "$task_id"
+    if [[ "$status" == "failed" ]]; then
+      printf '## Failing command\n\n'
+      if [[ -n "$failing_command" ]]; then
+        printf '%s\n\n' "$failing_command"
+      else
+        printf '(unknown)\n\n'
+      fi
+      printf '## Failure excerpt\n\n'
+      printf '```\n'
+      if [[ -n "$excerpt" ]]; then
+        printf '%s\n' "$excerpt"
+      else
+        printf '(no output captured)\n'
+      fi
+      printf '```\n'
+    else
+      printf '## Status\n\nverification passed at %s.\n' "$ts"
+    fi
+  } > "$path"
+}
+
 # prepare_node_workspaces <dir> <task-id>
 #
 # Some task worktrees do not yet have node_modules installed. If the task's
@@ -1292,20 +1480,46 @@ prepare_node_workspaces() {
 # Run every command in the task's `verification` list inside <dir>. Prints
 # each command to stderr before running it. Returns the first non-zero exit
 # status; returns 0 if all commands succeed.
+#
+# Side effect: writes the outcome to the verification state file (see
+# write_verification_state). On failure the state file records the failing
+# command, exit code, and the tail of its combined stdout/stderr so that
+# `fix` can launch a verification-failure repair without re-running the
+# commands. On success the state file is overwritten with status=passed.
 run_verification_commands() {
-  local dir="$1" task_id="$2" cmd ran=0
+  local dir="$1" task_id="$2" cmd ran=0 logfile rc
+  logfile="$(mktemp)"
   while IFS= read -r cmd; do
     [[ -z "$cmd" ]] && continue
     ran=1
     printf '  $ %s\n' "$cmd" >&2
-    if ! (cd "$dir" && bash -c "$cmd"); then
+    : > "$logfile"
+    rc=0
+    # Stream the command's combined stdout/stderr to both the operator
+    # (via stderr) and a log file we keep for the verification state.
+    # `pipefail` is toggled off so a failing command does not propagate
+    # through `tee` and trip `set -e` before we capture PIPESTATUS.
+    set +o pipefail
+    ( cd "$dir" && bash -c "$cmd" ) 2>&1 | tee "$logfile" >&2
+    rc=${PIPESTATUS[0]}
+    set -o pipefail
+    if [[ "$rc" -ne 0 ]]; then
       err "verification command failed in $dir: $cmd"
+      local excerpt
+      excerpt="$(tail -n 80 "$logfile")"
+      write_verification_state "$task_id" "failed" "$cmd" "$rc" "$excerpt" \
+        || err "warning: could not record verification failure state for $task_id"
+      rm -f "$logfile"
       return 1
     fi
   done < <(yaml_query field "$task_id" verification)
+  rm -f "$logfile"
   if [[ "$ran" -eq 0 ]]; then
     printf '  (task %s has no verification commands)\n' "$task_id" >&2
+    return 0
   fi
+  write_verification_state "$task_id" "passed" \
+    || err "warning: could not record verification passed state for $task_id"
   return 0
 }
 
@@ -1502,6 +1716,9 @@ complete_continue() {
   printf 'Running verification in %s\n' "$main_wt" >&2
   if ! run_verification_commands "$main_wt" "$task_id"; then
     err "verification failed; not marking $task_id done"
+    err ""
+    err "Verification failed. Run:"
+    err "  scripts/agentctl.sh fix $task_id"
     exit 1
   fi
 
@@ -1611,11 +1828,13 @@ cmd_complete() {
     fi
   fi
 
-  # Untracked review artifacts under .agentctl/reviews/ are harness-owned
-  # and must not block complete. Everything else still counts as dirty.
+  # Untracked review artifacts under .agentctl/reviews/ and verification
+  # state under .agentctl/verifications/ are harness-owned and must not
+  # block complete. Everything else still counts as dirty.
   local dirty_after_filter
   dirty_after_filter="$(git -C "$main_wt" status --porcelain \
-    | grep -v '^?? \.agentctl/reviews/' || true)"
+    | grep -v '^?? \.agentctl/reviews/' \
+    | grep -v '^?? \.agentctl/verifications/' || true)"
   if [[ -n "$dirty_after_filter" ]]; then
     report_dirty_main "$main_wt" "$branch"
     exit 1
@@ -1660,6 +1879,9 @@ cmd_complete() {
     printf 'Running verification in %s\n' "$task_wt" >&2
     if ! run_verification_commands "$task_wt" "$task_id"; then
       err "verification failed; not marking $task_id done"
+      err ""
+      err "Verification failed. Run:"
+      err "  scripts/agentctl.sh fix $task_id"
       exit 1
     fi
   fi
@@ -1838,6 +2060,203 @@ $(cat "$artifact_path")
 EOF
 }
 
+# build_fix_verification_prompt <task-id> <task-file> <worktree-path> <main-path>
+#                               <state-path> <failing-command> <failure-excerpt>
+#
+# Build the Claude prompt for `fix` when verification failed. The prompt
+# instructs the agent to diagnose and repair the failing verification
+# command in the existing worktree, without bypassing or weakening tests.
+build_fix_verification_prompt() {
+  local task_id="$1" task_file="$2" worktree_path="${3:-}" main_path="${4:-$REPO_ROOT}"
+  local state_path="$5" failing_command="${6:-(unknown)}" failure_excerpt="${7:-}"
+  local header
+  header="$(build_worktree_header "$worktree_path" "$main_path")"
+  cat <<EOF
+You are repairing a VERIFICATION FAILURE for agent task ${task_id}.
+
+${header}
+
+Task ${task_id} passed review, but its verification commands failed when
+\`scripts/agentctl.sh complete\` ran them. The recorded verification state
+is at:
+
+  ${state_path}
+
+Failing command:
+
+  ${failing_command}
+
+Failure excerpt:
+
+----- BEGIN FAILURE EXCERPT -----
+${failure_excerpt}
+----- END FAILURE EXCERPT -----
+
+Repair the verification failure in the existing worktree above.
+
+Required behavior:
+
+- Determine whether the code under test is wrong, or whether the test
+  expectation is genuinely obsolete. Read the failing test and the code
+  it exercises before deciding.
+- Make the smallest correct change. Stay strictly within the task's
+  allowed_paths.
+- Run the targeted failing test first to confirm the diagnosis and fix.
+- Then run every command in the task's verification list to confirm the
+  full suite is green.
+- Do NOT bypass or weaken tests. Do not skip, xfail, comment out, or
+  delete tests. Only adjust a test expectation if the expectation is
+  genuinely obsolete, and document the reason in the commit message.
+- Prefer \`git add -A && git commit --amend --no-edit\` so the task
+  branch keeps one coherent commit. Fall back to a small follow-up commit
+  if amending would hide important history (for example, if the original
+  commit was already merged elsewhere).
+- Do NOT push.
+- Do NOT modify agent_tasks/queue.yaml status fields.
+- Do NOT run \`scripts/agentctl.sh complete\`. The operator will re-run
+  complete after this session to merge and mark the task done.
+
+For your reference, the task file follows.
+
+Task file: ${task_file}
+
+----- BEGIN TASK FILE -----
+$(cat "$task_file")
+----- END TASK FILE -----
+
+For your reference, the recorded verification state follows.
+
+----- BEGIN VERIFICATION STATE -----
+$(cat "$state_path" 2>/dev/null || printf '(state file unreadable)')
+----- END VERIFICATION STATE -----
+EOF
+}
+
+# journal_verification_fix_start <task-id> <failing-command> <failure-excerpt>
+#
+# Initialize a verification-fix journal file in the main checkout's
+# .agentctl/journal/ directory and print its absolute path. Records the
+# task id, failing command, failure excerpt, and start timestamp. Returns
+# non-zero (and prints nothing) if the main checkout cannot be located.
+journal_verification_fix_start() {
+  local task_id="$1" failing_command="${2:-}" failure_excerpt="${3:-}"
+  local main_wt
+  main_wt="$(find_main_worktree 2>/dev/null)" || return 1
+  local dir="$main_wt/$JOURNAL_DIR"
+  mkdir -p "$dir"
+  local ts path
+  ts="$(date -u +%Y-%m-%dT%H%M%SZ)"
+  path="$dir/${ts}-${task_id}-verification-fix.md"
+  {
+    printf '# Verification fix journal: %s\n\n' "$task_id"
+    printf 'task_id: %s\n' "$task_id"
+    printf 'command: fix %s\n' "$task_id"
+    printf 'verification_failure_fix_started: yes\n'
+    printf 'repair_started_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ -n "$failing_command" ]]; then
+      printf 'failing_command: |\n'
+      while IFS= read -r line; do
+        printf '  %s\n' "$line"
+      done <<< "$failing_command"
+    fi
+    if [[ -n "$failure_excerpt" ]]; then
+      printf '\n## Failure excerpt\n\n'
+      printf '%s\n' "$failure_excerpt"
+    fi
+  } > "$path"
+  printf '%s\n' "$path"
+}
+
+# journal_verification_fix_end <journal-path> <task-id> <exit-code>
+#
+# Append the post-fix outcome to a verification-fix journal file. The
+# post_fix_verification_result reflects the on-disk verification state
+# *as written by the most recent run_verification_commands*; running
+# `fix` does not itself update the state file because the agent runs
+# verification inside its own session. The operator must run `complete`
+# again to refresh the state.
+journal_verification_fix_end() {
+  local journal_path="$1" task_id="$2" rc="$3"
+  {
+    printf '\nrepair_completed_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'repair_exit_code: %s\n' "$rc"
+    local verif_status
+    verif_status="$(verification_state_status "$task_id" 2>/dev/null || printf missing)"
+    printf 'post_fix_verification_result: %s\n' "$verif_status"
+    printf 'note: run `scripts/agentctl.sh complete %s` to refresh the verification state.\n' \
+      "$task_id"
+  } >> "$journal_path"
+}
+
+# cmd_fix_verification_failure <task-id> <task-file> <abs-task-file>
+#                              <worktree> <wt-path> <launch-dir>
+#
+# Launch a verification-failure repair agent. Called by cmd_fix when the
+# latest verification state is "failed", regardless of review verdict.
+cmd_fix_verification_failure() {
+  local task_id="$1" task_file="$2" abs_task_file="$3"
+  local worktree="$4" wt_path="$5" launch_dir="$6"
+
+  # Read what we know about the failure so the operator banner and the
+  # repair prompt agree.
+  local state_path failing_command failure_excerpt
+  state_path="$(verification_state_path "$task_id")"
+  failing_command="$(read_verification_section "$task_id" "Failing command")"
+  failure_excerpt="$(read_verification_section "$task_id" "Failure excerpt")"
+  [[ -n "$failing_command" ]] || failing_command="(unknown)"
+
+  # Print the verdict-context banner the task spec calls for.
+  local artifact_status review_descriptor=""
+  artifact_status="$(review_artifact_status "$task_id")"
+  case "$artifact_status" in
+    ok:*)        review_descriptor="${artifact_status#ok:}" ;;
+    missing)     review_descriptor="(no review artifact yet)" ;;
+    invalid:*)   review_descriptor="(invalid: ${artifact_status#invalid:})" ;;
+  esac
+  printf 'Latest review verdict is %s, but verification failed.\n' "$review_descriptor"
+  printf 'Launching verification-failure repair agent.\n'
+
+  local journal_path=""
+  journal_path="$(journal_verification_fix_start \
+    "$task_id" "$failing_command" "$failure_excerpt" 2>/dev/null || true)"
+
+  local prompt
+  prompt="$(build_fix_verification_prompt "$task_id" "$abs_task_file" \
+    "$wt_path" "$REPO_ROOT" "$state_path" \
+    "$failing_command" "$failure_excerpt")"
+
+  printf 'Starting Claude Code verification-fix session for task %s\n' "$task_id"
+  printf '  task file:        %s\n' "$task_file"
+  printf '  worktree:         %s\n' "$worktree"
+  [[ -n "$wt_path" ]] && printf '  worktree-path:    %s\n' "$wt_path"
+  printf '  launch dir:       %s\n' "$launch_dir"
+  printf '  permission-mode:  %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+  printf '  verification:     %s (status: failed)\n' "$state_path"
+  printf '  failing command:  %s\n' "$failing_command"
+  [[ -n "$journal_path" ]] && printf '  journal:          %s\n' "$journal_path"
+
+  local rc=0
+  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
+      --worktree "$worktree" \
+      --permission-mode "$CLAUDE_FIX_PERMISSION_MODE" \
+      -p "$prompt" ); then
+    rc=$?
+  fi
+
+  [[ -n "$journal_path" ]] && journal_verification_fix_end "$journal_path" "$task_id" "$rc"
+
+  if [[ "$rc" -ne 0 ]]; then
+    die "Claude Code exited with a non-zero status"
+  fi
+
+  printf '\nVerification-fix session ended. Recent commits:\n'
+  git -C "$launch_dir" log --oneline -5
+  printf '\nGit status:\n'
+  git -C "$launch_dir" status --short
+  printf '\nNext: scripts/agentctl.sh complete %s\n' "$task_id"
+  printf '      (complete will re-run verification and refresh the state.)\n'
+}
+
 cmd_fix() {
   local task_id="${1:-}"
   [[ -n "$task_id" ]] || die "usage: agentctl.sh fix <task-id>"
@@ -1861,6 +2280,43 @@ cmd_fix() {
     exit 1
   fi
 
+  # Resolve the task worktree up front — both repair branches need it.
+  local wt_path=""
+  if [[ "$worktree" != "main" ]]; then
+    wt_path="$(worktree_path "$worktree")"
+    if [[ -z "$wt_path" ]]; then
+      err "task worktree '$worktree' does not exist; cannot fix."
+      err "Create or restore it with: scripts/agentctl.sh sync $task_id"
+      exit 1
+    fi
+    propagate_claude_permissions "$wt_path"
+  fi
+  local launch_dir="$REPO_ROOT"
+  [[ -n "$wt_path" ]] && launch_dir="$wt_path"
+
+  # 1) Verification-failure repair takes precedence over review verdict.
+  #    A task that passed review can still have a failed verification
+  #    because verification runs in `complete`, after review.
+  local verif_status
+  verif_status="$(verification_state_status "$task_id")"
+  case "$verif_status" in
+    ok:failed)
+      cmd_fix_verification_failure "$task_id" "$task_file" "$abs_task_file" \
+        "$worktree" "$wt_path" "$launch_dir"
+      return 0
+      ;;
+    invalid:*)
+      err "verification state file present but ${verif_status#invalid:}"
+      err "Path: $(verification_state_path "$task_id")"
+      err "Delete or fix the state file by hand if it is wrong."
+      exit 1
+      ;;
+    ok:passed|missing)
+      :  # fall through to review-verdict logic
+      ;;
+  esac
+
+  # 2) Review-feedback repair.
   local artifact_status verdict artifact_path
   artifact_path="$(review_artifact_path "$task_id")"
   artifact_status="$(review_artifact_status "$task_id")"
@@ -1896,20 +2352,6 @@ cmd_fix() {
       exit 1
       ;;
   esac
-
-  local wt_path=""
-  if [[ "$worktree" != "main" ]]; then
-    wt_path="$(worktree_path "$worktree")"
-    if [[ -z "$wt_path" ]]; then
-      err "task worktree '$worktree' does not exist; cannot fix."
-      err "Create or restore it with: scripts/agentctl.sh sync $task_id"
-      exit 1
-    fi
-    propagate_claude_permissions "$wt_path"
-  fi
-
-  local launch_dir="$REPO_ROOT"
-  [[ -n "$wt_path" ]] && launch_dir="$wt_path"
 
   local prompt
   prompt="$(build_fix_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT" "$artifact_path")"
