@@ -298,3 +298,5 @@ candidate_context/settings/*.secret.json
 # shipped defaults under runtime_prompts/ and are local-machine
 # settings, not tracked configuration.
 candidate_context/settings/prompt_overrides/
+
+.agentctl/verifications/
