@@ -297,6 +297,11 @@ export interface ApplicationEventCreate {
 export interface RevisionFeedbackCreate {
   feedback_markdown: string;
   structured_flags?: Record<string, unknown>;
+  // Optional ids of evidence sources to stage on the revision run in
+  // addition to the original sources used by the source draft. Each id
+  // is resolved server-side through the same DB + filesystem discovery
+  // path as first-draft runs.
+  additional_evidence_source_ids?: string[];
 }
 
 export interface RevisionFeedback {

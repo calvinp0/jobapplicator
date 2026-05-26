@@ -392,6 +392,13 @@ class ResumeVersionRead(_ORMModel):
 class RevisionFeedbackCreate(BaseModel):
     feedback_markdown: str = Field(min_length=1)
     structured_flags: Optional[Dict[str, Any]] = None
+    # Optional additional evidence to stage on the revision run alongside
+    # the original evidence sources. Each id is resolved through the same
+    # database + filesystem discovery path used for first-draft runs (see
+    # ``backend/app/routers/runs.py``). The field is accepted even when no
+    # additional evidence is wanted — callers may send an empty list or
+    # omit the key entirely.
+    additional_evidence_source_ids: Optional[list[str]] = None
 
 
 class RevisionFeedbackRead(_ORMModel):

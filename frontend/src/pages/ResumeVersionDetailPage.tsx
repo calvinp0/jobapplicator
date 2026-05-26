@@ -6,10 +6,13 @@ import {
   approveResumeVersion,
   getJob,
   getResumeVersion,
+  getRun,
+  listEvidenceSources,
+  listMasterResumes,
   openResumeVersionFile,
   submitRevisionFeedback,
 } from "../api";
-import type { Job, ResumeVersion } from "../api";
+import type { EvidenceSource, Job, ResumeVersion } from "../api";
 import { draftLabel, draftStatusLabel } from "../lib/workflow";
 import { extractApiDetail } from "../lib/api-errors";
 
@@ -34,6 +37,8 @@ export function ResumeVersionDetailPage() {
   const navigate = useNavigate();
   const [version, setVersion] = useState<ResumeVersion | null>(null);
   const [job, setJob] = useState<Job | null>(null);
+  const [masterResumeName, setMasterResumeName] = useState<string | null>(null);
+  const [evidenceSources, setEvidenceSources] = useState<EvidenceSource[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
@@ -52,11 +57,57 @@ export function ResumeVersionDetailPage() {
       .then((v) => {
         if (cancelled) return;
         setVersion(v);
-        return getJob(v.job_id);
-      })
-      .then((j) => {
-        if (cancelled || !j) return;
-        setJob(j);
+        // Job and provenance lookups are best-effort — the page still
+        // renders the core surface if any of these endpoints are
+        // unavailable. Each is fired independently so a single failure
+        // doesn't cascade.
+        try {
+          getJob(v.job_id)
+            .then((j) => {
+              if (!cancelled && j) setJob(j);
+            })
+            .catch(() => {});
+        } catch {
+          /* getJob may be undefined in some test mocks */
+        }
+        try {
+          listMasterResumes()
+            .then((rows) => {
+              if (cancelled) return;
+              const match = rows.find((r) => r.id === v.master_resume_id);
+              if (match) setMasterResumeName(match.name);
+            })
+            .catch(() => {});
+        } catch {
+          /* listMasterResumes may be undefined in some test mocks */
+        }
+        if (v.claude_run_id) {
+          try {
+            getRun(v.claude_run_id)
+              .then((run) => {
+                if (cancelled) return;
+                const ids = run.evidence_source_ids ?? [];
+                if (ids.length === 0) return;
+                try {
+                  listEvidenceSources()
+                    .then((all) => {
+                      if (cancelled) return;
+                      const byId = new Map(all.map((s) => [s.id, s]));
+                      const matched = ids
+                        .map((id) => byId.get(id))
+                        .filter((s): s is EvidenceSource => Boolean(s));
+                      setEvidenceSources(matched);
+                    })
+                    .catch(() => {});
+                } catch {
+                  /* listEvidenceSources may be undefined */
+                }
+              })
+              .catch(() => {});
+          } catch {
+            /* getRun may be undefined */
+          }
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -175,6 +226,16 @@ export function ResumeVersionDetailPage() {
           ) : (
             <Link to={`/jobs/${version.job_id}`}>{version.job_id}</Link>
           )}
+        </dd>
+        <dt>Base master resume</dt>
+        <dd>{masterResumeName ?? "—"}</dd>
+        <dt>Original evidence sources</dt>
+        <dd>
+          {evidenceSources.length === 0
+            ? "None"
+            : `${evidenceSources.length} (${evidenceSources
+                .map((s) => s.name)
+                .join(", ")})`}
         </dd>
         <dt>Source</dt>
         <dd>{version.source}</dd>
