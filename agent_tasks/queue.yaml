@@ -1904,7 +1904,7 @@ tasks:
     file: "agent_tasks/094-add-safe-database-backup-and-reset.md"
     branch: "agent/094-add-safe-database-backup-and-reset"
     worktree: "agent-094-add-safe-database-backup-and-reset"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "pytest"
