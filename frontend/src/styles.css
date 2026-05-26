@@ -1645,3 +1645,315 @@ button[type="submit"]:disabled,
   font-size: 13px;
   color: #1f6a2a;
 }
+
+/* ----- Applications page (table dashboard) ----- */
+
+.applications-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.applications-page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.applications-page-header-row h2 {
+  margin: 0 0 var(--space-1);
+}
+
+.applications-page-header-row .page-subtitle {
+  margin: 0;
+}
+
+.applications-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.applications-toolbar .button {
+  font-size: 13px;
+  padding: 7px 14px;
+}
+
+.applications-toolbar-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.applications-toolbar-summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.applications-sync-results {
+  list-style: disc inside;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--content-fg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.applications-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
+}
+
+.applications-filter {
+  background: var(--card-bg);
+  border: 1px solid var(--border-strong);
+  color: var(--content-fg);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.applications-filter:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.applications-filter-active,
+.applications-filter[aria-pressed="true"] {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.applications-empty {
+  background: var(--card-bg);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--muted-fg);
+}
+
+.applications-empty h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--content-fg);
+}
+
+.applications-empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.applications-empty-filter {
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--card-bg);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--muted-fg);
+  text-align: center;
+}
+
+.applications-table-wrapper {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  box-shadow: var(--card-shadow);
+}
+
+.applications-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.applications-table thead th {
+  position: sticky;
+  top: 0;
+  background: #fafafe;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-fg);
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+.applications-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 120ms ease;
+}
+
+.applications-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.applications-table tbody tr:hover {
+  background: var(--accent-soft);
+}
+
+.applications-table td {
+  padding: 12px 14px;
+  vertical-align: top;
+  color: var(--content-fg);
+}
+
+.applications-cell-job {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+}
+
+.applications-job-link {
+  font-weight: 600;
+  color: var(--content-fg);
+}
+
+.applications-job-link:hover {
+  color: var(--accent-strong);
+}
+
+.applications-job-company {
+  font-size: 12px;
+  color: var(--muted-fg);
+}
+
+.applications-cell-text {
+  color: var(--content-fg);
+  white-space: nowrap;
+}
+
+.applications-cell-subtle {
+  font-size: 12px;
+  color: var(--muted-fg);
+}
+
+.applications-cell-email {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 320px;
+}
+
+.applications-cell-email-summary {
+  font-size: 12px;
+  color: var(--muted-fg);
+}
+
+.applications-cell-next-action {
+  font-weight: 600;
+  color: var(--content-fg);
+}
+
+.applications-cell-actions {
+  white-space: nowrap;
+}
+
+.applications-table-actions-col {
+  text-align: right;
+}
+
+.applications-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.applications-action-link {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.applications-action-button {
+  background: var(--card-bg);
+  color: var(--content-fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.applications-action-button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.applications-action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Small-screen responsive fallback: collapse the table into stacked
+   cards with the column header rendered as an inline label.  */
+@media (max-width: 760px) {
+  .applications-table thead {
+    display: none;
+  }
+
+  .applications-table,
+  .applications-table tbody,
+  .applications-table tr,
+  .applications-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .applications-table tbody tr {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .applications-table td {
+    padding: 4px 0;
+    white-space: normal;
+  }
+
+  .applications-table td::before {
+    content: attr(data-label) ": ";
+    display: inline-block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-fg);
+    margin-right: var(--space-2);
+    font-weight: 600;
+  }
+
+  .applications-cell-job::before,
+  .applications-cell-actions::before {
+    display: none;
+  }
+
+  .applications-cell-job {
+    margin-bottom: var(--space-1);
+  }
+
+  .applications-row-actions {
+    justify-content: flex-start;
+  }
+}

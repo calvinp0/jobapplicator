@@ -58,6 +58,13 @@ function renderPage() {
   );
 }
 
+function rowFor(title: string | RegExp): HTMLElement {
+  const link = screen.getByRole("link", { name: title });
+  const row = link.closest("tr");
+  if (!row) throw new Error(`No table row found for ${title}`);
+  return row as HTMLElement;
+}
+
 function emailLink(
   overrides: {
     classified_status?: string | null;
@@ -308,7 +315,29 @@ describe("ApplicationsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders one row per timeline stage with the correct badge label and variant", async () => {
+  it("renders the table header row with the expected columns", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
+    );
+    const headerColumns = [
+      "Job",
+      "Status",
+      "Submission",
+      "Email",
+      "Latest run",
+      "Updated",
+      "Next action",
+      "Actions",
+    ];
+    for (const col of headerColumns) {
+      expect(
+        screen.getByRole("columnheader", { name: col }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("renders applications as table rows with badge labels and variant classes", async () => {
     renderPage();
 
     await waitFor(() =>
@@ -319,38 +348,69 @@ describe("ApplicationsPage", () => {
 
     // Each row carries a detail link to its application.
     expect(
-      screen.getByRole("link", { name: /senior engineer — acme corp/i }),
+      screen.getByRole("link", { name: "Senior Engineer" }),
     ).toHaveAttribute("href", "/applications/app-draft");
     expect(
-      screen.getByRole("link", { name: /platform lead — beta inc/i }),
+      screen.getByRole("link", { name: "Platform Lead" }),
     ).toHaveAttribute("href", "/applications/app-sent");
     expect(
-      screen.getByRole("link", { name: /backend eng — gamma llc/i }),
+      screen.getByRole("link", { name: "Backend Eng" }),
     ).toHaveAttribute("href", "/applications/app-confirmation");
     expect(
-      screen.getByRole("link", { name: /frontend eng — delta co/i }),
+      screen.getByRole("link", { name: "Frontend Eng" }),
     ).toHaveAttribute("href", "/applications/app-rejected");
     expect(
-      screen.getByRole("link", { name: /staff eng — epsilon ltd/i }),
+      screen.getByRole("link", { name: "Staff Eng" }),
     ).toHaveAttribute("href", "/applications/app-interview");
     expect(
-      screen.getByRole("link", { name: /principal eng — zeta group/i }),
+      screen.getByRole("link", { name: "Principal Eng" }),
     ).toHaveAttribute("href", "/applications/app-offer");
 
+    // Company is rendered as a separate visual element under the title.
+    const draftRow = rowFor("Senior Engineer");
+    expect(within(draftRow).getByText("Acme Corp")).toBeInTheDocument();
+
     // Timeline-stage badges: visible label and color-coded variant class.
-    expect(screen.getByText("Draft")).toHaveClass("status-badge-draft");
-    expect(screen.getByText("Sent")).toHaveClass("status-badge-submitted");
-    expect(screen.getByText("Confirmation received")).toHaveClass(
-      "status-badge-completed",
+    expect(screen.getByTestId("status-badge-app-draft")).toHaveTextContent(
+      /^Draft$/,
     );
-    expect(screen.getByText("Rejected")).toHaveClass("status-badge-rejected");
-    expect(screen.getByText("Interview")).toHaveClass(
+    expect(screen.getByTestId("status-badge-app-draft")).toHaveClass(
+      "status-badge-draft",
+    );
+    expect(screen.getByTestId("status-badge-app-sent")).toHaveTextContent(
+      /^Sent$/,
+    );
+    expect(screen.getByTestId("status-badge-app-sent")).toHaveClass(
+      "status-badge-submitted",
+    );
+    expect(
+      screen.getByTestId("status-badge-app-confirmation"),
+    ).toHaveTextContent(/^Confirmation received$/);
+    expect(
+      screen.getByTestId("status-badge-app-confirmation"),
+    ).toHaveClass("status-badge-completed");
+    expect(screen.getByTestId("status-badge-app-rejected")).toHaveTextContent(
+      /^Rejected$/,
+    );
+    expect(screen.getByTestId("status-badge-app-rejected")).toHaveClass(
+      "status-badge-rejected",
+    );
+    expect(screen.getByTestId("status-badge-app-interview")).toHaveTextContent(
+      /^Interview$/,
+    );
+    expect(screen.getByTestId("status-badge-app-interview")).toHaveClass(
       "status-badge-interview",
     );
-    expect(screen.getByText("Offer")).toHaveClass("status-badge-offer");
+    expect(screen.getByTestId("status-badge-app-offer")).toHaveTextContent(
+      /^Offer$/,
+    );
+    expect(screen.getByTestId("status-badge-app-offer")).toHaveClass(
+      "status-badge-offer",
+    );
 
-    // Raw backend status enum strings must not appear in default UI.
-    expect(screen.queryByText(/^submitted$/i)).toBeNull();
+    // Raw backend status enum strings must not appear inside the table body.
+    const table = screen.getByTestId("applications-table");
+    expect(within(table).queryByText(/^submitted$/)).toBeNull();
   });
 
   it("renders the last-email summary when an email link is attached", async () => {
@@ -403,18 +463,13 @@ describe("ApplicationsPage", () => {
 
     // draft and sent rows have no attached emails — no summary line.
     expect(screen.queryByText(/Confirmation from/)).toBeInTheDocument(); // gamma row only
-    // No "Email from" / "Other from" lines should appear for draft/sent.
     expect(screen.queryByText(/^Email from /)).toBeNull();
+    const draftRow = rowFor("Senior Engineer");
     // The "· N emails" decoration should not appear without a summary.
-    const draftLink = screen.getByRole("link", {
-      name: /senior engineer — acme corp/i,
-    });
-    const draftRow = draftLink.closest("li");
-    expect(draftRow).not.toBeNull();
-    expect(draftRow!.textContent ?? "").not.toMatch(/emails/);
+    expect(draftRow.textContent ?? "").not.toMatch(/emails/);
   });
 
-  it("renders the empty state when there are no applications", async () => {
+  it("renders the polished empty state when there are no applications", async () => {
     listApplicationsMock.mockResolvedValue([]);
     renderPage();
 
@@ -424,9 +479,16 @@ describe("ApplicationsPage", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/no applications yet/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /create or generate a draft from a job to start tracking applications/i,
+      ),
+    ).toBeInTheDocument();
+    // No table should be rendered in the empty state.
+    expect(screen.queryByTestId("applications-table")).toBeNull();
   });
 
-  it("renders submission, email, updated, and next-action lines for each row", async () => {
+  it("renders submission, email, updated, and next-action cells for each row", async () => {
     renderPage();
 
     await waitFor(() =>
@@ -435,55 +497,42 @@ describe("ApplicationsPage", () => {
       ).toBeInTheDocument(),
     );
 
-    // Draft row shows submission, email state, and next action.
-    const draftRow = screen
-      .getByRole("link", { name: /senior engineer — acme corp/i })
-      .closest("li");
-    expect(draftRow).not.toBeNull();
+    const draftRow = rowFor("Senior Engineer");
     expect(
-      within(draftRow!).getByText(/Submission: Not submitted/),
+      within(draftRow).getByText(/Submission: Not submitted/),
     ).toBeInTheDocument();
     expect(
-      within(draftRow!).getByText(/Email: Not watching yet/),
+      within(draftRow).getByText(/Email: Not watching yet/),
     ).toBeInTheDocument();
     expect(
-      within(draftRow!).getByText(/Next: Ready to submit/),
+      within(draftRow).getByText(/Next: Ready to submit/),
     ).toBeInTheDocument();
 
-    // Submitted row shows submitted date and watching state.
-    const sentRow = screen
-      .getByRole("link", { name: /platform lead — beta inc/i })
-      .closest("li");
-    expect(sentRow).not.toBeNull();
+    const sentRow = rowFor("Platform Lead");
     expect(
-      within(sentRow!).getByText(/Submission: Submitted/),
+      within(sentRow).getByText(/Submission: Submitted/),
     ).toBeInTheDocument();
     expect(
-      within(sentRow!).getByText(/Email: Waiting for email/),
+      within(sentRow).getByText(/Email: Waiting for email/),
     ).toBeInTheDocument();
     expect(
-      within(sentRow!).getByText(/Next: Waiting for email/),
+      within(sentRow).getByText(/Next: Waiting for email/),
     ).toBeInTheDocument();
 
-    // Rejected row shows rejection detected and Next: Rejected.
-    const rejRow = screen
-      .getByRole("link", { name: /frontend eng — delta co/i })
-      .closest("li");
-    expect(rejRow).not.toBeNull();
+    const rejRow = rowFor("Frontend Eng");
     expect(
-      within(rejRow!).getByText(/Email: Rejection detected/),
+      within(rejRow).getByText(/Email: Rejection detected/),
     ).toBeInTheDocument();
-    expect(within(rejRow!).getByText(/Next: Rejected/)).toBeInTheDocument();
+    expect(within(rejRow).getByText(/Next: Rejected/)).toBeInTheDocument();
   });
 
-  it("renders an updated-time line for each application card", async () => {
+  it("renders an updated-time cell for each application row", async () => {
     renderPage();
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { level: 2, name: /applications/i }),
       ).toBeInTheDocument(),
     );
-    // At least one Updated: line is present per card.
     const updatedLines = screen.getAllByText(/^Updated: /);
     expect(updatedLines.length).toBe(applications.length);
   });
@@ -517,20 +566,14 @@ describe("ApplicationsPage", () => {
       ).toBeInTheDocument(),
     );
 
-    // The draft row offers all three mark actions.
-    const draftLink = screen.getByRole("link", {
-      name: /senior engineer — acme corp/i,
-    });
-    const draftRow = draftLink.closest("li");
-    expect(draftRow).not.toBeNull();
-
-    const rejectButton = within(draftRow!).getByRole("button", {
+    const draftRow = rowFor("Senior Engineer");
+    const rejectButton = within(draftRow).getByRole("button", {
       name: /mark rejected/i,
     });
-    const submitButton = within(draftRow!).getByRole("button", {
+    const submitButton = within(draftRow).getByRole("button", {
       name: /mark submitted/i,
     });
-    const interviewButton = within(draftRow!).getByRole("button", {
+    const interviewButton = within(draftRow).getByRole("button", {
       name: /mark interview/i,
     });
     expect(submitButton).toBeInTheDocument();
@@ -547,19 +590,31 @@ describe("ApplicationsPage", () => {
         screen.getByRole("heading", { level: 2, name: /applications/i }),
       ).toBeInTheDocument(),
     );
-    const rejLink = screen.getByRole("link", {
-      name: /frontend eng — delta co/i,
-    });
-    const rejRow = rejLink.closest("li");
-    expect(rejRow).not.toBeNull();
+    const rejRow = rowFor("Frontend Eng");
     expect(
-      within(rejRow!).queryByRole("button", { name: /mark rejected/i }),
+      within(rejRow).queryByRole("button", { name: /mark rejected/i }),
     ).toBeNull();
     expect(
-      within(rejRow!).queryByRole("button", { name: /mark interview/i }),
+      within(rejRow).queryByRole("button", { name: /mark interview/i }),
     ).toBeNull();
     expect(
-      within(rejRow!).queryByRole("button", { name: /mark submitted/i }),
+      within(rejRow).queryByRole("button", { name: /mark submitted/i }),
     ).toBeNull();
+  });
+
+  it("filters rows when a filter pill is selected", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /^rejected$/i, pressed: false }),
+    );
+    expect(
+      screen.queryByRole("link", { name: "Senior Engineer" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Frontend Eng" }),
+    ).toBeInTheDocument();
   });
 });
