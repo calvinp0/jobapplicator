@@ -1918,3 +1918,21 @@ tasks:
       - ".gitignore"
       - "agent_tasks/094-add-safe-database-backup-and-reset.md"
       - "agent_tasks/queue.yaml"
+  - id: "095-redesign-applications-page-as-table"
+    title: "Redesign Applications page as table dashboard"
+    file: "agent_tasks/095-redesign-applications-page-as-table.md"
+    branch: "agent/095-redesign-applications-page-as-table"
+    worktree: "agent-095-redesign-applications-page-as-table"
+    status: "ready"
+    depends_on:
+      - "087-move-gmail-auth-to-settings-and-improve-config-errors"
+    verification:
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/**"
+      - "backend/app/schemas.py"
+      - "backend/app/routers/**"
+      - "backend/tests/**"
+      - "docs/contracts/**"
+      - "agent_tasks/095-redesign-applications-page-as-table.md"
+      - "agent_tasks/queue.yaml"
