@@ -21,7 +21,6 @@ import {
   emailStatusLabel,
   lastEmailSummary,
   parseTimestamp,
-  runStatusLabel,
   submissionStatusLabel,
   timelineStageLabel,
   timelineStageVariant,
@@ -398,10 +397,7 @@ export function ApplicationsPage() {
                   <tr>
                     <th scope="col">Job</th>
                     <th scope="col">Status</th>
-                    <th scope="col">Submission</th>
                     <th scope="col">Email</th>
-                    <th scope="col">Latest run</th>
-                    <th scope="col">Updated</th>
                     <th scope="col">Next action</th>
                     <th scope="col" className="applications-table-actions-col">
                       Actions
@@ -421,10 +417,17 @@ export function ApplicationsPage() {
                     const submissionLabel = submissionStatusLabel(
                       app.submission_status,
                     );
-                    const submissionCell =
-                      app.submission_status === "submitted" && app.submitted_at
-                        ? `${submissionLabel} ${formatDate(app.submitted_at)}`
-                        : submissionLabel;
+                    let submissionCell: string | null;
+                    if (
+                      app.submission_status === "submitted" &&
+                      app.submitted_at
+                    ) {
+                      submissionCell = `Submitted ${formatDate(app.submitted_at)}`;
+                    } else if (app.submission_status === "not_submitted") {
+                      submissionCell = "Not submitted yet";
+                    } else {
+                      submissionCell = submissionLabel;
+                    }
                     const emailSummary = lastEmailSummary(app);
                     const emailExtra =
                       emailSummary && app.email_link_count > 1
@@ -433,9 +436,6 @@ export function ApplicationsPage() {
                     const gmailCheckedAgo = formatChecked(
                       app.last_gmail_check_at,
                     );
-                    const latestRunCell = app.latest_run_status
-                      ? runStatusLabel(app.latest_run_status)
-                      : "—";
                     const updatedCell = applicationUpdatedLabel(app);
                     const isPending = pendingActionId === app.id;
                     const showSubmit =
@@ -472,20 +472,22 @@ export function ApplicationsPage() {
                           ) : null}
                         </td>
                         <td data-label="Status">
-                          <span
-                            className={`status-badge status-badge-${stageVariant}`}
-                            data-testid={`status-badge-${app.id}`}
-                          >
-                            {stageLabel}
-                          </span>
-                        </td>
-                        <td data-label="Submission">
-                          <span
-                            className="applications-cell-text"
-                            data-testid={`submission-${app.id}`}
-                          >
-                            {submissionCell}
-                          </span>
+                          <div className="applications-cell-status">
+                            <span
+                              className={`status-badge status-badge-${stageVariant}`}
+                              data-testid={`status-badge-${app.id}`}
+                            >
+                              {stageLabel}
+                            </span>
+                            {submissionCell ? (
+                              <span
+                                className="applications-cell-subtle"
+                                data-testid={`submission-${app.id}`}
+                              >
+                                {submissionCell}
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                         <td data-label="Email">
                           <div className="applications-cell-email">
@@ -506,20 +508,13 @@ export function ApplicationsPage() {
                                 Gmail checked: {gmailCheckedAgo}
                               </span>
                             ) : null}
+                            <span
+                              className="applications-cell-subtle"
+                              data-testid={`updated-${app.id}`}
+                            >
+                              Updated {updatedCell}
+                            </span>
                           </div>
-                        </td>
-                        <td data-label="Latest run">
-                          <span className="applications-cell-text">
-                            {latestRunCell}
-                          </span>
-                        </td>
-                        <td data-label="Updated">
-                          <span
-                            className="applications-cell-text"
-                            data-testid={`updated-${app.id}`}
-                          >
-                            {updatedCell}
-                          </span>
                         </td>
                         <td data-label="Next action">
                           <span
