@@ -16,6 +16,13 @@ from .llm_providers import (
     is_known_provider,
 )
 from .models import EvidenceBank, Job, JobCapture, MasterResume
+from .prompt_harness import (
+    PROMPT_ID_RESUME_REVISION,
+    PROMPT_ID_RESUME_TAILORING,
+    PromptHarnessError,
+    get_prompt_definition,
+    read_effective,
+)
 
 CANDIDATE_CONTEXT_FILES = (
     "candidate_profile.md",
@@ -37,6 +44,8 @@ EXPECTED_OUTPUTS = (
 )
 
 RUNTIME_PROMPT_FILENAME = "resume_tailoring.md"
+REVISION_RUNTIME_PROMPT_FILENAME = "resume_revision.md"
+PROMPT_SNAPSHOT_FILENAME = "prompt_snapshot.md"
 REVISION_FEEDBACK_FILENAME = "revision_feedback.md"
 CURRENT_TAILORED_RESUME_MD_FILENAME = "current_tailored_resume.md"
 CURRENT_TAILORED_RESUME_DOCX_FILENAME = "current_tailored_resume.docx"
@@ -239,11 +248,22 @@ def create_run_directory(
         )
 
     prompts_root = Path(runtime_prompts_root)
-    prompt_src = prompts_root / RUNTIME_PROMPT_FILENAME
-    if not prompt_src.is_file():
-        raise RunDirectoryError(
-            f"runtime prompt not found: {prompt_src}"
+    # Choose between the first-draft and revision prompts based on
+    # whether the caller supplied revision feedback. Both prompts can
+    # be overridden locally via the prompt_harness module; the worker
+    # uses the override when present, otherwise the shipped default.
+    if revision_feedback is not None:
+        prompt_id = PROMPT_ID_RESUME_REVISION
+    else:
+        prompt_id = PROMPT_ID_RESUME_TAILORING
+    try:
+        prompt_definition = get_prompt_definition(prompt_id)
+        prompt_body, prompt_source = read_effective(
+            prompt_definition,
+            runtime_prompts_root=prompts_root,
         )
+    except PromptHarnessError as exc:
+        raise RunDirectoryError(str(exc)) from exc
 
     runs_root = Path(runs_root)
     runs_root.mkdir(parents=True, exist_ok=True)
@@ -286,8 +306,13 @@ def create_run_directory(
         evidence_sources=evidence_sources or [],
     )
 
-    # Verbatim copy of the runtime prompt so prompt_hash matches the source.
-    shutil.copyfile(prompt_src, input_dir / "tailoring_prompt.md")
+    # Verbatim snapshot of the effective runtime prompt. The snapshot
+    # lives at ``input/prompt_snapshot.md`` per the run-directory
+    # contract; ``input/tailoring_prompt.md`` carries the same body and
+    # is what the worker hands to Claude — keeping both keeps existing
+    # worker code and prompt-provenance audits working in parallel.
+    _write_text(input_dir / PROMPT_SNAPSHOT_FILENAME, prompt_body)
+    _write_text(input_dir / "tailoring_prompt.md", prompt_body)
 
     if revision_feedback is not None:
         _write_text(
@@ -312,7 +337,9 @@ def create_run_directory(
         )
 
     # --- hashes ---
-    prompt_hash = _sha256_bytes((input_dir / "tailoring_prompt.md").read_bytes())
+    prompt_hash = _sha256_bytes(
+        (input_dir / PROMPT_SNAPSHOT_FILENAME).read_bytes()
+    )
 
     input_files = sorted(
         p for p in input_dir.rglob("*") if p.is_file()
@@ -362,6 +389,9 @@ def create_run_directory(
         "tailoring_method": tailoring_method,
         "llm_provider": resolved_llm_provider,
         "status": DEFAULT_RUN_STATUS,
+        "prompt_id": prompt_id,
+        "prompt_source": prompt_source,
+        "prompt_snapshot_path": f"input/{PROMPT_SNAPSHOT_FILENAME}",
     }
     _write_metadata(run_dir, metadata)
 

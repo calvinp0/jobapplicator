@@ -26,6 +26,7 @@ EXPECTED_INPUT_FILES = {
     "tailoring_preferences.md",
     "resume_dos_and_donts.md",
     "tailoring_prompt.md",
+    "prompt_snapshot.md",
 }
 
 

@@ -830,7 +830,53 @@ on `--port 8001` or behind a reverse proxy), update **both**:
 A mismatch surfaces as Google's `redirect_uri_mismatch` error during
 the consent step.
 
-## 12. Reset local database safely
+## 12. Prompt Harness Editor
+
+The auto tailoring and revision workers read their instructions from
+markdown prompts that ship with the repo under `runtime_prompts/`:
+
+```text
+runtime_prompts/resume_tailoring.md     # first-draft tailoring runs
+runtime_prompts/resume_revision.md      # follow-up revision runs
+```
+
+Edits to these files require a commit and a code review. For
+local-only experimentation, the cockpit exposes a prompt harness
+editor at **Advanced → Prompt harnesses**:
+
+- The selected prompt's *Effective*, *Default*, and *Override* views
+  show, respectively, the prompt body the worker will use, the
+  shipped default, and your local override.
+- **Create override from default** copies the default body into a new
+  override file under
+  `candidate_context/settings/prompt_overrides/<id>.md` so you can
+  edit it.
+- **Save override** persists the edited body. Subsequent runs use the
+  override instead of the default.
+- **Validate** checks the effective body for the contract elements
+  the worker requires (e.g. `tailored_resume.md`, `claim_audit.md`,
+  `ats_audit.md`, `ATS`, `evidence`). Missing elements are surfaced
+  as warnings, not hard errors — you can still save an override that
+  omits them, but the resulting runs may fail output validation.
+- **Restore default** deletes the override and brings the worker back
+  to the shipped prompt.
+
+The overrides directory is gitignored — overrides are local-machine
+settings, not tracked configuration. Every run records
+`prompt_id`, `prompt_source` (`default` or `override`), and
+`prompt_hash` in `metadata.json`, and stages a verbatim
+`input/prompt_snapshot.md` so the run stays reproducible even if the
+prompt body changes afterward. See
+[`docs/contracts/claude_run_directory.md`](contracts/claude_run_directory.md)
+for the full contract.
+
+If a tailored run starts producing unexpected output after a prompt
+edit, the fastest recovery is **Restore default** on the offending
+prompt id — that immediately rolls back to the shipped behaviour for
+new runs. Existing runs are unaffected because each carries its own
+`prompt_snapshot.md`.
+
+## 13. Reset local database safely
 
 The local development database can accumulate demo data, test rows, and
 half-imported runs over time. `scripts/backup_and_reset_db.py`

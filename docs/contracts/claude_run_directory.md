@@ -14,6 +14,7 @@ runs/<run_id>/
 │   ├── tailoring_preferences.md
 │   ├── resume_dos_and_donts.md
 │   ├── tailoring_prompt.md
+│   ├── prompt_snapshot.md        # verbatim snapshot of the effective runtime prompt
 │   ├── revision_feedback.md      # only present on follow-up runs
 │   ├── master_resume.docx        # optional source DOCX (any accepted name)
 │   ├── master_resume_extracted.md           # written by the backend when a DOCX is present
@@ -194,6 +195,26 @@ Examples:
 The final rendered runtime prompt given to Claude Code.
 
 It should instruct Claude Code to read all input files and write the required output files.
+
+### `prompt_snapshot.md`
+
+Verbatim snapshot of the effective runtime prompt body used to drive
+this run. Identical to `tailoring_prompt.md`'s content — the snapshot
+is the contract name and exists so runs stay reproducible even if the
+shipped default prompt or the local override changes after the run.
+
+The snapshot's source is one of:
+
+- the shipped default under `runtime_prompts/<id>.md` (first-draft runs
+  use `resume_tailoring.md`; revision runs use `resume_revision.md`),
+  or
+- a local override under
+  `candidate_context/settings/prompt_overrides/<id>.md` when the
+  prompt harness editor has saved one.
+
+The metadata block records which one (`prompt_id`, `prompt_source`,
+`prompt_hash`) so an operator can replay a run with the exact prompt
+that produced it. See "Prompt provenance" under *Metadata* below.
 
 ### `revision_feedback.md`
 
@@ -396,7 +417,10 @@ without invoking Claude.
   "input_hash": "...",
   "tailoring_method": "auto",
   "llm_provider": "claude_code",
-  "status": "created"
+  "status": "created",
+  "prompt_id": "resume_tailoring",
+  "prompt_source": "default",
+  "prompt_snapshot_path": "input/prompt_snapshot.md"
 }
 ```
 
@@ -437,6 +461,35 @@ every provider satisfies the same read and write boundaries documented
 above. See ADR-009 for the decision record covering provider selection,
 the cross-provider invariants reasserted from ADR-002 and ADR-004, and
 the rationale for keeping this field orthogonal to `tailoring_method`.
+
+### Prompt provenance
+
+Three fields record which runtime prompt drove this run so the result
+stays reproducible:
+
+- `prompt_id` — one of `resume_tailoring` (first-draft runs) or
+  `resume_revision` (follow-up runs created from user feedback). New
+  ids may be added to the registry in `app.prompt_harness`; backwards
+  compatibility for older runs is preserved because the snapshot file
+  itself is the source of truth.
+- `prompt_source` — `default` when the run used the shipped prompt
+  under `runtime_prompts/<id>.md`, or `override` when it used the
+  local override under
+  `candidate_context/settings/prompt_overrides/<id>.md`.
+- `prompt_snapshot_path` — relative path inside the run directory to
+  the verbatim prompt body the worker used (currently
+  `input/prompt_snapshot.md`). The existing `prompt_hash` field
+  remains the sha256 of that file's bytes.
+
+The override directory is gitignored — overrides are local-machine
+settings. The prompt harness editor UI (Advanced → *Prompt harnesses*)
+lets an operator create, edit, validate, and delete overrides without
+touching the filesystem directly. Validation only emits warnings about
+missing required contract elements (`tailored_resume.md`,
+`claim_audit.md`, `ats_audit.md`, etc.); it does not block a save. An
+override that omits a required output filename can therefore produce a
+failing run, which the operator can recover from by clicking *Restore
+default* in the same UI.
 
 ### `status`
 

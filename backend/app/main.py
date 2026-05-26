@@ -20,6 +20,7 @@ from .routers import (
     jobs,
     llm_providers,
     master_resumes,
+    prompts,
     resume_versions,
     runs,
     settings,
@@ -282,6 +283,7 @@ def create_app() -> FastAPI:
     app.include_router(llm_providers.router)
     app.include_router(settings.router)
     app.include_router(gmail.router)
+    app.include_router(prompts.router)
 
     return app
 

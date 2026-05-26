@@ -743,6 +743,16 @@ docs/product_requirements.md
 docs/architecture.md
 ```
 
+`runtime_prompts/**` carries the default Claude Code prompts used by
+the resume tailoring and revision workers. Operators may locally
+override these prompts through the prompt harness editor UI
+(Advanced → *Prompt harnesses*), which writes to
+`candidate_context/settings/prompt_overrides/` — that directory is
+gitignored and is not part of the tracked agent task surface. The
+planner's safety boundary continues to exclude `runtime_prompts/**`
+because changes to the shipped defaults belong in builder tasks with
+the appropriate `allowed_paths`.
+
 If a high-level goal seems to require changes to a forbidden path, the
 planner must instead queue a new builder task whose `allowed_paths` cover
 that path, and leave the change to be implemented under review.

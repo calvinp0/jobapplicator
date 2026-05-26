@@ -1,3 +1,32 @@
+export interface PromptHarnessSummary {
+  id: string;
+  label: string;
+  description: string;
+  default_path: string;
+  has_override: boolean;
+  effective_source: "default" | "override";
+  updated_at: string | null;
+}
+
+export interface PromptHarnessDetail {
+  id: string;
+  label: string;
+  description: string;
+  default_path: string;
+  has_override: boolean;
+  effective_source: "default" | "override";
+  default_content: string;
+  override_content: string | null;
+  effective_content: string;
+  effective_hash: string;
+  updated_at: string | null;
+}
+
+export interface PromptValidationResult {
+  valid: boolean;
+  warnings: string[];
+}
+
 export interface JobCapture {
   id: string;
   source_platform: string;
