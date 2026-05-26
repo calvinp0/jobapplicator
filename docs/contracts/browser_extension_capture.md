@@ -6,25 +6,47 @@ described in `docs/architecture.md` and ADR-007. It exists to give the user
 a smoother LinkedIn intake than manual copy/paste while preserving the
 human-in-the-loop posture required by ADR-005.
 
+## Browser variants
+
+The same source bundles to two Manifest V3 variants:
+
+- `extension/manifest.json` — Chrome / Chromium / Edge / Brave.
+  Background runs as a `service_worker` (`type: module`).
+- `extension/manifest.firefox.json` — Firefox.
+  Background runs as a `background.scripts` array (Firefox's preferred
+  MV3 background form) and declares a
+  `browser_specific_settings.gecko.id`. The build produces a loadable
+  `dist/firefox/` folder; users load it as a *temporary add-on* via
+  `about:debugging`.
+
+Runtime code resolves WebExtension APIs through a small wrapper
+(`extension/src/browser_api.js`) that uses
+`globalThis.browser ?? globalThis.chrome` — no per-browser code paths
+in the popup / content / background / options scripts.
+
 ## Permissions
 
-The extension's `manifest.json` is Manifest V3 and requests the following
-minimum permissions:
+Both manifests request the same minimum permissions:
 
 | Permission | Why it is needed |
 | --- | --- |
 | `activeTab` | Allows the extension to access the *currently focused tab only*, and only after the user explicitly clicks the action button. |
 | `scripting` | Allows the popup to inject the content script on demand after the user clicks Capture. |
+| `storage` | Persists the user-configurable Backend API base URL via `storage.local`. No page content is ever stored here. |
 
 Host permissions are scoped to:
 
 - `https://www.linkedin.com/jobs/*` — the only origin/path the parser
   supports.
-- `http://127.0.0.1:8000/*` — the local backend endpoint the popup posts
-  to.
+- `http://127.0.0.1:8000/*` and `http://localhost:8000/*` — the local
+  backend endpoint the popup posts to. Both forms are listed because
+  some browsers normalize one form to the other when matching host
+  permissions.
 
 The extension does **not** request `<all_urls>`, `tabs`, `webNavigation`,
-`history`, `cookies`, `storage`, or any other broad permission.
+`history`, or `cookies`. The user can override the backend host via the
+options page; the manifest's host permissions still constrain which
+origins the popup is *allowed* to talk to.
 
 ## Allowed behaviors
 
@@ -109,21 +131,36 @@ npm install
 npm run build
 ```
 
-This writes the loadable extension to `extension/dist/`.
+This writes two loadable variants:
 
-Then, in Chrome / Chromium / Edge:
+- `extension/dist/chrome/` — for Chrome / Chromium / Edge / Brave.
+- `extension/dist/firefox/` — for Firefox (temporary add-on).
+
+In Chrome / Chromium / Edge:
 
 1. Open `chrome://extensions`.
 2. Toggle **Developer mode** on.
-3. Click **Load unpacked** and choose `extension/dist/`.
+3. Click **Load unpacked** and choose `extension/dist/chrome/`.
 4. Pin the extension's action button for convenience.
 
-To use:
+In Firefox:
+
+1. Open `about:debugging`.
+2. Click **This Firefox**.
+3. Click **Load Temporary Add-on**.
+4. Select `extension/dist/firefox/manifest.json`.
+
+Temporary add-ons are removed when Firefox restarts; reload from
+`about:debugging` after each restart.
+
+To use, in either browser:
 
 1. Open a LinkedIn job posting (`https://www.linkedin.com/jobs/view/...`).
 2. Click the action button.
-3. Click **Capture current page** in the popup and review the preview.
-4. Make sure the local backend is running (`uvicorn` at
+3. The popup shows the configured backend URL and whether the backend
+   is reachable. Click **Configure** to change the backend URL.
+4. Click **Capture this job page** in the popup and review the preview.
+5. Make sure the local backend is running (`uvicorn` at
    `http://127.0.0.1:8000`), then click **Send to backend**.
 
 ## Out of scope

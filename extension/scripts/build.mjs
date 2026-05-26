@@ -7,23 +7,51 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const dist = resolve(root, "dist");
 
+const SHARED_ENTRIES = [
+  "src/background.js",
+  "src/content.js",
+  "src/popup.js",
+  "src/options.js",
+];
+
+const SHARED_STATIC = [
+  ["src/popup.html", "popup.html"],
+  ["src/options.html", "options.html"],
+];
+
+async function buildVariant({ name, manifest, target }) {
+  const outdir = resolve(dist, name);
+  await rm(outdir, { recursive: true, force: true });
+  await mkdir(outdir, { recursive: true });
+
+  await build({
+    entryPoints: SHARED_ENTRIES.map((rel) => resolve(root, rel)),
+    bundle: true,
+    format: "iife",
+    target,
+    outdir,
+    logLevel: "info",
+  });
+
+  await cp(resolve(root, manifest), resolve(outdir, "manifest.json"));
+  for (const [src, dst] of SHARED_STATIC) {
+    await cp(resolve(root, src), resolve(outdir, dst));
+  }
+
+  console.log(`Built ${name} extension to ${outdir}`);
+}
+
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
-await build({
-  entryPoints: [
-    resolve(root, "src/background.js"),
-    resolve(root, "src/content.js"),
-    resolve(root, "src/popup.js"),
-  ],
-  bundle: true,
-  format: "iife",
+await buildVariant({
+  name: "chrome",
+  manifest: "manifest.json",
   target: ["chrome114"],
-  outdir: dist,
-  logLevel: "info",
 });
 
-await cp(resolve(root, "manifest.json"), resolve(dist, "manifest.json"));
-await cp(resolve(root, "src/popup.html"), resolve(dist, "popup.html"));
-
-console.log(`Built extension to ${dist}`);
+await buildVariant({
+  name: "firefox",
+  manifest: "manifest.firefox.json",
+  target: ["firefox115"],
+});

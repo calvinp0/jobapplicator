@@ -2,11 +2,12 @@
 //
 // Runs in the page's isolated world after explicit user action (the user
 // clicks the action button → popup → popup messages this script via
-// chrome.scripting.executeScript or a direct chrome.tabs.sendMessage).
+// browser.scripting.executeScript / browser.tabs.sendMessage).
 //
 // All parsing logic lives in parser.js, which is a pure module — this file
-// is the only place we touch DOM globals or chrome APIs.
+// is the only place we touch DOM globals or extension APIs.
 
+import { browserApi } from "./browser_api.js";
 import { parseLinkedInJob, isLinkedInJobUrl } from "./parser.js";
 
 function safeParse() {
@@ -22,7 +23,7 @@ function safeParse() {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+browserApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === "CAPTURE_CURRENT_PAGE") {
     sendResponse(safeParse());
     return true;

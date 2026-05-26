@@ -1,15 +1,19 @@
 // Popup UI for current-page capture.
 //
 // The extension does no work until the user opens this popup AND clicks
-// "Capture current page". This file is the only place we trigger DOM
+// "Capture this job page". This file is the only place we trigger DOM
 // scraping (via the content script) and the only place we contact the
 // local backend.
 
+import { browserApi } from "./browser_api.js";
 import {
-  postCapture,
-  DEFAULT_CAPTURE_ENDPOINT,
+  captureEndpoint,
+  checkBackendHealth,
+  DEFAULT_FRONTEND_BASE,
   jobWorkspaceUrl,
+  postCapture,
 } from "./api.js";
+import { getBackendBaseUrl } from "./storage.js";
 import { isLinkedInJobUrl } from "./parser.js";
 
 let lastPayload = null;
@@ -71,7 +75,10 @@ function showPreview(payload) {
 }
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await browserApi.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
   return tab ?? null;
 }
 
@@ -94,7 +101,7 @@ async function runCapture() {
   // the user-initiated action that opened this popup). This makes the
   // extension a true no-op until the user explicitly clicks Capture.
   try {
-    await chrome.scripting.executeScript({
+    await browserApi.scripting.executeScript({
       target: { tabId: tab.id },
       files: ["content.js"],
     });
@@ -105,7 +112,7 @@ async function runCapture() {
 
   let response;
   try {
-    response = await chrome.tabs.sendMessage(tab.id, {
+    response = await browserApi.tabs.sendMessage(tab.id, {
       type: "CAPTURE_CURRENT_PAGE",
     });
   } catch (err) {
@@ -126,17 +133,19 @@ async function runCapture() {
 async function sendToBackend() {
   if (!lastPayload) return;
   $("send-btn").disabled = true;
-  setStatus(`Sending to ${DEFAULT_CAPTURE_ENDPOINT}…`, "ok");
+  const endpoint = await captureEndpoint();
+  setStatus(`Sending to ${endpoint}…`, "ok");
   try {
-    const { status, body } = await postCapture(lastPayload);
+    const { status, body } = await postCapture(lastPayload, endpoint);
     if (status >= 200 && status < 300) {
       renderSendResult(body);
     } else {
-      setStatus(`Backend rejected capture (HTTP ${status}).`, "err");
+      const safeError = typeof body?.detail === "string" ? body.detail : `HTTP ${status}`;
+      setStatus(`Capture failed: ${safeError}`, "err");
       $("send-btn").disabled = false;
     }
   } catch (err) {
-    setStatus(`Network error: ${err.message}`, "err");
+    setStatus(`Capture failed: ${err.message}`, "err");
     $("send-btn").disabled = false;
   }
 }
@@ -146,14 +155,49 @@ function renderSendResult(body) {
   const autoConfirmed = body?.auto_confirmed === true;
   if (autoConfirmed && jobId) {
     const reused = body?.job_reused === true;
-    setStatus(reused ? "Job already exists." : "Job created.", "ok");
+    setStatus(
+      reused
+        ? "Captured. Job already exists in JobApplicator."
+        : "Captured. Open in JobApplicator.",
+      "ok",
+    );
     showJobLink(jobId);
   } else {
-    setStatus(`Sent to backend. Review in Captures.`, "ok");
+    setStatus("Captured. Review in Captures.", "ok");
+  }
+}
+
+async function refreshBackendStatus() {
+  const base = await getBackendBaseUrl();
+  $("backend-url").textContent = base;
+  $("frontend-link").href = DEFAULT_FRONTEND_BASE;
+  const healthEl = $("backend-health");
+  healthEl.textContent = "checking…";
+  healthEl.className = "health";
+  const result = await checkBackendHealth(base);
+  if (result.ok) {
+    healthEl.textContent = "Connected to backend";
+    healthEl.className = "health ok";
+  } else {
+    healthEl.textContent = `Could not reach backend at ${result.base}`;
+    healthEl.className = "health err";
+  }
+}
+
+function openOptionsPage(event) {
+  event.preventDefault();
+  if (typeof browserApi.runtime.openOptionsPage === "function") {
+    browserApi.runtime.openOptionsPage();
+  } else {
+    // Older browsers: open the options page in a new tab as a fallback.
+    const url = browserApi.runtime.getURL("options.html");
+    browserApi.tabs.create({ url });
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   $("capture-btn").addEventListener("click", runCapture);
   $("send-btn").addEventListener("click", sendToBackend);
+  $("options-link").addEventListener("click", openOptionsPage);
+  refreshBackendStatus();
 });

@@ -13,6 +13,11 @@ The deeper companion docs for the document-tooling pieces are:
 - [`docs/claude_docx_skill_setup.md`](claude_docx_skill_setup.md)
 - [`docs/office_word_mcp_setup.md`](office_word_mcp_setup.md)
 
+For the (optional) browser extension that captures LinkedIn job
+postings directly from the page, see
+[`docs/browser_extension.md`](browser_extension.md). It covers both
+Chrome and Firefox setup.
+
 This guide is the top-level entry point; those documents are the
 canonical reference for skill/MCP details.
 

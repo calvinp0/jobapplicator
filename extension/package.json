@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint:firefox": "npx --yes web-ext lint --source-dir dist/firefox"
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
