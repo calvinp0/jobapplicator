@@ -28,14 +28,22 @@ Both variants share the same JavaScript source. Only the manifest
 differs:
 
 - `extension/manifest.json` — Chrome MV3 with a service worker.
-- `extension/manifest.firefox.json` — Firefox MV3 with a
-  `background.scripts` array (Firefox's preferred MV3 background form)
-  and a `browser_specific_settings.gecko.id`.
+- `extension/manifest.firefox.json` — Firefox MV2 with a
+  `background.scripts` array, `browser_action` for the toolbar button,
+  host patterns folded into `permissions`, and a
+  `browser_specific_settings.gecko.id`. MV2 is the most reliable shape
+  for Firefox temporary add-ons — Firefox's MV3 background story has
+  historically rejected `service_worker` manifests, and the MV2 form
+  loads cleanly across Firefox 109+.
 
 The runtime code uses a small compatibility wrapper
 (`extension/src/browser_api.js`) that resolves
-`globalThis.browser ?? globalThis.chrome`, so the same bundle works
-on either browser without per-browser code paths.
+`globalThis.browser ?? globalThis.chrome` and exposes
+`injectContentScript(tabId, file)`, which feature-detects
+`scripting.executeScript` (Chrome MV3) and falls back to
+`tabs.executeScript` (Firefox MV2). The popup uses that single helper
+so there are no per-browser code paths in the popup, content, or
+options scripts.
 
 ## Chrome setup
 
@@ -153,6 +161,25 @@ This is expected. Temporary add-ons are removed every time Firefox
 restarts. Reload from `about:debugging → This Firefox → Load
 Temporary Add-on`.
 
+### Firefox says "background.service_worker is currently disabled. Add background.scripts."
+
+The Firefox manifest is being read as MV3 service-worker syntax,
+which Firefox's temporary add-on loader rejects. Make sure you are
+loading the *built* Firefox variant, not the Chrome manifest at the
+source root:
+
+```text
+extension/dist/firefox/manifest.json    ✅ Firefox MV2 with background.scripts
+extension/manifest.json                  ❌ Chrome MV3, has background.service_worker
+```
+
+Rebuild if needed (`cd extension && npm run build`) and re-select
+`extension/dist/firefox/manifest.json` from
+`about:debugging → This Firefox → Load Temporary Add-on`. The Firefox
+manifest uses `background.scripts`; if you ever see this error from a
+Firefox-targeted manifest, it has reverted to MV3 service-worker
+syntax and needs to go back to the MV2 form documented above.
+
 ### Page blocks content-script access
 
 A small number of LinkedIn job pages render behind layouts that prevent
@@ -170,16 +197,21 @@ This restores `http://localhost:8000`.
 
 | Concern | Chrome | Firefox |
 | --- | --- | --- |
-| Manifest version | MV3 | MV3 |
-| Background form | `service_worker` (`type: module`) | `background.scripts` |
+| Manifest version | MV3 | MV2 |
+| Background form | `service_worker` (`type: module`) | `background.scripts` (`persistent: false`) |
+| Action key | `action` | `browser_action` |
+| Host patterns | `host_permissions` | merged into `permissions` |
+| Script injection | `chrome.scripting.executeScript` | `browser.tabs.executeScript` |
 | Add-on ID | implicit | `browser_specific_settings.gecko.id` required |
 | Install | `chrome://extensions` → Load unpacked | `about:debugging` → Load Temporary Add-on |
 | Survives restart | Yes | No (temporary add-on) |
-| Action API | `chrome.action` | `browser.action` |
 | Storage API | `chrome.storage.local` | `browser.storage.local` |
 
-The shared source uses the `browser_api.js` wrapper, so neither
-storage nor action calls need to branch on the host browser.
+The shared source uses the `browser_api.js` wrapper —
+`browserApi` resolves to whichever global the host browser exposes,
+and `injectContentScript()` smooths over the MV3/MV2 script-injection
+difference — so neither popup, content, options, nor background code
+branches on the host browser.
 
 ## Out of scope
 

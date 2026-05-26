@@ -2058,11 +2058,11 @@ tasks:
     depends_on:
       - "097-add-firefox-extension-support"
     verification:
-      - "python -m json.tool extensions/firefox/manifest.json"
+      - "python -m json.tool extension/manifest.firefox.json"
       - "pytest"
       - "cd frontend && npm run build"
     allowed_paths:
-      - "extensions/**"
+      - "extension/**"
       - "docs/browser_extension.md"
       - "README_INSTALL.md"
       - "agent_tasks/102-fix-firefox-extension-manifest.md"

@@ -5,7 +5,7 @@
 // scraping (via the content script) and the only place we contact the
 // local backend.
 
-import { browserApi } from "./browser_api.js";
+import { browserApi, injectContentScript } from "./browser_api.js";
 import {
   captureEndpoint,
   checkBackendHealth,
@@ -101,10 +101,7 @@ async function runCapture() {
   // the user-initiated action that opened this popup). This makes the
   // extension a true no-op until the user explicitly clicks Capture.
   try {
-    await browserApi.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["content.js"],
-    });
+    await injectContentScript(tab.id, "content.js");
   } catch (err) {
     setStatus(`Could not inject content script: ${err.message}`, "err");
     return;

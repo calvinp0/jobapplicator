@@ -1,24 +1,26 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "Job Application Cockpit — Current-Page Capture",
   "version": "0.1.0",
   "description": "User-triggered current-page capture of LinkedIn job postings. Sends a normalized payload to the local job application cockpit backend.",
   "browser_specific_settings": {
     "gecko": {
       "id": "jobapply-current-page-capture@localhost",
-      "strict_min_version": "115.0"
+      "strict_min_version": "109.0"
     }
   },
-  "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": [
+  "permissions": [
+    "activeTab",
+    "storage",
     "https://www.linkedin.com/jobs/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*"
   ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": ["background.js"],
+    "persistent": false
   },
-  "action": {
+  "browser_action": {
     "default_title": "Capture this job",
     "default_popup": "popup.html"
   },
