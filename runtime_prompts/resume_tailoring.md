@@ -99,9 +99,25 @@ If a source DOCX exists:
   if available to inspect, copy, and edit the DOCX (look for tools such
   as `copy_document`, `add_heading`, `add_paragraph`,
   `search_and_replace`, `format_text`);
-- use the DOCX as the formatting source and editable base;
-- preserve margins, fonts, headings, bullet indentation, spacing, and
-  layout where possible.
+- treat `input/master_resume.docx` as the formatting/style source of
+  truth and as the editable base for the tailored output;
+- prefer copying/editing the source DOCX in place rather than rebuilding
+  a generic resume from scratch;
+- preserve the master resume's professional styling, including:
+  - section heading colors
+  - font families
+  - font sizes
+  - margins
+  - paragraph spacing
+  - bullet indentation
+  - bold/italic emphasis patterns
+  - simple horizontal rules or separators
+  - section heading hierarchy.
+
+If the master resume uses blue section headers or similar simple color
+styling, preserve that styling in `output/tailored_resume.docx`. Do not
+strip professional color styling unless it causes ATS readability
+problems. Do not create a plain-text dump inside a DOCX.
 
 Also read the extracted markdown file when present:
 
@@ -248,6 +264,26 @@ Match spelling and terminology from the job description when truthful.
   "Postgres" unless both are useful.
 - If the job description says "LLM", include "Large Language Models
   (LLMs)" if supported.
+
+## Style Preservation vs. ATS Balance
+
+Preserve visual styling while keeping the resume ATS-readable. Simple
+colored headings, standard fonts, normal paragraphs, and bullet lists
+are acceptable and should be retained from the master resume.
+
+Do not place critical resume content only in:
+
+- headers
+- footers
+- text boxes
+- images
+- graphics
+- complex tables
+- multi-column layouts
+
+If the MCP/DOCX tools cannot preserve a particular style element,
+document the limitation in `output/claim_audit.md` or
+`output/ats_audit.md` and still produce the required outputs.
 
 ## ATS Formatting Requirements
 
@@ -490,6 +526,19 @@ If `input/` contains a source resume DOCX:
   spacing;
 - edit relevant text in place rather than rebuilding the entire document
   from scratch.
+
+When the `word-document-server` MCP server is available:
+
+- inspect the source DOCX structure/styles before editing;
+- copy the source DOCX as the editable base when possible;
+- replace/tailor text while preserving paragraph styles and run formatting;
+- preserve heading styles/colors where possible (e.g. blue section
+  headers stay blue);
+- preserve bullet/list styles where possible.
+
+If the MCP tools cannot preserve styling, document the limitation in
+`output/claim_audit.md` or `output/ats_audit.md` and still produce the
+required outputs.
 
 If no source DOCX exists:
 

@@ -1104,3 +1104,169 @@ def test_invoke_run_dry_run_writes_ats_audit_placeholder(
     ats_audit = Path(body["run_dir"]) / "output" / "ats_audit.md"
     assert ats_audit.is_file()
     assert "ATS Audit" in ats_audit.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Task 105: preserve master resume DOCX style
+# ---------------------------------------------------------------------------
+
+
+def _revision_prompt_text() -> Path:
+    return (
+        _repo_root() / "runtime_prompts" / "resume_revision.md"
+    ).read_text(encoding="utf-8")
+
+
+def _normalize_whitespace(text: str) -> str:
+    """Collapse runs of whitespace so prompt-text assertions ignore wrapping.
+
+    Markdown prompts wrap long sentences across newlines for readability;
+    these tests care that the *content* is present, not that the exact
+    line breaks land in a particular place.
+    """
+    return " ".join(text.split())
+
+
+def test_runtime_prompt_preserves_master_docx_style():
+    """Tailoring prompt must call out preserving the master DOCX's style."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "formatting/style source of truth" in normalized
+    assert "preserve the master resume's professional styling" in normalized
+
+
+def test_runtime_prompt_preserves_heading_colors():
+    """Tailoring prompt must specifically call out heading colors."""
+    text = _runtime_prompt_text()
+    assert "section heading colors" in text
+    assert "heading styles/colors" in text
+
+
+def test_runtime_prompt_preserves_blue_or_simple_colored_headings():
+    """Tailoring prompt must explicitly mention blue / simple colored headings."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "blue section headers" in normalized
+    assert "simple color styling" in normalized
+
+
+def test_runtime_prompt_copies_or_edits_source_docx():
+    """Tailoring prompt must instruct copy/edit of the source DOCX."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "copying/editing the source docx" in normalized
+    assert "rather than rebuilding a generic resume from scratch" in normalized
+
+
+def test_runtime_prompt_forbids_plain_text_dump_docx():
+    """Tailoring prompt must forbid producing a plain-text dump as the DOCX."""
+    text = _runtime_prompt_text()
+    assert "Do not create a plain-text dump inside a DOCX" in text
+
+
+def test_runtime_prompt_balances_style_and_ats():
+    """Tailoring prompt must balance style preservation with ATS readability."""
+    normalized = _normalize_whitespace(_runtime_prompt_text())
+    assert "Preserve visual styling while keeping the resume ATS-readable" in normalized
+    # Simple colored headings should be explicitly acceptable.
+    assert (
+        "Simple colored headings, standard fonts, normal paragraphs, "
+        "and bullet lists are acceptable" in normalized
+    )
+
+
+def test_runtime_prompt_warns_against_critical_content_in_unsafe_containers():
+    """Tailoring prompt must warn against critical content in headers/text boxes/etc."""
+    text = _runtime_prompt_text()
+    # The style-preservation section must reiterate the unsafe containers
+    # to keep the ATS contract intact even after style preservation lands.
+    style_idx = text.lower().find("style preservation vs. ats balance")
+    assert style_idx != -1, "style preservation balance section missing"
+    style_block = text[style_idx:]
+    for unsafe in (
+        "headers",
+        "footers",
+        "text boxes",
+        "images",
+        "graphics",
+        "complex tables",
+        "multi-column layouts",
+    ):
+        assert unsafe in style_block, f"missing unsafe container: {unsafe!r}"
+
+
+def test_runtime_prompt_word_mcp_style_preservation_instructions():
+    """Tailoring prompt must instruct Word MCP usage for style preservation."""
+    text = _runtime_prompt_text()
+    # The Word MCP usage block must mention preserving paragraph styles,
+    # heading styles/colors, and bullet/list styles.
+    assert "preserving paragraph styles and run formatting" in text
+    assert "preserve heading styles/colors where possible" in text
+    assert "preserve bullet/list styles where possible" in text
+
+
+def test_revision_prompt_preserves_existing_docx_styling():
+    """Revision prompt must preserve existing DOCX styling."""
+    text = _revision_prompt_text()
+    normalized = _normalize_whitespace(text)
+    assert (
+        "Preserve existing DOCX styling from both the current "
+        "tailored draft and the original master resume" in normalized
+    )
+    assert "Do not restyle the resume unless the user explicitly asks" in normalized
+    assert (
+        "Apply the requested content changes while preserving existing "
+        "DOCX styling" in normalized
+    )
+    # Specific style elements must appear so future prompt drift cannot
+    # silently strip the list.
+    for element in (
+        "section heading colors",
+        "font families",
+        "margins and paragraph spacing",
+        "bullet indentation",
+    ):
+        assert element in text, f"missing revision style element: {element!r}"
+
+
+def test_invoke_run_logs_style_preservation_when_master_docx_present(
+    client, tmp_path, monkeypatch
+):
+    """Worker must log style-preservation lines when a master DOCX exists."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    input_dir = Path(run["run_dir"]) / "input"
+    _write_master_resume_docx(input_dir)
+
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert (
+        "jobapply: source DOCX style preservation requested" in log_text
+    )
+    assert (
+        "jobapply: master resume DOCX staged as formatting source" in log_text
+    )
+
+
+def test_invoke_run_skips_style_preservation_log_when_no_master_docx(
+    client, tmp_path, monkeypatch
+):
+    """Without a master DOCX the style-preservation lines must not appear."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    # The style-preservation log is gated on the DOCX being present.
+    assert "jobapply: source DOCX style preservation requested" not in log_text
+    assert (
+        "jobapply: master resume DOCX staged as formatting source" not in log_text
+    )

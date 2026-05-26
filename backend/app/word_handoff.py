@@ -114,8 +114,12 @@ def _render_prompt(
     parts = [
         "Use this document as the source resume and tailor it for the target job.",
         "",
-        "Preserve the existing Word formatting:",
-        "- Keep fonts, margins, section spacing, headings, bullets, and page layout.",
+        "Preserve the master resume's existing visual style, including "
+        "colored headings, fonts, spacing, margins, and bullet indentation:",
+        "- Keep colored section headings (e.g. blue headers stay blue).",
+        "- Keep fonts, font sizes, margins, section spacing, headings, "
+        "bullets, bullet indentation, and page layout.",
+        "- Preserve bold/italic emphasis patterns and simple separators.",
         "- Edit inside the resume rather than rebuilding the document from scratch.",
         "- Use tracked changes if available.",
         "- Do not invent employers, dates, degrees, technologies, metrics, "

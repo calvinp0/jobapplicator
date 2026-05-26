@@ -165,7 +165,8 @@ def test_get_word_handoff_prompt_returns_prompt_text(
     # The captured job description text must round-trip through the prompt.
     assert JOB_DESCRIPTION_SENTINEL in content
     # And the formatting-preservation block the contract guarantees.
-    assert "Preserve the existing Word formatting" in content
+    assert "Preserve the master resume's existing visual style" in content
+    assert "colored headings" in content
 
 
 def test_get_word_handoff_instructions_returns_markdown(

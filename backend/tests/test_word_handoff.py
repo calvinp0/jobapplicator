@@ -157,10 +157,34 @@ def test_prompt_includes_formatting_preservation_instructions(fixture_layout):
         encoding="utf-8"
     )
     # Spot-check the formatting-preservation block and the change/audit footer.
-    assert "Preserve the existing Word formatting" in prompt_text
-    assert "fonts, margins, section spacing" in prompt_text
+    assert (
+        "Preserve the master resume's existing visual style"
+        in prompt_text
+    )
+    assert "colored headings" in prompt_text
+    assert "fonts, font sizes, margins, section spacing" in prompt_text
+    assert "bullet indentation" in prompt_text
+    assert "Use tracked changes if available" in prompt_text
+    assert (
+        "Edit inside the resume rather than rebuilding the document from scratch"
+        in prompt_text
+    )
     assert "CHANGE LOG" in prompt_text
     assert "CLAIM AUDIT" in prompt_text
+
+
+def test_prompt_preserves_colored_section_headings(fixture_layout):
+    """Word handoff prompt must explicitly mention preserving colored headings."""
+    from app.word_handoff import PROMPT_FILENAME, create_word_handoff_package
+
+    run_dir = _create_run(fixture_layout)
+    info = create_word_handoff_package(run_dir)
+
+    prompt_text = (info.handoff_dir / PROMPT_FILENAME).read_text(
+        encoding="utf-8"
+    )
+    assert "colored section headings" in prompt_text
+    assert "blue headers stay blue" in prompt_text
 
 
 def test_instructions_file_is_created(fixture_layout):
