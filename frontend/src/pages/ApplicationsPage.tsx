@@ -25,6 +25,8 @@ import {
   timelineStageLabel,
   timelineStageVariant,
 } from "../lib/workflow";
+import { EmptyState, PageHeader, StatusBadge } from "../components/ui";
+import type { StatusBadgeVariant } from "../components/ui";
 
 function formatChecked(value: string | null | undefined): string | null {
   const then = parseTimestamp(value ?? null);
@@ -230,9 +232,10 @@ export function ApplicationsPage() {
   if (error) {
     return (
       <section className="applications-page">
-        <header className="page-header">
-          <h2>Applications</h2>
-        </header>
+        <PageHeader
+          title="Applications"
+          description="Track drafts, submissions, email evidence, and outcomes."
+        />
         <p role="alert" className="error">
           {error}
         </p>
@@ -243,9 +246,10 @@ export function ApplicationsPage() {
   if (applications === null || jobs === null) {
     return (
       <section className="applications-page">
-        <header className="page-header">
-          <h2>Applications</h2>
-        </header>
+        <PageHeader
+          title="Applications"
+          description="Track drafts, submissions, email evidence, and outcomes."
+        />
         <p>Loading applications…</p>
       </section>
     );
@@ -257,54 +261,56 @@ export function ApplicationsPage() {
     gmailStatus && gmailStatus.configured && !gmailStatus.connected;
   const gmailNotConfigured = gmailStatus && !gmailStatus.configured;
 
+  const syncAction = (
+    <button
+      type="button"
+      className="button"
+      onClick={handleSyncGmail}
+      disabled={syncing}
+      data-testid="sync-gmail-button"
+    >
+      {syncing ? "Syncing Gmail…" : "Sync Gmail"}
+    </button>
+  );
+
+  const headerMeta = (
+    <>
+      {gmailNotConfigured ? (
+        <p
+          className="applications-toolbar-hint"
+          data-testid="sync-gmail-hint"
+        >
+          Gmail OAuth is not configured.{" "}
+          <Link to="/settings">Open Settings</Link> for setup details.
+        </p>
+      ) : gmailDisconnected ? (
+        <p
+          className="applications-toolbar-hint"
+          data-testid="sync-gmail-hint"
+        >
+          <Link to="/settings">Connect Gmail in Settings</Link> before
+          syncing applications.
+        </p>
+      ) : null}
+      {syncResult && syncResult.gmail_connected ? (
+        <p className="applications-toolbar-summary" role="status">
+          Last sync: checked {syncResult.checked_count} application
+          {syncResult.checked_count === 1 ? "" : "s"} · Updated{" "}
+          {syncResult.updated_count} · No match {syncResult.no_match_count} ·
+          Needs review {syncResult.needs_review_count}
+        </p>
+      ) : null}
+    </>
+  );
+
   return (
     <section className="applications-page">
-      <header className="page-header applications-page-header">
-        <div className="applications-page-header-row">
-          <div>
-            <h2>Applications</h2>
-            <p className="page-subtitle">
-              Track drafts, submissions, email evidence, and outcomes.
-            </p>
-          </div>
-          <div className="applications-toolbar">
-            <button
-              type="button"
-              className="button"
-              onClick={handleSyncGmail}
-              disabled={syncing}
-              data-testid="sync-gmail-button"
-            >
-              {syncing ? "Syncing Gmail…" : "Sync Gmail"}
-            </button>
-          </div>
-        </div>
-        {gmailNotConfigured ? (
-          <p
-            className="applications-toolbar-hint"
-            data-testid="sync-gmail-hint"
-          >
-            Gmail OAuth is not configured.{" "}
-            <Link to="/settings">Open Settings</Link> for setup details.
-          </p>
-        ) : gmailDisconnected ? (
-          <p
-            className="applications-toolbar-hint"
-            data-testid="sync-gmail-hint"
-          >
-            <Link to="/settings">Connect Gmail in Settings</Link> before
-            syncing applications.
-          </p>
-        ) : null}
-        {syncResult && syncResult.gmail_connected ? (
-          <p className="applications-toolbar-summary" role="status">
-            Last sync: checked {syncResult.checked_count} application
-            {syncResult.checked_count === 1 ? "" : "s"} · Updated{" "}
-            {syncResult.updated_count} · No match {syncResult.no_match_count} ·
-            Needs review {syncResult.needs_review_count}
-          </p>
-        ) : null}
-      </header>
+      <PageHeader
+        title="Applications"
+        description="Track drafts, submissions, email evidence, and outcomes."
+        actions={syncAction}
+        meta={headerMeta}
+      />
 
       {syncError ? (
         <p role="alert" className="error">
@@ -354,13 +360,10 @@ export function ApplicationsPage() {
       ) : null}
 
       {applications.length === 0 ? (
-        <div className="applications-empty">
-          <h3>No applications yet.</h3>
-          <p>
-            Create or generate a draft from a job to start tracking
-            applications.
-          </p>
-        </div>
+        <EmptyState
+          title="No applications yet."
+          description="Create or generate a draft from a job to start tracking applications."
+        />
       ) : (
         <>
           <div
@@ -473,12 +476,12 @@ export function ApplicationsPage() {
                         </td>
                         <td data-label="Status">
                           <div className="applications-cell-status">
-                            <span
-                              className={`status-badge status-badge-${stageVariant}`}
+                            <StatusBadge
+                              variant={stageVariant as StatusBadgeVariant}
                               data-testid={`status-badge-${app.id}`}
                             >
                               {stageLabel}
-                            </span>
+                            </StatusBadge>
                             {submissionCell ? (
                               <span
                                 className="applications-cell-subtle"

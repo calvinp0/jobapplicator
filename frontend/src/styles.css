@@ -1,26 +1,71 @@
+/* =============================================================
+ * Design tokens
+ * -------------------------------------------------------------
+ * All shared visual constants live here. New surfaces should use
+ * these tokens rather than introducing one-off colours / spacing,
+ * so the cockpit stays visually coherent as features are added.
+ * ============================================================= */
 :root {
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
+
+  /* Sidebar (dark navigation rail) */
   --sidebar-bg: #16161f;
   --sidebar-fg: #e6e6ed;
   --sidebar-fg-muted: #8a8a9a;
+
+  /* Brand / interactive */
   --accent: #5b73ff;
   --accent-strong: #4257e0;
   --accent-soft: #eef1ff;
+
+  /* Surfaces */
+  --bg: #f4f5fa;
   --content-bg: #f4f5fa;
-  --content-fg: #18181f;
-  --muted-fg: #5b5b6a;
+  --surface: #ffffff;
+  --surface-muted: #f7f8fc;
   --card-bg: #ffffff;
+
+  /* Text */
+  --content-fg: #18181f;
+  --fg: #18181f;
+  --text: #18181f;
+  --muted-fg: #5b5b6a;
+  --text-muted: #5b5b6a;
+
+  /* Borders */
+  --border: #e3e3ec;
+  --border-strong: #d2d2dc;
+
+  /* Status colours (used by status-badge + tailoring panels) */
+  --success: #15803d;
+  --success-soft: #d8efd8;
+  --success-fg: #1f6a2a;
+  --warning: #b45309;
+  --warning-soft: #fdf0d8;
+  --warning-fg: #7a5300;
+  --danger: #b91c1c;
+  --danger-soft: #f7d8dd;
+  --danger-fg: #8a1f2c;
+  --info: #0369a1;
+  --info-soft: #dce6ff;
+  --info-fg: #1a3e8c;
+  --error: #c0364f;
+
+  /* Elevation */
   --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
     0 4px 12px rgba(15, 23, 42, 0.04);
   --card-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.06),
     0 8px 20px rgba(15, 23, 42, 0.08);
-  --error: #c0364f;
-  --border: #e3e3ec;
-  --border-strong: #d2d2dc;
+
+  /* Radii */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
+  --radius-2: 6px;
+  --radius-3: 10px;
+
+  /* Spacing scale (4-pt grid) */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -28,6 +73,7 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-7: 32px;
+  --space-8: 40px;
 }
 
 * {
@@ -2069,3 +2115,183 @@ button[type="submit"]:disabled,
   }
 }
 
+
+/* =============================================================
+ * Shared UI components (task 103)
+ * -------------------------------------------------------------
+ * PageHeader / SectionCard / EmptyState / SettingsGroup.
+ * ============================================================= */
+
+.app-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.app-page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.app-page-header-titles h2 {
+  margin: 0 0 var(--space-1);
+}
+
+.app-page-header-titles .page-subtitle {
+  margin: 0;
+}
+
+.app-page-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.app-page-header-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.section-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--card-shadow);
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.section-card + .section-card {
+  margin-top: var(--space-4);
+}
+
+.section-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+}
+
+.section-card-titles h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.section-card-description {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 640px;
+}
+
+.section-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.section-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.empty-state {
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.empty-state-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-state-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  max-width: 520px;
+}
+
+.empty-state-inline {
+  padding: var(--space-4);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.empty-state-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.settings-group {
+  margin-top: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.settings-group:first-of-type {
+  margin-top: var(--space-4);
+}
+
+.settings-group-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+}
+
+.settings-group-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.settings-group-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 640px;
+}
+
+.settings-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Polished Settings page heading + intro band */
+.settings-page > h2 {
+  margin: 0 0 var(--space-2);
+}
+
+.settings-page-intro {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 14px;
+  max-width: 640px;
+}

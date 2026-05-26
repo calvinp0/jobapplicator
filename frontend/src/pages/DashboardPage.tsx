@@ -21,8 +21,10 @@ import {
   runStatusLabel,
   type JobStage,
 } from "../lib/workflow";
+import { StatusBadge } from "../components/ui";
+import type { StatusBadgeVariant } from "../components/ui";
 
-const JOB_STAGE_VARIANTS: Record<JobStage, string> = {
+const JOB_STAGE_VARIANTS: Record<JobStage, StatusBadgeVariant> = {
   captured: "pending",
   tailoring: "running",
   draft_ready: "completed",
@@ -421,11 +423,9 @@ export function DashboardPage() {
                     </Link>
                     <p className="job-card-company">{view.job.company}</p>
                   </div>
-                  <span
-                    className={`status-badge status-badge-${JOB_STAGE_VARIANTS[view.stage]}`}
-                  >
+                  <StatusBadge variant={JOB_STAGE_VARIANTS[view.stage]}>
                     {jobStageLabel(view.stage)}
-                  </span>
+                  </StatusBadge>
                 </div>
                 {view.job.location ? (
                   <p className="job-card-meta">{view.job.location}</p>

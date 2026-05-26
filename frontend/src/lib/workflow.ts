@@ -12,6 +12,38 @@ export function runStatusLabel(status: string): string {
   return RUN_STATUS_LABELS[status] ?? status;
 }
 
+const RUN_STATUS_VARIANTS: Record<string, string> = {
+  created: "pending",
+  running: "running",
+  completed: "running",
+  imported: "completed",
+  failed: "failed",
+};
+
+export function runStatusVariant(status: string): string {
+  return RUN_STATUS_VARIANTS[status] ?? "default";
+}
+
+const EMAIL_STATUS_VARIANTS: Record<string, string> = {
+  not_watching: "default",
+  watching: "pending",
+  email_received: "running",
+  confirmation_found: "completed",
+  classified_positive: "completed",
+  classified_rejection: "rejected",
+  classified_interview: "interview",
+  classified_assessment: "running",
+  classified_offer: "offer",
+  classified_neutral: "completed",
+  needs_review: "pending",
+  no_match: "default",
+  error: "failed",
+};
+
+export function emailStatusVariant(value: string): string {
+  return EMAIL_STATUS_VARIANTS[value] ?? "default";
+}
+
 /**
  * Parse a backend ISO-8601 timestamp into a Date.
  *

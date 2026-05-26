@@ -8,17 +8,27 @@ interface NavItem {
 }
 
 const PRIMARY_NAV: NavItem[] = [
-  { to: "/", label: "Home" },
+  { to: "/", label: "Dashboard" },
   { to: "/jobs", label: "Jobs" },
   { to: "/applications", label: "Applications" },
-  { to: "/settings", label: "Settings" },
+  { to: "/captures", label: "Captures" },
+  { to: "/runs", label: "Runs" },
 ];
 
 const ADVANCED_NAV: NavItem[] = [
-  { to: "/captures", label: "Captures" },
-  { to: "/runs", label: "Runs" },
   { to: "/prompts", label: "Prompt harnesses" },
+  { to: "/settings", label: "Settings" },
 ];
+
+// Routes that benefit from the wider content shell (dashboards / data tables).
+const WIDE_PATHS = ["/applications", "/runs", "/jobs", "/"];
+
+function isWidePath(pathname: string): boolean {
+  if (pathname === "/") return true;
+  return WIDE_PATHS.some(
+    (prefix) => prefix !== "/" && pathname.startsWith(prefix),
+  );
+}
 
 export function Layout() {
   const [pendingCount, setPendingCount] = useState<number | null>(null);
@@ -80,11 +90,12 @@ export function Layout() {
           </div>
         </div>
         <nav aria-label="Primary">
+          <p className="nav-group-label">Workspace</p>
           <ul className="nav-list">{PRIMARY_NAV.map(renderItem)}</ul>
         </nav>
         <div className="sidebar-divider" role="presentation" />
-        <nav aria-label="Advanced">
-          <p className="nav-group-label">Advanced</p>
+        <nav aria-label="Configuration">
+          <p className="nav-group-label">Configuration</p>
           <ul className="nav-list nav-list-advanced">
             {ADVANCED_NAV.map(renderItem)}
           </ul>
@@ -93,7 +104,7 @@ export function Layout() {
       <main className="content">
         <div
           className={
-            location.pathname === "/applications"
+            isWidePath(location.pathname)
               ? "content-inner content-inner-wide"
               : "content-inner"
           }

@@ -49,6 +49,7 @@ import {
   useRunLogPolling,
   useRunProgressPolling,
 } from "./RunDetailPage";
+import { PageHeader } from "../components/ui";
 
 const STEP_TITLES = [
   "Read the job description",
@@ -683,11 +684,8 @@ export function JobDetailPage() {
         ?? latestRun.llm_provider)
     : null;
 
-  return (
-    <section className="job-detail">
-      <h2>
-        {job.title} — {job.company}
-      </h2>
+  const headerMeta = (
+    <>
       {job.location ? <p className="job-meta">{job.location}</p> : null}
       {job.external_url ? (
         <p className="job-meta">
@@ -696,6 +694,15 @@ export function JobDetailPage() {
           </a>
         </p>
       ) : null}
+    </>
+  );
+
+  return (
+    <section className="job-detail">
+      <PageHeader
+        title={`${job.title} — ${job.company}`}
+        meta={headerMeta}
+      />
 
       <ol className="workspace-steps" aria-label="Job workspace">
         <li>
