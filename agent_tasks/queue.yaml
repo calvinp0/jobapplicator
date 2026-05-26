@@ -1999,3 +1999,17 @@ tasks:
       - ".gitignore"
       - "agent_tasks/098-add-prompt-harness-editor-ui.md"
       - "agent_tasks/queue.yaml"
+  - id: "099-fix-agentctl-verification-failure-repair"
+    title: "Teach agentctl fix to repair verification failures"
+    file: "agent_tasks/099-fix-agentctl-verification-failure-repair.md"
+    branch: "agent/099-fix-agentctl-verification-failure-repair"
+    worktree: "agent-099-fix-agentctl-verification-failure-repair"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "bash -n scripts/agentctl.sh"
+    allowed_paths:
+      - "scripts/agentctl.sh"
+      - "docs/contracts/agent_orchestration.md"
+      - "agent_tasks/099-fix-agentctl-verification-failure-repair.md"
+      - "agent_tasks/queue.yaml"
