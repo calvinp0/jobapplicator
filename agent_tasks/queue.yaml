@@ -1879,3 +1879,22 @@ tasks:
       - "docs/contracts/**"
       - "agent_tasks/092-add-ats-optimization-harness.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "093-add-manual-gmail-email-linking"
+    title: "Add manual Gmail email linking"
+    file: "agent_tasks/093-add-manual-gmail-email-linking.md"
+    branch: "agent/093-add-manual-gmail-email-linking"
+    worktree: "agent-093-add-manual-gmail-email-linking"
+    status: "ready"
+    depends_on:
+      - "086-add-manual-gmail-sync-for-applications"
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/contracts/gmail_integration.md"
+      - "agent_tasks/093-add-manual-gmail-email-linking.md"
+      - "agent_tasks/queue.yaml"
