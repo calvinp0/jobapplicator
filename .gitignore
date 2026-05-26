@@ -273,7 +273,11 @@ backend/jobapply.db
 # candidate_context/gmail/token.json. The file holds a refresh token in
 # plain text and must never be committed. The directory is created on
 # first connect; the token blob itself is what we keep out of git.
+# Task 089 adds candidate_context/gmail/oauth_state.json — the pending
+# OAuth state + PKCE verifier persisted between auth-url and callback.
+# It is short-lived but still secret-bearing and must never be committed.
 candidate_context/gmail/token.json
+candidate_context/gmail/oauth_state.json
 candidate_context/gmail/*.json
 
 # Settings-stored secrets (task 088). The Gmail OAuth client secret is

@@ -89,6 +89,24 @@ class GmailDependencyError(RuntimeError):
     """Raised when the optional google libraries are not installed."""
 
 
+class GmailOAuthStateError(RuntimeError):
+    """Raised when the OAuth callback cannot validate pending state.
+
+    Covers the *expected* OAuth callback failure modes — missing state,
+    state mismatch, expired pending state, or a missing PKCE code
+    verifier. The router turns these into a friendly user-facing
+    response instead of a 500 stack trace.
+    """
+
+
+class GmailOAuthExchangeError(RuntimeError):
+    """Raised when Google rejects the authorization code at token exchange.
+
+    Wraps the underlying oauthlib error so the router does not need to
+    know about google-auth-oauthlib internals.
+    """
+
+
 # The Gmail OAuth env vars the user must set, in the order surfaced to
 # the UI. ``GOOGLE_REDIRECT_URI`` has a sensible local default but is
 # still part of the documented setup so it is included here so the UI /
@@ -150,6 +168,22 @@ def _repo_root() -> Path:
 
 def _default_token_path() -> Path:
     return _repo_root() / "candidate_context" / "gmail" / "token.json"
+
+
+# Pending OAuth-state lifetime. Google's consent screen can take time;
+# 10 minutes is long enough for a deliberate user but short enough that
+# an abandoned attempt cannot be picked up later.
+OAUTH_STATE_TTL_SECONDS = 600
+
+
+def _oauth_state_path() -> Path:
+    """Return the path used to persist the pending OAuth state blob.
+
+    Lives next to the token file so the operator only has to remember
+    one secret-bearing directory.
+    """
+    cfg = get_gmail_config()
+    return cfg.token_path.parent / "oauth_state.json"
 
 
 def _default_redirect_uri() -> str:
@@ -250,6 +284,76 @@ def _client_config(cfg: GmailConfig) -> dict[str, Any]:
     }
 
 
+def save_oauth_state(
+    *,
+    state: str,
+    code_verifier: str | None,
+    redirect_uri: str,
+    scope: str,
+) -> Path:
+    """Persist the pending OAuth ``state`` + PKCE ``code_verifier``.
+
+    The blob is written atomically next to the token file so that a
+    subsequent callback request can rehydrate the same PKCE verifier
+    and validate ``state``. Returns the file path.
+    """
+    path = _oauth_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blob = {
+        "state": state,
+        "code_verifier": code_verifier,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(blob, indent=2, sort_keys=True))
+    os.replace(tmp, path)
+    return path
+
+
+def load_oauth_state() -> dict[str, Any] | None:
+    """Return the pending OAuth state blob, or ``None`` if absent/unreadable."""
+    path = _oauth_state_path()
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def clear_oauth_state() -> None:
+    """Delete the pending OAuth state file if it exists.
+
+    Called after a successful (or definitively failed) exchange so a
+    leaked verifier cannot be reused.
+    """
+    path = _oauth_state_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # Best-effort: a permissions error here should not mask the
+        # original outcome of the callback.
+        pass
+
+
+def _oauth_state_age_seconds(blob: dict[str, Any]) -> float | None:
+    """Return age in seconds, or ``None`` when the timestamp is unparseable."""
+    created_at = blob.get("created_at")
+    if not isinstance(created_at, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
 def save_token(token_data: dict[str, Any]) -> Path:
     """Persist ``token_data`` to the configured token path atomically."""
     cfg = get_gmail_config()
@@ -276,7 +380,13 @@ def has_token() -> bool:
 
 
 def build_auth_url(state: str | None = None) -> dict[str, str]:
-    """Return the Google OAuth consent URL plus the requested scope."""
+    """Return the Google OAuth consent URL plus the requested scope.
+
+    Persists the OAuth ``state`` and PKCE ``code_verifier`` chosen by
+    the underlying ``Flow`` so :func:`exchange_code` can rehydrate them
+    on the callback. Without this round-trip, Google rejects the token
+    exchange with ``invalid_grant: Missing code verifier``.
+    """
     cfg = _require_configured()
     assert_readonly_scope(list(GMAIL_SCOPES))
     try:
@@ -292,21 +402,63 @@ def build_auth_url(state: str | None = None) -> dict[str, str]:
         scopes=list(GMAIL_SCOPES),
         redirect_uri=cfg.redirect_uri,
     )
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="false",
-        prompt="consent",
-        state=state or "",
+    kwargs: dict[str, Any] = {
+        "access_type": "offline",
+        "include_granted_scopes": "false",
+        "prompt": "consent",
+    }
+    if state:
+        kwargs["state"] = state
+    auth_url, returned_state = flow.authorization_url(**kwargs)
+
+    save_oauth_state(
+        state=returned_state,
+        code_verifier=getattr(flow, "code_verifier", None),
+        redirect_uri=cfg.redirect_uri,
+        scope=GMAIL_READONLY_SCOPE,
     )
     return {"auth_url": auth_url, "scope": GMAIL_READONLY_SCOPE}
 
 
-def exchange_code(code: str) -> dict[str, Any]:
+def exchange_code(code: str, state: str | None = None) -> dict[str, Any]:
     """Exchange an OAuth ``code`` for a token blob and persist it.
 
-    Returns the saved token blob (a JSON-serializable dict).
+    Validates ``state`` against the pending OAuth state written by
+    :func:`build_auth_url` and restores the PKCE ``code_verifier``
+    before calling ``fetch_token``. On success the pending state file
+    is cleared. Returns the saved token blob.
     """
     cfg = _require_configured()
+
+    # State validation runs before the google-auth-oauthlib import so a
+    # state mismatch / missing-state error surfaces cleanly even on a
+    # machine where the optional gmail extras are not installed (and so
+    # the tests can exercise the validation path without the wheels).
+    pending = load_oauth_state()
+    if pending is None:
+        raise GmailOAuthStateError(
+            "missing or expired OAuth state. Return to Settings and "
+            "click Connect Gmail again."
+        )
+    age = _oauth_state_age_seconds(pending)
+    if age is None or age > OAUTH_STATE_TTL_SECONDS:
+        clear_oauth_state()
+        raise GmailOAuthStateError(
+            "OAuth state has expired. Return to Settings and click "
+            "Connect Gmail again."
+        )
+    expected_state = pending.get("state")
+    if expected_state:
+        if not state:
+            raise GmailOAuthStateError(
+                "OAuth callback is missing the 'state' parameter."
+            )
+        if state != expected_state:
+            raise GmailOAuthStateError(
+                "OAuth state did not match the pending request. "
+                "Return to Settings and click Connect Gmail again."
+            )
+
     try:
         from google_auth_oauthlib.flow import Flow  # type: ignore
     except ImportError as exc:  # pragma: no cover
@@ -315,12 +467,30 @@ def exchange_code(code: str) -> dict[str, Any]:
             "extras with `pip install -e .[gmail]`"
         ) from exc
 
+    redirect_uri = pending.get("redirect_uri") or cfg.redirect_uri
     flow = Flow.from_client_config(
         _client_config(cfg),
         scopes=list(GMAIL_SCOPES),
-        redirect_uri=cfg.redirect_uri,
+        redirect_uri=redirect_uri,
     )
-    flow.fetch_token(code=code)
+    stored_verifier = pending.get("code_verifier")
+    if stored_verifier:
+        flow.code_verifier = stored_verifier
+
+    try:
+        flow.fetch_token(code=code)
+    except Exception as exc:
+        # google-auth-oauthlib re-raises oauthlib errors directly; we
+        # catch broadly so an InvalidGrantError, MissingCodeError,
+        # or any HTTP/network failure becomes a clean structured
+        # error instead of a 500. The state file is cleared so the
+        # user can start a fresh attempt without a stale verifier.
+        clear_oauth_state()
+        message = str(exc) or exc.__class__.__name__
+        raise GmailOAuthExchangeError(
+            f"Google rejected the OAuth code exchange: {message}"
+        ) from exc
+
     creds = flow.credentials
     scopes = list(getattr(creds, "scopes", []) or [])
     assert_readonly_scope(scopes)
@@ -344,6 +514,7 @@ def exchange_code(code: str) -> dict[str, Any]:
         token_blob["email"] = None
 
     save_token(token_blob)
+    clear_oauth_state()
     return token_blob
 
 

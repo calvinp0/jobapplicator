@@ -242,8 +242,9 @@ def test_oauth_callback_stores_token(gmail_client_app, monkeypatch):
 
     captured: dict[str, str] = {}
 
-    def fake_exchange(code: str) -> dict:
+    def fake_exchange(code: str, state: str | None = None) -> dict:
         captured["code"] = code
+        captured["state"] = state or ""
         token = {
             "token": "from-fake-exchange",
             "refresh_token": "refresh",
@@ -255,10 +256,13 @@ def test_oauth_callback_stores_token(gmail_client_app, monkeypatch):
 
     monkeypatch.setattr(gmail_client, "exchange_code", fake_exchange)
 
-    r = client.get("/gmail/oauth/callback", params={"code": "abc-123"})
+    r = client.get(
+        "/gmail/oauth/callback",
+        params={"code": "abc-123", "state": "state-xyz"},
+    )
     assert r.status_code == 200
     assert "Gmail connected" in r.text
-    assert captured == {"code": "abc-123"}
+    assert captured == {"code": "abc-123", "state": "state-xyz"}
 
     # The status endpoint now reports connected because the token file exists.
     body = client.get("/gmail/status").json()
@@ -268,8 +272,17 @@ def test_oauth_callback_stores_token(gmail_client_app, monkeypatch):
 
 def test_oauth_callback_rejects_missing_code(gmail_client_app):
     client, _ = gmail_client_app
-    r = client.get("/gmail/oauth/callback")
+    r = client.get("/gmail/oauth/callback", params={"state": "abc"})
     assert r.status_code == 400
+    assert "missing" in r.text.lower()
+    assert "code" in r.text.lower()
+
+
+def test_oauth_callback_rejects_missing_state(gmail_client_app):
+    client, _ = gmail_client_app
+    r = client.get("/gmail/oauth/callback", params={"code": "abc"})
+    assert r.status_code == 400
+    assert "state" in r.text.lower()
 
 
 def test_oauth_callback_renders_error_from_google(gmail_client_app):
@@ -277,6 +290,276 @@ def test_oauth_callback_renders_error_from_google(gmail_client_app):
     r = client.get("/gmail/oauth/callback", params={"error": "access_denied"})
     assert r.status_code == 400
     assert "access_denied" in r.text
+
+
+# ---- /gmail/auth-url state + PKCE persistence ------------------------
+
+
+def test_auth_url_persists_state_and_code_verifier(gmail_client_app, monkeypatch):
+    """Calling /gmail/auth-url must persist state + PKCE verifier locally."""
+    client, gmail_client = gmail_client_app
+
+    class FakeFlow:
+        code_verifier: str | None = None
+
+        @classmethod
+        def from_client_config(cls, *args, **kwargs):
+            inst = cls()
+            inst.code_verifier = "fake-verifier-43-chars-min-aaaaaaaaaaaaaaaaa"
+            return inst
+
+        def authorization_url(self, **kwargs):
+            return (
+                "https://accounts.google.com/o/oauth2/auth?fake=1",
+                "generated-state-token",
+            )
+
+    import sys
+    import types
+
+    fake_module = types.ModuleType("google_auth_oauthlib.flow")
+    fake_module.Flow = FakeFlow  # type: ignore[attr-defined]
+    pkg = types.ModuleType("google_auth_oauthlib")
+    pkg.flow = fake_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib", pkg)
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib.flow", fake_module)
+
+    body = client.get("/gmail/auth-url").json()
+    assert body["auth_url"].startswith("https://accounts.google.com/")
+    assert body["scope"] == gmail_client.GMAIL_READONLY_SCOPE
+
+    pending = gmail_client.load_oauth_state()
+    assert pending is not None
+    assert pending["state"] == "generated-state-token"
+    assert pending["code_verifier"] == "fake-verifier-43-chars-min-aaaaaaaaaaaaaaaaa"
+    assert pending["scope"] == gmail_client.GMAIL_READONLY_SCOPE
+    assert pending["redirect_uri"] == "http://localhost:8000/gmail/oauth/callback"
+    assert "created_at" in pending
+
+
+def test_exchange_code_restores_code_verifier(gmail_client_app, monkeypatch):
+    """``exchange_code`` must restore the persisted verifier before fetch_token."""
+    _, gmail_client = gmail_client_app
+
+    gmail_client.save_oauth_state(
+        state="state-xyz",
+        code_verifier="verifier-xyz",
+        redirect_uri="http://localhost:8000/gmail/oauth/callback",
+        scope=gmail_client.GMAIL_READONLY_SCOPE,
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeCredentials:
+        token = "access"
+        refresh_token = "refresh"
+        token_uri = "https://oauth2.googleapis.com/token"
+        client_id = "fake-id"
+        client_secret = "fake-secret"
+        scopes = [gmail_client.GMAIL_READONLY_SCOPE]
+        expiry = None
+
+    class FakeFlow:
+        code_verifier: str | None = None
+
+        @classmethod
+        def from_client_config(cls, *args, **kwargs):
+            inst = cls()
+            inst.code_verifier = None
+            return inst
+
+        def fetch_token(self, **kwargs):
+            captured["verifier_at_fetch"] = self.code_verifier
+            captured["code"] = kwargs.get("code")
+
+        @property
+        def credentials(self):
+            return FakeCredentials()
+
+    import sys
+    import types
+
+    fake_module = types.ModuleType("google_auth_oauthlib.flow")
+    fake_module.Flow = FakeFlow  # type: ignore[attr-defined]
+    pkg = types.ModuleType("google_auth_oauthlib")
+    pkg.flow = fake_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib", pkg)
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib.flow", fake_module)
+
+    # Skip the network getProfile call.
+    monkeypatch.setattr(gmail_client, "_fetch_profile_email", lambda creds: None)
+
+    token = gmail_client.exchange_code("auth-code", state="state-xyz")
+    assert captured["verifier_at_fetch"] == "verifier-xyz"
+    assert captured["code"] == "auth-code"
+    assert token["token"] == "access"
+
+    # State file is cleared after success.
+    assert gmail_client.load_oauth_state() is None
+
+
+def test_exchange_code_rejects_state_mismatch(gmail_client_app):
+    _, gmail_client = gmail_client_app
+    gmail_client.save_oauth_state(
+        state="state-xyz",
+        code_verifier="verifier",
+        redirect_uri="http://localhost:8000/gmail/oauth/callback",
+        scope=gmail_client.GMAIL_READONLY_SCOPE,
+    )
+    with pytest.raises(gmail_client.GmailOAuthStateError):
+        gmail_client.exchange_code("code", state="WRONG")
+
+
+def test_exchange_code_rejects_missing_state_when_expected(gmail_client_app):
+    _, gmail_client = gmail_client_app
+    gmail_client.save_oauth_state(
+        state="state-xyz",
+        code_verifier="verifier",
+        redirect_uri="http://localhost:8000/gmail/oauth/callback",
+        scope=gmail_client.GMAIL_READONLY_SCOPE,
+    )
+    with pytest.raises(gmail_client.GmailOAuthStateError):
+        gmail_client.exchange_code("code", state=None)
+
+
+def test_exchange_code_rejects_missing_pending_state(gmail_client_app):
+    _, gmail_client = gmail_client_app
+    # No pending state on disk at all.
+    with pytest.raises(gmail_client.GmailOAuthStateError):
+        gmail_client.exchange_code("code", state="anything")
+
+
+def test_exchange_code_rejects_expired_state(gmail_client_app, monkeypatch):
+    _, gmail_client = gmail_client_app
+    gmail_client.save_oauth_state(
+        state="state-xyz",
+        code_verifier="verifier",
+        redirect_uri="http://localhost:8000/gmail/oauth/callback",
+        scope=gmail_client.GMAIL_READONLY_SCOPE,
+    )
+    # Force the stored state to look ancient.
+    monkeypatch.setattr(
+        gmail_client,
+        "_oauth_state_age_seconds",
+        lambda blob: gmail_client.OAUTH_STATE_TTL_SECONDS + 1,
+    )
+    with pytest.raises(gmail_client.GmailOAuthStateError):
+        gmail_client.exchange_code("code", state="state-xyz")
+    # Expired state is cleared.
+    assert gmail_client.load_oauth_state() is None
+
+
+def test_exchange_code_wraps_invalid_grant_in_friendly_error(
+    gmail_client_app, monkeypatch
+):
+    _, gmail_client = gmail_client_app
+    gmail_client.save_oauth_state(
+        state="state-xyz",
+        code_verifier="verifier",
+        redirect_uri="http://localhost:8000/gmail/oauth/callback",
+        scope=gmail_client.GMAIL_READONLY_SCOPE,
+    )
+
+    class FakeInvalidGrant(Exception):
+        pass
+
+    class FakeFlow:
+        code_verifier: str | None = None
+
+        @classmethod
+        def from_client_config(cls, *args, **kwargs):
+            return cls()
+
+        def fetch_token(self, **kwargs):
+            raise FakeInvalidGrant("(invalid_grant) Missing code verifier.")
+
+    import sys
+    import types
+
+    fake_module = types.ModuleType("google_auth_oauthlib.flow")
+    fake_module.Flow = FakeFlow  # type: ignore[attr-defined]
+    pkg = types.ModuleType("google_auth_oauthlib")
+    pkg.flow = fake_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib", pkg)
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib.flow", fake_module)
+
+    with pytest.raises(gmail_client.GmailOAuthExchangeError) as excinfo:
+        gmail_client.exchange_code("code", state="state-xyz")
+    assert "invalid_grant" in str(excinfo.value).lower()
+    # State is cleared on failure so the next attempt starts clean.
+    assert gmail_client.load_oauth_state() is None
+
+
+def test_callback_returns_friendly_html_for_invalid_grant(
+    gmail_client_app, monkeypatch
+):
+    """A failed token exchange must not surface as a generic 500."""
+    client, gmail_client = gmail_client_app
+
+    def fake_exchange(code: str, state: str | None = None) -> dict:
+        raise gmail_client.GmailOAuthExchangeError(
+            "Google rejected the OAuth code exchange: "
+            "(invalid_grant) Missing code verifier."
+        )
+
+    monkeypatch.setattr(gmail_client, "exchange_code", fake_exchange)
+
+    r = client.get(
+        "/gmail/oauth/callback",
+        params={"code": "abc", "state": "state-xyz"},
+    )
+    assert r.status_code == 400
+    assert "invalid_grant" in r.text
+    assert "Gmail connection failed" in r.text
+    assert "Settings" in r.text
+
+
+def test_callback_returns_friendly_html_for_missing_state(
+    gmail_client_app, monkeypatch
+):
+    client, gmail_client = gmail_client_app
+
+    def fake_exchange(code: str, state: str | None = None) -> dict:
+        raise gmail_client.GmailOAuthStateError(
+            "missing or expired OAuth state. Return to Settings and "
+            "click Connect Gmail again."
+        )
+
+    monkeypatch.setattr(gmail_client, "exchange_code", fake_exchange)
+
+    r = client.get(
+        "/gmail/oauth/callback",
+        params={"code": "abc", "state": "stale"},
+    )
+    assert r.status_code == 400
+    assert "Gmail connection failed" in r.text
+    assert "Settings" in r.text
+
+
+def test_callback_returns_friendly_html_for_missing_config(
+    gmail_client_app, monkeypatch
+):
+    client, _ = gmail_client_app
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    r = client.get(
+        "/gmail/oauth/callback",
+        params={"code": "abc", "state": "state-xyz"},
+    )
+    assert r.status_code == 400
+    assert "Gmail connection failed" in r.text
+
+
+# ---- OAuth-state file safety -----------------------------------------
+
+
+def test_gitignore_excludes_oauth_state_file():
+    """The repo .gitignore must keep the pending OAuth state out of git."""
+    repo_root = Path(__file__).resolve().parents[2]
+    gitignore = (repo_root / ".gitignore").read_text()
+    # candidate_context/gmail/*.json covers oauth_state.json too.
+    assert "candidate_context/gmail/*.json" in gitignore
+    assert "candidate_context/gmail/oauth_state.json" in gitignore
 
 
 # ---- /gmail/test-search ----------------------------------------------

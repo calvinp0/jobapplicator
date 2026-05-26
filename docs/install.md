@@ -765,3 +765,62 @@ The backend's response shape is structured:
 Set the listed env vars (see "Set the env vars" above) and restart the
 backend. The Settings card refreshes to *Not connected* once the
 credentials are present.
+
+### Troubleshooting: callback fails after Google consent
+
+If the browser shows **"Gmail connection failed"** after Google
+consent (instead of the previous 500), the page lists a short
+*Reason* and a link back to Settings. The common ones are:
+
+- **"missing or expired OAuth state"** — you completed consent more
+  than 10 minutes after clicking Connect Gmail, or the pending state
+  file (`candidate_context/gmail/oauth_state.json`) was deleted
+  mid-flow. Return to Settings and click **Connect Gmail** again.
+- **"OAuth state did not match the pending request"** — the browser
+  finished an older consent run in parallel. Return to Settings and
+  click **Connect Gmail** again so a fresh state is generated.
+- **"Google rejected the OAuth code exchange: (invalid_grant) …"** —
+  Google refused the token exchange. Most often this means the
+  redirect URI configured in Google Cloud does not match the
+  `GOOGLE_REDIRECT_URI` env var / Settings value byte-for-byte (see
+  *Redirect URI must match* below), or the code was already
+  exchanged. Click Connect Gmail again.
+
+The pending OAuth state file is local-only and gitignored. It is
+cleared automatically on success and on any of the failure modes
+above, so the next attempt always starts from a clean slate.
+
+### Unverified-app screen during local development
+
+During local development, Google may show **"Google hasn't verified
+this app"** on the Gmail consent screen. This is expected for an
+unverified/test OAuth app and **not** something to ship to end users
+unchanged.
+
+- For local use, add your Google account as a **test user** on the
+  OAuth consent screen (Google Cloud Console → APIs & Services →
+  OAuth consent screen → Test users). Continue through *Advanced* →
+  *Go to (unsafe)* once; the warning goes away for that account.
+- For public distribution, submit the OAuth app to Google for
+  verification. Do not instruct end users to bypass the warning.
+
+### Redirect URI must match
+
+The redirect URI in your Google Cloud OAuth client must match the
+backend's configured redirect URI **exactly** (scheme, host, port,
+and path). The default in this project is:
+
+```
+http://localhost:8000/gmail/oauth/callback
+```
+
+If you change the backend host or port (for example, you run uvicorn
+on `--port 8001` or behind a reverse proxy), update **both**:
+
+1. `GOOGLE_REDIRECT_URI` (env var) or the **Redirect URI** field in
+   Settings → Gmail integration.
+2. The *Authorized redirect URIs* list on the Google Cloud OAuth
+   client.
+
+A mismatch surfaces as Google's `redirect_uri_mismatch` error during
+the consent step.
