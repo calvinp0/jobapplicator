@@ -320,20 +320,17 @@ describe("ApplicationsPage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
     );
-    const headerColumns = [
-      "Job",
-      "Status",
-      "Submission",
-      "Email",
-      "Latest run",
-      "Updated",
-      "Next action",
-      "Actions",
-    ];
+    const headerColumns = ["Job", "Status", "Email", "Next action", "Actions"];
     for (const col of headerColumns) {
       expect(
         screen.getByRole("columnheader", { name: col }),
       ).toBeInTheDocument();
+    }
+    // Columns removed in the consolidation must no longer appear.
+    for (const removed of ["Submission", "Latest run", "Updated"]) {
+      expect(
+        screen.queryByRole("columnheader", { name: removed }),
+      ).toBeNull();
     }
   });
 
@@ -488,7 +485,7 @@ describe("ApplicationsPage", () => {
     expect(screen.queryByTestId("applications-table")).toBeNull();
   });
 
-  it("renders submission, email, updated, and next-action cells for each row", async () => {
+  it("renders status, email, and next-action cells for each row", async () => {
     renderPage();
 
     await waitFor(() =>
@@ -499,9 +496,6 @@ describe("ApplicationsPage", () => {
 
     const draftRow = rowFor("Senior Engineer");
     expect(
-      within(draftRow).getByTestId("submission-app-draft"),
-    ).toHaveTextContent(/^Not submitted$/);
-    expect(
       within(draftRow).getByTestId("email-status-app-draft"),
     ).toHaveTextContent(/^Not watching yet$/);
     expect(
@@ -509,9 +503,6 @@ describe("ApplicationsPage", () => {
     ).toHaveTextContent(/^Ready to submit$/);
 
     const sentRow = rowFor("Platform Lead");
-    expect(
-      within(sentRow).getByTestId("submission-app-sent"),
-    ).toHaveTextContent(/^Submitted/);
     expect(
       within(sentRow).getByTestId("email-status-app-sent"),
     ).toHaveTextContent(/^Waiting for email$/);
@@ -528,15 +519,45 @@ describe("ApplicationsPage", () => {
     ).toHaveTextContent(/^Rejected$/);
   });
 
-  it("renders an updated-time cell for each application row", async () => {
+  it("renders submission text inside the Status cell, beneath the stage badge", async () => {
     renderPage();
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { level: 2, name: /applications/i }),
       ).toBeInTheDocument(),
     );
+
+    // A not_submitted draft row shows the inline "Not submitted yet" line
+    // inside the Status cell — same <td> as the stage badge.
+    const draftRow = rowFor("Senior Engineer");
+    const draftSubmission = within(draftRow).getByTestId(
+      "submission-app-draft",
+    );
+    expect(draftSubmission).toHaveTextContent(/^Not submitted yet$/);
+    const draftBadge = within(draftRow).getByTestId("status-badge-app-draft");
+    expect(draftBadge.closest("td")).toBe(draftSubmission.closest("td"));
+
+    // A submitted row shows "Submitted <date>" in the same Status cell.
+    const sentRow = rowFor("Platform Lead");
+    expect(
+      within(sentRow).getByTestId("submission-app-sent"),
+    ).toHaveTextContent(/^Submitted /);
+  });
+
+  it("renders an Updated line inside the Email cell", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+
     for (const app of applications) {
-      expect(screen.getByTestId(`updated-${app.id}`)).toBeInTheDocument();
+      const updated = screen.getByTestId(`updated-${app.id}`);
+      expect(updated).toHaveTextContent(/^Updated /);
+      // The Updated line lives inside the same <td> as the email status.
+      const emailStatus = screen.getByTestId(`email-status-${app.id}`);
+      expect(updated.closest("td")).toBe(emailStatus.closest("td"));
     }
   });
 
