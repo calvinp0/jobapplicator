@@ -2144,7 +2144,7 @@ tasks:
     file: "agent_tasks/107-add-docx-template-fidelity-audit.md"
     branch: "agent/107-add-docx-template-fidelity-audit"
     worktree: "agent-107-add-docx-template-fidelity-audit"
-    status: "ready"
+    status: "done"
     depends_on:
       - "105-preserve-master-resume-docx-style"
     verification:
