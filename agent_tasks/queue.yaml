@@ -1836,7 +1836,7 @@ tasks:
     file: "agent_tasks/091-fix-revision-context-provenance.md"
     branch: "agent/091-fix-revision-context-provenance"
     worktree: "agent-091-fix-revision-context-provenance"
-    status: "ready"
+    status: "done"
     depends_on:
       - "090-support-multiple-evidence-sources"
     verification:
