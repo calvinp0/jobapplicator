@@ -83,7 +83,13 @@ output/tailored_resume.docx
 output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
+output/template_fidelity_audit.md
 ```
+
+`output/template_fidelity_audit.md` follows the same structure as the
+first-draft tailoring contract documented in
+`runtime_prompts/resume_tailoring.md` (see "Template Fidelity Audit").
+Revision runs must refresh this file to reflect the revised DOCX.
 
 The runtime prompt for first-draft tailoring
 (`runtime_prompts/resume_tailoring.md`) describes the structure of each
@@ -117,17 +123,23 @@ the Office Word MCP server (`word-document-server`) or the DOCX/Word
 document skill. Preserve existing DOCX styling from both the current
 tailored draft and the original master resume, including:
 
+- centered name/header block
+- centered contact line / links
 - section heading colors (e.g. blue headers stay blue)
+- colored section headings
+- horizontal separator/divider lines
+- bullet lists
 - font families and sizes
 - margins and paragraph spacing
 - bullet indentation and list styles
+- date alignment
 - bold/italic emphasis patterns
 - simple horizontal rules or separators
 
 Do not restyle the resume unless the user explicitly asks. Apply the
-requested content changes while preserving existing DOCX styling. Do
-not rebuild the document from scratch when a usable current draft is
-present.
+requested content changes while preserving existing DOCX styling and
+layout. Do not rebuild the document from scratch when a usable current
+draft is present.
 
 If DOCX/MCP editing fails, write the markdown output and document the
 DOCX failure in `output/claim_audit.md` so the operator can recover.
@@ -141,6 +153,7 @@ work (one line per phase, <=120 chars, no secrets or paths). Examples:
 Reading revision feedback
 Applying revision changes to tailored resume markdown
 Refreshing ATS keyword coverage
+Refreshing template fidelity audit
 Validating required outputs
 ```
 

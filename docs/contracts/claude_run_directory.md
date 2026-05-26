@@ -24,7 +24,8 @@ runs/<run_id>/
 │   ├── tailored_resume.md
 │   ├── change_log.md
 │   ├── claim_audit.md
-│   └── ats_audit.md
+│   ├── ats_audit.md
+│   └── template_fidelity_audit.md   # optional; requested when a master DOCX is present
 ├── progress/
 │   └── progress.log              # user-facing phase events + worker heartbeats
 ├── word_handoff/                 # only used when tailoring_method == word_handoff
@@ -292,6 +293,7 @@ output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
+output/template_fidelity_audit.md
 progress/progress.log
 ```
 
@@ -302,6 +304,18 @@ role), how each keyword was covered by the tailored resume (or why it
 was not used), and an ATS-formatting check. The audit is mandatory:
 runs missing this file are marked failed by the same output validation
 that gates the other required outputs.
+
+`output/template_fidelity_audit.md` is the structured template
+fidelity audit. It records how well the tailored DOCX preserves the
+master resume's visual template (centered header, colored headings,
+horizontal separators, bullet lists, date alignment, margins, font
+family/size, section spacing) and lists any known deviations and
+remediation steps. The audit is *optional* in the worker output
+contract today (task 107): a run is not marked failed when it is
+absent. The worker logs a ``warning: template fidelity audit missing``
+line when a master DOCX is present but the audit was not produced, so
+the operator can spot the regression. The runtime prompt still lists
+the audit as a required output for Claude.
 
 Claude Code must not write outside the run directory.
 
