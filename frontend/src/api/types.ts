@@ -69,6 +69,29 @@ export interface EvidenceBankCreate {
   content_markdown: string;
 }
 
+export type EvidenceSourceType =
+  | "evidence_bank"
+  | "resume_variant"
+  | "master_resume"
+  | "project_note"
+  | "candidate_note"
+  | "other";
+
+// Combined selector shape for tailoring-run evidence: DB-backed
+// EvidenceBank rows and filesystem discoveries under
+// candidate_context/ subfolders share this representation so the
+// multi-select picker renders both with a uniform badge set.
+export interface EvidenceSource {
+  id: string;
+  name: string;
+  source_type: EvidenceSourceType;
+  source_format: string | null;
+  source: "database" | "filesystem";
+  source_path: string | null;
+  updated_at: string;
+  is_demo: boolean;
+}
+
 export interface ClaudeRun {
   id: string;
   job_id: string;
@@ -84,6 +107,7 @@ export interface ClaudeRun {
   completed_at: string | null;
   error_message: string | null;
   llm_provider?: string | null;
+  evidence_source_ids?: string[];
 }
 
 export interface RunLog {

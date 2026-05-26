@@ -14,6 +14,7 @@ from .routers import (
     applications,
     captures,
     evidence_banks,
+    evidence_sources,
     files,
     gmail,
     jobs,
@@ -264,6 +265,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(master_resumes.router)
     app.include_router(evidence_banks.router)
+    app.include_router(evidence_sources.router)
     app.include_router(applications.router)
     app.include_router(runs.router)
     app.include_router(word_handoff_router)

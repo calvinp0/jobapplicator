@@ -30,6 +30,7 @@ input/job_capture.md
 input/job_description.md
 input/master_resume.md
 input/evidence_bank.md
+input/evidence_sources_index.md
 input/candidate_profile.md
 input/project_notes.md
 input/skills_inventory.md
@@ -43,6 +44,35 @@ Also read, if present:
 input/revision_feedback.md
 input/master_resume_extracted.md
 ```
+
+Always read `input/evidence_sources_index.md` before tailoring. The
+index lists every selected evidence source for this run with its type,
+format, source (database or filesystem), and the staged file path under
+`input/evidence_sources/`. Review each file the index points at; these
+are the supplementary evidence sources the user chose for this run.
+
+## Primary Resume vs Evidence Sources
+
+The primary resume is `input/master_resume.md` (and the optional
+`input/master_resume.docx`). It is the formatting and base resume for
+the tailored draft.
+
+Evidence sources are supporting factual sources. Use them to strengthen
+claims that are already supported, and to discover phrasing, projects,
+or accomplishments that belong on the tailored resume but were
+under-emphasized in the primary resume. Do not invent claims. If
+multiple resume variants are provided as evidence (for example, a
+quantum-chemistry resume staged alongside a generalist ML resume as the
+primary), treat the additional variants as evidence only — never
+substitute them for the primary resume unless the user explicitly
+selected one as the primary.
+
+If evidence sources include DOCX files, prefer the Office Word MCP
+tools (through the `word-document-server` MCP server) to read them.
+When that is unavailable, look for an extracted markdown sibling
+written next to the DOCX in `input/evidence_sources/` — for example
+`input/evidence_sources/002_resume.md` next to
+`input/evidence_sources/002_resume.docx`.
 
 `input/revision_feedback.md` is only present on follow-up tailoring
 runs created in response to user feedback on a prior draft (see
@@ -143,7 +173,12 @@ Concrete resume claims must be supported by:
 input/master_resume.md
 input/evidence_bank.md
 input/project_notes.md
+input/evidence_sources/*
 ```
+
+All files inside `input/evidence_sources/` (and the staged DOCX
+siblings they reference) count as factual sources for the same
+purposes as `input/evidence_bank.md`.
 
 The following files may guide style and positioning, but must not be used alone to invent concrete claims:
 

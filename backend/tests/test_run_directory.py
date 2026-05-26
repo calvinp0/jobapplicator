@@ -19,6 +19,7 @@ EXPECTED_INPUT_FILES = {
     "job_description.md",
     "master_resume.md",
     "evidence_bank.md",
+    "evidence_sources_index.md",
     "candidate_profile.md",
     "project_notes.md",
     "skills_inventory.md",
