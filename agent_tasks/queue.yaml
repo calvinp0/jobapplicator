@@ -2106,7 +2106,7 @@ tasks:
     file: "agent_tasks/105-preserve-master-resume-docx-style.md"
     branch: "agent/105-preserve-master-resume-docx-style"
     worktree: "agent-105-preserve-master-resume-docx-style"
-    status: "ready"
+    status: "done"
     depends_on:
       - "092-add-ats-optimization-harness"
     verification:
