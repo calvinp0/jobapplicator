@@ -13,6 +13,7 @@ import {
   invokeRun,
   listApplications,
   listEvidenceBanks,
+  listEvidenceSources,
   listMasterResumes,
   listResumeVersions,
   listRevisionFeedbacks,
@@ -22,6 +23,7 @@ import type {
   Application,
   ClaudeRun,
   EvidenceBank,
+  EvidenceSource,
   Job,
   LlmProvider,
   MasterResume,
@@ -207,6 +209,12 @@ export function JobDetailPage() {
   const [evidenceBanks, setEvidenceBanks] = useState<EvidenceBank[] | null>(
     null,
   );
+  const [evidenceSources, setEvidenceSources] = useState<
+    EvidenceSource[] | null
+  >(null);
+  const [selectedEvidenceSourceIds, setSelectedEvidenceSourceIds] = useState<
+    string[]
+  >([]);
   const [resumeVersions, setResumeVersions] = useState<ResumeVersion[] | null>(
     null,
   );
@@ -216,7 +224,12 @@ export function JobDetailPage() {
     RevisionFeedback[]
   >([]);
   const [selectedResumeId, setSelectedResumeId] = useState<string>("");
-  const [selectedBankId, setSelectedBankId] = useState<string>("");
+  // ``selectedBankId`` is preserved as state so older test fixtures (and
+  // any callers that still funnel a single bank id through this page)
+  // continue to send ``evidence_bank_id`` in the create-run payload. The
+  // new multi-select UI populates ``evidence_source_ids`` instead, so
+  // ``selectedBankId`` stays an empty string in normal use.
+  const [selectedBankId] = useState<string>("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -269,6 +282,22 @@ export function JobDetailPage() {
         if (cancelled) return;
         setLoadError(extractApiDetail(err));
       });
+    // listEvidenceSources is fetched separately so older test mocks that
+    // omit the export still allow the page to render (mirrors the
+    // existing pattern for getLlmProviderSetting).
+    try {
+      listEvidenceSources()
+        .then((sources) => {
+          if (cancelled) return;
+          setEvidenceSources(sources);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setEvidenceSources([]);
+        });
+    } catch {
+      setEvidenceSources([]);
+    }
     listRevisionFeedbacks()
       .then((rows) => {
         if (cancelled) return;
@@ -335,6 +364,9 @@ export function JobDetailPage() {
         master_resume_id: selectedResumeId,
         evidence_bank_id: selectedBankId || null,
       };
+      if (selectedEvidenceSourceIds.length > 0) {
+        payload.evidence_source_ids = selectedEvidenceSourceIds;
+      }
       if (
         selectedProviderId &&
         selectedProviderId !== defaultProviderId
@@ -372,11 +404,15 @@ export function JobDetailPage() {
     setWordImportError(null);
     setWordImportResult(null);
     try {
-      const run = await createRun({
+      const wordPayload: Parameters<typeof createRun>[0] = {
         job_id: jobId,
         master_resume_id: selectedResumeId,
         evidence_bank_id: selectedBankId || null,
-      });
+      };
+      if (selectedEvidenceSourceIds.length > 0) {
+        wordPayload.evidence_source_ids = selectedEvidenceSourceIds;
+      }
+      const run = await createRun(wordPayload);
       setRuns((prev) => (prev ? [...prev, run] : [run]));
       const metadata = await createWordHandoff(run.id);
       const [prompt, instructions] = await Promise.all([
@@ -717,26 +753,71 @@ export function JobDetailPage() {
                 </select>
               </label>
             )}
-            {evidenceBanks.length === 0 ? (
+            {evidenceSources === null ? null : evidenceSources.length === 0 ? (
               <p className="workspace-step-help">
-                No evidence banks yet — optional, but useful for grounded
-                tailoring. <Link to="/settings">Add one in Settings.</Link>
+                No evidence sources yet — optional, but useful for grounded
+                tailoring. Add files under{" "}
+                <code>candidate_context/evidence_banks/</code>,{" "}
+                <code>candidate_context/project_notes/</code>, or{" "}
+                <code>candidate_context/resume_variants/</code>, or{" "}
+                <Link to="/settings">add an evidence bank in Settings.</Link>
               </p>
             ) : (
-              <label className="field">
-                <span>Evidence bank (optional)</span>
-                <select
-                  value={selectedBankId}
-                  onChange={(e) => setSelectedBankId(e.target.value)}
-                >
-                  <option value="">No evidence bank</option>
-                  {evidenceBanks.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <fieldset
+                className="field evidence-source-fieldset"
+                aria-label="Evidence sources"
+              >
+                <legend>Evidence sources (optional)</legend>
+                <ul className="evidence-source-list">
+                  {evidenceSources.map((src) => {
+                    const checked = selectedEvidenceSourceIds.includes(src.id);
+                    const formatBadge = (
+                      src.source_format ?? "md"
+                    ).toUpperCase();
+                    const typeLabel = src.source_type.replace(/_/g, " ");
+                    return (
+                      <li
+                        key={src.id}
+                        className="evidence-source-item"
+                      >
+                        <label className="evidence-source-label">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...selectedEvidenceSourceIds, src.id]
+                                : selectedEvidenceSourceIds.filter(
+                                    (id) => id !== src.id,
+                                  );
+                              setSelectedEvidenceSourceIds(next);
+                            }}
+                          />
+                          <span className="evidence-source-name">
+                            {src.name}
+                          </span>
+                          <span className="evidence-source-badges">
+                            <span className="evidence-source-badge evidence-source-badge-format">
+                              {formatBadge}
+                            </span>
+                            <span className="evidence-source-badge evidence-source-badge-type">
+                              {typeLabel}
+                            </span>
+                            <span className="evidence-source-badge evidence-source-badge-source">
+                              {src.source}
+                            </span>
+                            {src.is_demo ? (
+                              <span className="evidence-source-badge evidence-source-badge-demo">
+                                demo
+                              </span>
+                            ) : null}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </fieldset>
             )}
           </WorkspaceStep>
         </li>

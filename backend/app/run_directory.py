@@ -25,6 +25,9 @@ CANDIDATE_CONTEXT_FILES = (
     "resume_dos_and_donts.md",
 )
 
+EVIDENCE_SOURCES_DIRNAME = "evidence_sources"
+EVIDENCE_SOURCES_INDEX_FILENAME = "evidence_sources_index.md"
+
 EXPECTED_OUTPUTS = (
     "tailored_resume.docx",
     "tailored_resume.md",
@@ -85,6 +88,32 @@ class RunDirectoryInfo:
     run_dir: Path
     prompt_hash: str
     input_hash: str
+
+
+@dataclass(frozen=True)
+class EvidenceSourceInput:
+    """An evidence source the caller wants staged into ``input/evidence_sources/``.
+
+    The caller (router or seed script) resolves an id to one of these
+    records — either by loading an ``EvidenceBank`` row (``content`` is
+    the row's markdown, ``docx_path`` is None) or by resolving a
+    filesystem id (``content`` is the markdown projection; if the source
+    is a DOCX, ``docx_path`` points at the original file so it can be
+    copied verbatim alongside the markdown sibling).
+
+    ``id`` is whatever the caller supplied — DB primary key or
+    ``fs:<hash>`` — and is recorded in ``metadata.json`` and the staged
+    index so the run is fully reproducible.
+    """
+
+    id: str
+    name: str
+    source_type: str
+    source_format: str
+    source: str  # "database" or "filesystem"
+    source_path: Optional[str]
+    content: str
+    docx_path: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +212,7 @@ def create_run_directory(
     tailoring_method: str = DEFAULT_TAILORING_METHOD,
     llm_provider: Optional[str] = None,
     master_resume_docx_path: Optional[Path] = None,
+    evidence_sources: Optional[list[EvidenceSourceInput]] = None,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
 
@@ -245,6 +275,11 @@ def create_run_directory(
         content = _read_candidate_file(candidate_root, filename)
         _write_text(input_dir / filename, content)
 
+    staged_evidence = _stage_evidence_sources(
+        input_dir=input_dir,
+        evidence_sources=evidence_sources or [],
+    )
+
     # Verbatim copy of the runtime prompt so prompt_hash matches the source.
     shutil.copyfile(prompt_src, input_dir / "tailoring_prompt.md")
 
@@ -257,16 +292,19 @@ def create_run_directory(
     # --- hashes ---
     prompt_hash = _sha256_bytes((input_dir / "tailoring_prompt.md").read_bytes())
 
-    input_files = sorted(p for p in input_dir.iterdir() if p.is_file())
+    input_files = sorted(
+        p for p in input_dir.rglob("*") if p.is_file()
+    )
     hasher = hashlib.sha256()
     file_hashes: dict[str, str] = {}
     for path in input_files:
+        rel = path.relative_to(input_dir).as_posix()
         data = path.read_bytes()
-        hasher.update(path.name.encode("utf-8"))
+        hasher.update(rel.encode("utf-8"))
         hasher.update(b"\0")
         hasher.update(data)
         hasher.update(b"\0")
-        file_hashes[path.name] = _sha256_bytes(data)
+        file_hashes[rel] = _sha256_bytes(data)
     input_hash = hasher.hexdigest()
 
     # --- metadata ---
@@ -278,6 +316,20 @@ def create_run_directory(
         "job_id": job.id,
         "master_resume_id": master_resume.id,
         "evidence_bank_id": evidence_bank.id if evidence_bank is not None else None,
+        "evidence_source_ids": [s.id for s in staged_evidence],
+        "evidence_sources": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "source_type": s.source_type,
+                "source_format": s.source_format,
+                "source": s.source,
+                "source_path": s.source_path,
+                "staged_path": s.staged_relpath,
+                "staged_docx_path": s.staged_docx_relpath,
+            }
+            for s in staged_evidence
+        ],
         "capture_method": capture_method,
         "created_at": created_at,
         "updated_at": created_at,
@@ -297,6 +349,133 @@ def create_run_directory(
         prompt_hash=prompt_hash,
         input_hash=input_hash,
     )
+
+
+@dataclass(frozen=True)
+class _StagedEvidenceSource:
+    """One staged evidence source — the on-disk result of an input record.
+
+    ``staged_relpath`` is the markdown file's path relative to the run
+    directory (always present). ``staged_docx_relpath`` is the optional
+    DOCX sibling staged for evidence sources that started life as
+    ``.docx`` files; it is ``None`` for ``.md``/``.txt`` sources.
+    """
+
+    id: str
+    name: str
+    source_type: str
+    source_format: str
+    source: str
+    source_path: Optional[str]
+    staged_relpath: str
+    staged_docx_relpath: Optional[str]
+
+
+# Characters we strip out of an evidence source's display name when
+# building a deterministic on-disk filename. Anything outside this set
+# becomes ``_`` so the result is portable across filesystems.
+def _sanitize_basename(name: str) -> str:
+    cleaned: list[str] = []
+    for ch in name:
+        if ch.isalnum() or ch in ("-", "_"):
+            cleaned.append(ch.lower())
+        elif ch in (" ", ".", "/"):
+            cleaned.append("_")
+        # silently drop other punctuation
+    out = "".join(cleaned).strip("_") or "evidence_source"
+    # Collapse repeated underscores so we don't end up with "ml___resume".
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out
+
+
+def _stage_evidence_sources(
+    input_dir: Path,
+    evidence_sources: list[EvidenceSourceInput],
+) -> list[_StagedEvidenceSource]:
+    """Stage evidence sources into ``input/evidence_sources/`` and write the index.
+
+    Each source gets a deterministically-named markdown file
+    (``NNN_<slug>.md``). ``.docx`` sources are copied verbatim alongside
+    the markdown projection so Claude can choose to read either via the
+    Word MCP or the extracted text. An ``input/evidence_sources_index.md``
+    summary is written even when ``evidence_sources`` is empty — its
+    body lists "(none)" — so the worker prompt always has a stable file
+    to reference rather than 404'ing on an absent path.
+    """
+    index_path = input_dir / EVIDENCE_SOURCES_INDEX_FILENAME
+    if not evidence_sources:
+        _write_text(index_path, _render_evidence_sources_index([]))
+        return []
+
+    sources_dir = input_dir / EVIDENCE_SOURCES_DIRNAME
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    staged: list[_StagedEvidenceSource] = []
+    used_basenames: set[str] = set()
+    for idx, src in enumerate(evidence_sources, start=1):
+        slug = _sanitize_basename(Path(src.name).stem or src.id)
+        basename = f"{idx:03d}_{slug}"
+        # Defensive: if two sources share a slug after sanitization,
+        # append the id digest to keep filenames unique.
+        if basename in used_basenames:
+            basename = f"{basename}_{src.id.replace(':', '_')}"
+        used_basenames.add(basename)
+
+        md_filename = f"{basename}.md"
+        md_path = sources_dir / md_filename
+        _write_text(md_path, src.content)
+        staged_relpath = f"input/{EVIDENCE_SOURCES_DIRNAME}/{md_filename}"
+        staged_docx_relpath: Optional[str] = None
+
+        if src.docx_path is not None:
+            docx_src = Path(src.docx_path)
+            if not docx_src.is_file():
+                raise RunDirectoryError(
+                    f"evidence source docx not found: {docx_src}"
+                )
+            docx_filename = f"{basename}.docx"
+            shutil.copyfile(docx_src, sources_dir / docx_filename)
+            staged_docx_relpath = (
+                f"input/{EVIDENCE_SOURCES_DIRNAME}/{docx_filename}"
+            )
+
+        staged.append(
+            _StagedEvidenceSource(
+                id=src.id,
+                name=src.name,
+                source_type=src.source_type,
+                source_format=src.source_format,
+                source=src.source,
+                source_path=src.source_path,
+                staged_relpath=staged_relpath,
+                staged_docx_relpath=staged_docx_relpath,
+            )
+        )
+
+    _write_text(index_path, _render_evidence_sources_index(staged))
+    return staged
+
+
+def _render_evidence_sources_index(
+    staged: list[_StagedEvidenceSource],
+) -> str:
+    lines = ["# Evidence Sources", ""]
+    if not staged:
+        lines.append("(none provided)")
+        lines.append("")
+        return "\n".join(lines)
+    for idx, s in enumerate(staged, start=1):
+        lines.append(f"## {idx}. {s.name}")
+        lines.append(f"- Type: {s.source_type}")
+        lines.append(f"- Format: {s.source_format}")
+        lines.append(f"- Source: {s.source}")
+        if s.source_path:
+            lines.append(f"- Origin: {s.source_path}")
+        lines.append(f"- Staged path: {s.staged_relpath}")
+        if s.staged_docx_relpath:
+            lines.append(f"- Staged DOCX: {s.staged_docx_relpath}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _metadata_path(run_dir: Path) -> Path:

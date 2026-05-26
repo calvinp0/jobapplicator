@@ -227,6 +227,7 @@ def test_revision_feedback_followup_run_input_dir_contains_expected_files(
         "job_description.md",
         "master_resume.md",
         "evidence_bank.md",
+        "evidence_sources_index.md",
         "candidate_profile.md",
         "project_notes.md",
         "skills_inventory.md",

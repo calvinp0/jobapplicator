@@ -137,6 +137,44 @@ class EvidenceBankRead(_ORMModel):
     updated_at: datetime
 
 
+# ---- EvidenceSource ----
+
+# Supported ``source_type`` values surfaced to the API. The list is
+# intentionally short — adding a new type means adding a new subfolder to
+# ``evidence_source_discovery.SUBFOLDER_SOURCE_TYPES`` (and probably a UI
+# badge) rather than introducing a parallel storage shape.
+EVIDENCE_SOURCE_TYPES = (
+    "evidence_bank",
+    "resume_variant",
+    "master_resume",
+    "project_note",
+    "candidate_note",
+    "other",
+)
+
+
+class EvidenceSourceRead(BaseModel):
+    """Selector-shaped view of a tailoring run evidence source.
+
+    Combines database-backed ``EvidenceBank`` rows and filesystem
+    discoveries from ``candidate_context/`` under a single shape so the
+    frontend's multi-select picker can render both kinds with a uniform
+    badge set. ``source`` is ``"database"`` for DB rows and
+    ``"filesystem"`` for discoveries; ``source_path`` is only set for
+    filesystem entries. ``is_demo`` flags the seeded demo evidence bank
+    so the UI can push it below real files.
+    """
+
+    id: str
+    name: str
+    source_type: str
+    source_format: Optional[str] = None
+    source: str
+    source_path: Optional[str] = None
+    updated_at: datetime
+    is_demo: bool = False
+
+
 # ---- Application ----
 
 class ApplicationCreate(BaseModel):
@@ -241,7 +279,13 @@ class FileOpenRequest(BaseModel):
 class ClaudeRunCreate(BaseModel):
     job_id: str
     master_resume_id: str
+    # ``evidence_bank_id`` is the legacy single-source field — preserved
+    # so older clients (and the existing tests/demo seed) keep working.
+    # When ``evidence_source_ids`` is also supplied, it is merged in as
+    # a first entry; callers that send both are not ambiguous, they are
+    # additive. A future task may deprecate the singular form.
     evidence_bank_id: Optional[str] = None
+    evidence_source_ids: Optional[list[str]] = None
     # Optional provider override. When omitted the route falls back to the
     # application-wide default (currently stubbed to ``claude_code``;
     # task 066 wires it to a persisted setting). Unknown ids are rejected
@@ -265,6 +309,10 @@ class ClaudeRunRead(_ORMModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     error_message: Optional[str]
+    # Multi-source selections live in metadata.json (not on the DB
+    # row), so this is best-effort: the router populates it after the
+    # ClaudeRun is created; older runs without the field default to [].
+    evidence_source_ids: list[str] = []
 
 
 # ---- LLMProvider ----

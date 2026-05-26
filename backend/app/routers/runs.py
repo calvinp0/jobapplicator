@@ -14,6 +14,12 @@ from ..claude_worker import (
     read_recent_log_lines,
 )
 from ..db import get_db
+from ..evidence_source_discovery import (
+    EvidenceSourceDiscoveryError,
+    is_filesystem_id as is_filesystem_evidence_id,
+    load_filesystem_evidence_text,
+    resolve_filesystem_evidence_source,
+)
 from ..llm_providers import is_known_provider, list_providers
 from ..master_resume_discovery import (
     MasterResumeDiscoveryError,
@@ -23,6 +29,7 @@ from ..master_resume_discovery import (
 )
 from ..models import ClaudeRun, EvidenceBank, Job, JobCapture, MasterResume
 from ..run_directory import (
+    EvidenceSourceInput,
     RunDirectoryError,
     create_run_directory,
     default_candidate_context_root,
@@ -87,6 +94,77 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
         if evidence_bank is None:
             raise HTTPException(status_code=404, detail="evidence bank not found")
 
+    # Resolve every id in ``evidence_source_ids`` to a stageable record.
+    # The legacy ``evidence_bank_id`` is folded in as the leading entry
+    # when present so both fields can coexist without surprising the
+    # caller — see ``ClaudeRunCreate`` for the contract.
+    resolved_evidence_sources: list[EvidenceSourceInput] = []
+    requested_ids: list[str] = []
+    if evidence_bank is not None:
+        requested_ids.append(evidence_bank.id)
+    for sid in payload.evidence_source_ids or []:
+        if sid not in requested_ids:
+            requested_ids.append(sid)
+
+    seen_ids: set[str] = set()
+    for sid in requested_ids:
+        if sid in seen_ids:
+            continue
+        seen_ids.add(sid)
+        if is_filesystem_evidence_id(sid):
+            fs_record = resolve_filesystem_evidence_source(sid)
+            if fs_record is None:
+                raise HTTPException(
+                    status_code=404, detail=f"evidence source not found: {sid}"
+                )
+            try:
+                content = load_filesystem_evidence_text(fs_record)
+            except EvidenceSourceDiscoveryError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"failed to load evidence source {sid}: {exc}",
+                ) from exc
+            resolved_evidence_sources.append(
+                EvidenceSourceInput(
+                    id=fs_record.id,
+                    name=fs_record.name,
+                    source_type=fs_record.source_type,
+                    source_format=fs_record.source_format,
+                    source="filesystem",
+                    source_path=fs_record.source_path,
+                    content=content,
+                    docx_path=(
+                        fs_record.absolute_path
+                        if fs_record.source_format == "docx"
+                        else None
+                    ),
+                )
+            )
+        else:
+            db_bank = (
+                evidence_bank
+                if evidence_bank is not None and evidence_bank.id == sid
+                else db.get(EvidenceBank, sid)
+            )
+            if db_bank is None:
+                raise HTTPException(
+                    status_code=404, detail=f"evidence source not found: {sid}"
+                )
+            resolved_evidence_sources.append(
+                EvidenceSourceInput(
+                    id=db_bank.id,
+                    name=db_bank.name,
+                    source_type="evidence_bank",
+                    source_format="md",
+                    source="database",
+                    source_path=db_bank.source_path,
+                    content=db_bank.content_markdown,
+                    docx_path=None,
+                )
+            )
+
     job_capture: JobCapture | None = None
     if job.created_from_capture_id:
         job_capture = db.get(JobCapture, job.created_from_capture_id)
@@ -115,6 +193,7 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
             job_capture=job_capture,
             llm_provider=provider_id,
             master_resume_docx_path=master_resume_docx_path,
+            evidence_sources=resolved_evidence_sources,
         )
     except RunDirectoryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -133,6 +212,11 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
     db.add(run)
     db.commit()
     db.refresh(run)
+    # Attach the resolved evidence source ids as a transient attribute
+    # so the response schema can echo what was staged. The list lives in
+    # the run's ``metadata.json`` (the source of truth); the DB row keeps
+    # only the legacy single ``evidence_bank_id`` to avoid a migration.
+    run.evidence_source_ids = [s.id for s in resolved_evidence_sources]
     return run
 
 

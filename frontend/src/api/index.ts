@@ -9,6 +9,8 @@ import type {
   EmailLinkCreatePayload,
   EvidenceBank,
   EvidenceBankCreate,
+  EvidenceSource,
+  EvidenceSourceType,
   GmailAuthUrlResponse,
   GmailCandidateEmail,
   GmailClassificationResponse,
@@ -46,6 +48,8 @@ export type {
   EmailLinkCreatePayload,
   EvidenceBank,
   EvidenceBankCreate,
+  EvidenceSource,
+  EvidenceSourceType,
   GmailAuthUrlResponse,
   GmailCandidateEmail,
   GmailClassificationResponse,
@@ -116,10 +120,15 @@ export function createEvidenceBank(
   return apiRequest("/evidence-banks", { method: "POST", body: payload });
 }
 
+export function listEvidenceSources(): Promise<EvidenceSource[]> {
+  return apiRequest("/evidence-sources");
+}
+
 export interface CreateRunPayload {
   job_id: string;
   master_resume_id: string;
   evidence_bank_id?: string | null;
+  evidence_source_ids?: string[];
   llm_provider?: string;
 }
 
