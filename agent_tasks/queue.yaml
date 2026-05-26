@@ -1923,7 +1923,7 @@ tasks:
     file: "agent_tasks/095-redesign-applications-page-as-table.md"
     branch: "agent/095-redesign-applications-page-as-table"
     worktree: "agent-095-redesign-applications-page-as-table"
-    status: "ready"
+    status: "done"
     depends_on:
       - "087-move-gmail-auth-to-settings-and-improve-config-errors"
     verification:
