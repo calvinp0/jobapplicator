@@ -1831,4 +1831,27 @@ tasks:
       - "scripts/seed_demo_data.py"
       - "agent_tasks/090-support-multiple-evidence-sources.md"
       - "agent_tasks/queue.yaml"
-
+  - id: "091-fix-revision-context-provenance"
+    title: "Fix revision context provenance"
+    file: "agent_tasks/091-fix-revision-context-provenance.md"
+    branch: "agent/091-fix-revision-context-provenance"
+    worktree: "agent-091-fix-revision-context-provenance"
+    status: "ready"
+    depends_on:
+      - "090-support-multiple-evidence-sources"
+    verification:
+      - "pytest backend/tests/test_revision_feedback_model.py"
+      - "pytest backend/tests/test_revision_feedback_api.py"
+      - "pytest backend/tests/test_run_import.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "runtime_prompts/resume_revision.md"
+      - "runtime_prompts/resume_tailoring.md"
+      - "docs/contracts/**"
+      - "agent_tasks/091-fix-revision-context-provenance.md"
+      - "agent_tasks/queue.yaml"
