@@ -2090,7 +2090,7 @@ tasks:
     file: "agent_tasks/104-ignore-agentctl-generated-artifacts.md"
     branch: "agent/104-ignore-agentctl-generated-artifacts"
     worktree: "agent-104-ignore-agentctl-generated-artifacts"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "bash -n scripts/agentctl.sh"
