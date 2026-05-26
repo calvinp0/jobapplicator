@@ -20,6 +20,7 @@ import type {
   MasterResume,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
+import { PageHeader, SettingsGroup } from "../components/ui";
 
 const DEFAULT_REDIRECT_URI = "http://localhost:8000/gmail/oauth/callback";
 const DEFAULT_TOKEN_PATH = "candidate_context/gmail/token.json";
@@ -689,42 +690,60 @@ export function SettingsPage() {
 
   return (
     <section className="settings-page">
-      <h2>Settings</h2>
+      <PageHeader
+        title="Settings"
+        description="Manage your candidate context, model providers, and integrations."
+      />
       {loadError ? (
         <p role="alert" className="error">
           {loadError}
         </p>
       ) : null}
 
-      <SeedCard<MasterResume>
-        title="Master resumes"
-        items={resumes}
-        emptyLabel="No master resumes yet — add one to enable tailoring."
-        addButtonLabel="Add master resume"
-        onCreate={createMasterResume}
-        onCreated={(item) =>
-          setResumes((prev) => (prev === null ? [item] : [item, ...prev]))
-        }
-        contentLabel="Content (markdown)"
-      />
+      <SettingsGroup
+        label="Candidate context"
+        description="Master resumes and evidence banks used as inputs to tailoring runs."
+      >
+        <SeedCard<MasterResume>
+          title="Master resumes"
+          items={resumes}
+          emptyLabel="No master resumes yet — add one to enable tailoring."
+          addButtonLabel="Add master resume"
+          onCreate={createMasterResume}
+          onCreated={(item) =>
+            setResumes((prev) => (prev === null ? [item] : [item, ...prev]))
+          }
+          contentLabel="Content (markdown)"
+        />
 
-      <SeedCard<EvidenceBank>
-        title="Evidence banks"
-        items={evidenceBanks}
-        emptyLabel="No evidence banks yet — optional, but useful for grounded tailoring."
-        addButtonLabel="Add evidence bank"
-        onCreate={createEvidenceBank}
-        onCreated={(item) =>
-          setEvidenceBanks((prev) =>
-            prev === null ? [item] : [item, ...prev],
-          )
-        }
-        contentLabel="Content (markdown)"
-      />
+        <SeedCard<EvidenceBank>
+          title="Evidence banks"
+          items={evidenceBanks}
+          emptyLabel="No evidence banks yet — optional, but useful for grounded tailoring."
+          addButtonLabel="Add evidence bank"
+          onCreate={createEvidenceBank}
+          onCreated={(item) =>
+            setEvidenceBanks((prev) =>
+              prev === null ? [item] : [item, ...prev],
+            )
+          }
+          contentLabel="Content (markdown)"
+        />
+      </SettingsGroup>
 
-      <LlmProviderCard />
+      <SettingsGroup
+        label="Claude / LLM providers"
+        description="Pick which CLI-based provider drives the automatic tailoring flow."
+      >
+        <LlmProviderCard />
+      </SettingsGroup>
 
-      <GmailIntegrationCard />
+      <SettingsGroup
+        label="Gmail integration"
+        description="Read-only Gmail access for application tracking."
+      >
+        <GmailIntegrationCard />
+      </SettingsGroup>
     </section>
   );
 }
