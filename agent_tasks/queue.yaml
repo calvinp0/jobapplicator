@@ -2072,7 +2072,7 @@ tasks:
     file: "agent_tasks/103-redesign-frontend-design-system-and-app-shell.md"
     branch: "agent/103-redesign-frontend-design-system-and-app-shell"
     worktree: "agent-103-redesign-frontend-design-system-and-app-shell"
-    status: "ready"
+    status: "done"
     depends_on:
       - "095-redesign-applications-page-as-table"
     verification:
