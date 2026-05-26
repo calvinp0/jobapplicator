@@ -1959,7 +1959,7 @@ tasks:
     file: "agent_tasks/097-add-firefox-extension-support.md"
     branch: "agent/097-add-firefox-extension-support"
     worktree: "agent-097-add-firefox-extension-support"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "pytest"
