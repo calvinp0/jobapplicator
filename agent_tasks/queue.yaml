@@ -1982,7 +1982,7 @@ tasks:
     file: "agent_tasks/098-add-prompt-harness-editor-ui.md"
     branch: "agent/098-add-prompt-harness-editor-ui"
     worktree: "agent-098-add-prompt-harness-editor-ui"
-    status: "ready"
+    status: "done"
     depends_on:
       - "092-add-ats-optimization-harness"
     verification:
