@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>JobApplicator extension options</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        max-width: 540px;
+        margin: 24px auto;
+        padding: 0 16px;
+        font-size: 14px;
+        color: #1f2328;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px 0;
+      }
+      p {
+        margin: 0 0 12px 0;
+        color: #57606a;
+      }
+      label {
+        display: block;
+        margin-top: 16px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #57606a;
+      }
+      input[type="url"],
+      input[type="text"] {
+        width: 100%;
+        padding: 6px 8px;
+        font: inherit;
+        border: 1px solid #d0d7de;
+        border-radius: 4px;
+        box-sizing: border-box;
+        margin-top: 4px;
+      }
+      .actions {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      button {
+        font: inherit;
+        padding: 6px 14px;
+        cursor: pointer;
+        border: 1px solid #d0d7de;
+        background: #f6f8fa;
+        border-radius: 4px;
+      }
+      button.primary {
+        background: #0969da;
+        color: white;
+        border-color: #0969da;
+      }
+      .status {
+        margin-top: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+      .status.ok {
+        background: #dafbe1;
+        color: #1a7f37;
+      }
+      .status.err {
+        background: #ffebe9;
+        color: #cf222e;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>JobApplicator extension options</h1>
+    <p>
+      Configure the local backend the extension talks to. The default is the
+      backend started by <code>scripts/dev.sh</code>.
+    </p>
+    <label for="backend-url">Backend API base URL</label>
+    <input type="url" id="backend-url" placeholder="http://localhost:8000" />
+    <div class="actions">
+      <button id="save-btn" class="primary">Save</button>
+      <button id="reset-btn">Reset to default</button>
+      <button id="test-btn">Test connection</button>
+    </div>
+    <div id="status" class="status" hidden></div>
+    <script src="options.js"></script>
+  </body>
+</html>

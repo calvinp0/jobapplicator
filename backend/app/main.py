@@ -246,6 +246,14 @@ def create_app() -> FastAPI:
             "http://localhost:5173",
             "http://127.0.0.1:5173",
         ],
+        # Browser extensions issue requests from their own scheme-specific
+        # origin (``moz-extension://<uuid>`` in Firefox,
+        # ``chrome-extension://<id>`` in Chrome). Allow those so the
+        # current-page capture extension can talk to the local backend
+        # without per-installation configuration. The regex is intentionally
+        # narrow: it only matches the two extension schemes, not arbitrary
+        # web origins.
+        allow_origin_regex=r"^(moz|chrome)-extension://[A-Za-z0-9_\-{}.]+$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
