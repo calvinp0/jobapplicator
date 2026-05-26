@@ -495,7 +495,13 @@ def test_search_updates_email_status_to_no_match(gmail_app, monkeypatch):
     assert reloaded["last_gmail_check_at"] is not None
 
 
-def test_search_updates_email_status_to_email_received(gmail_app, monkeypatch):
+def test_search_updates_email_status_to_needs_review_for_possible_match(
+    gmail_app, monkeypatch
+):
+    """A message that only matches the company (plus the sender domain) but
+    not the job title sits between the possible and strong thresholds, so
+    the application should land in ``needs_review`` rather than
+    ``email_received``."""
     client, gmail_client = gmail_app
     gmail_client.save_token(
         {
@@ -513,6 +519,51 @@ def test_search_updates_email_status_to_email_received(gmail_app, monkeypatch):
                 "from": "noreply@exampleaerolabs.com",
                 "date": "Mon, 25 May 2026 12:00:00 +0000",
                 "snippet": "Hello",
+            }
+        ]
+
+    monkeypatch.setattr(gmail_client, "search_messages", fake_search)
+
+    app_obj = _make_application(client)
+    pre_status = app_obj["status"]
+
+    client.post(
+        f"/applications/{app_obj['id']}/gmail/search",
+        json={"max_results": 5},
+    )
+    reloaded = client.get(f"/applications/{app_obj['id']}").json()
+    assert reloaded["email_status"] == "needs_review"
+    # Main status untouched — classification is a separate task.
+    assert reloaded["status"] == pre_status
+
+
+def test_search_updates_email_status_to_email_received(gmail_app, monkeypatch):
+    """A message with strong evidence (company + job title + company sender
+    domain) should clear the strong-match threshold and flip
+    ``email_status`` to ``email_received``."""
+    client, gmail_client = gmail_app
+    gmail_client.save_token(
+        {
+            "token": "fake",
+            "scopes": [gmail_client.GMAIL_READONLY_SCOPE],
+        }
+    )
+
+    def fake_search(query: str, max_results: int):
+        return [
+            {
+                "id": "m1",
+                "thread_id": "t1",
+                "subject": (
+                    "Scientific Machine Learning Engineer application "
+                    "received - Example Aero Labs"
+                ),
+                "from": "recruiting@exampleaerolabs.com",
+                "date": "Mon, 25 May 2026 12:00:00 +0000",
+                "snippet": (
+                    "Thank you for applying to the Scientific Machine "
+                    "Learning Engineer role at Example Aero Labs."
+                ),
             }
         ]
 
