@@ -480,14 +480,20 @@ export function ApplicationsPage() {
                           </span>
                         </td>
                         <td data-label="Submission">
-                          <span className="applications-cell-text">
-                            Submission: {submissionCell}
+                          <span
+                            className="applications-cell-text"
+                            data-testid={`submission-${app.id}`}
+                          >
+                            {submissionCell}
                           </span>
                         </td>
                         <td data-label="Email">
                           <div className="applications-cell-email">
-                            <span className="applications-cell-text">
-                              Email: {emailStatusLabel(app.email_status)}
+                            <span
+                              className="applications-cell-text"
+                              data-testid={`email-status-${app.id}`}
+                            >
+                              {emailStatusLabel(app.email_status)}
                             </span>
                             {emailSummary ? (
                               <span className="applications-cell-email-summary">
@@ -508,8 +514,11 @@ export function ApplicationsPage() {
                           </span>
                         </td>
                         <td data-label="Updated">
-                          <span className="applications-cell-text">
-                            Updated: {updatedCell}
+                          <span
+                            className="applications-cell-text"
+                            data-testid={`updated-${app.id}`}
+                          >
+                            {updatedCell}
                           </span>
                         </td>
                         <td data-label="Next action">
@@ -517,7 +526,7 @@ export function ApplicationsPage() {
                             className="applications-cell-next-action"
                             data-testid={`next-action-${app.id}`}
                           >
-                            Next: {app.next_action}
+                            {app.next_action}
                           </span>
                         </td>
                         <td

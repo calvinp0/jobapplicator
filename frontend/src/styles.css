@@ -227,6 +227,10 @@ p {
   margin: 0 auto;
 }
 
+.content-inner-wide {
+  max-width: 1400px;
+}
+
 /* ----- Page header ----- */
 
 .page-header {
@@ -1793,7 +1797,7 @@ button[type="submit"]:disabled,
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted-fg);
-  padding: 10px 14px;
+  padding: 10px 10px;
   white-space: nowrap;
 }
 
@@ -1811,7 +1815,7 @@ button[type="submit"]:disabled,
 }
 
 .applications-table td {
-  padding: 12px 14px;
+  padding: 8px 10px;
   vertical-align: top;
   color: var(--content-fg);
 }

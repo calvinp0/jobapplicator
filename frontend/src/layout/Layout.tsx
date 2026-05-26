@@ -91,7 +91,13 @@ export function Layout() {
         </nav>
       </aside>
       <main className="content">
-        <div className="content-inner">
+        <div
+          className={
+            location.pathname === "/applications"
+              ? "content-inner content-inner-wide"
+              : "content-inner"
+          }
+        >
           <Outlet />
         </div>
       </main>

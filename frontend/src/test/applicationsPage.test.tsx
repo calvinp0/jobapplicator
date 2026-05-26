@@ -499,31 +499,33 @@ describe("ApplicationsPage", () => {
 
     const draftRow = rowFor("Senior Engineer");
     expect(
-      within(draftRow).getByText(/Submission: Not submitted/),
-    ).toBeInTheDocument();
+      within(draftRow).getByTestId("submission-app-draft"),
+    ).toHaveTextContent(/^Not submitted$/);
     expect(
-      within(draftRow).getByText(/Email: Not watching yet/),
-    ).toBeInTheDocument();
+      within(draftRow).getByTestId("email-status-app-draft"),
+    ).toHaveTextContent(/^Not watching yet$/);
     expect(
-      within(draftRow).getByText(/Next: Ready to submit/),
-    ).toBeInTheDocument();
+      within(draftRow).getByTestId("next-action-app-draft"),
+    ).toHaveTextContent(/^Ready to submit$/);
 
     const sentRow = rowFor("Platform Lead");
     expect(
-      within(sentRow).getByText(/Submission: Submitted/),
-    ).toBeInTheDocument();
+      within(sentRow).getByTestId("submission-app-sent"),
+    ).toHaveTextContent(/^Submitted/);
     expect(
-      within(sentRow).getByText(/Email: Waiting for email/),
-    ).toBeInTheDocument();
+      within(sentRow).getByTestId("email-status-app-sent"),
+    ).toHaveTextContent(/^Waiting for email$/);
     expect(
-      within(sentRow).getByText(/Next: Waiting for email/),
-    ).toBeInTheDocument();
+      within(sentRow).getByTestId("next-action-app-sent"),
+    ).toHaveTextContent(/^Waiting for email$/);
 
     const rejRow = rowFor("Frontend Eng");
     expect(
-      within(rejRow).getByText(/Email: Rejection detected/),
-    ).toBeInTheDocument();
-    expect(within(rejRow).getByText(/Next: Rejected/)).toBeInTheDocument();
+      within(rejRow).getByTestId("email-status-app-rejected"),
+    ).toHaveTextContent(/^Rejection detected$/);
+    expect(
+      within(rejRow).getByTestId("next-action-app-rejected"),
+    ).toHaveTextContent(/^Rejected$/);
   });
 
   it("renders an updated-time cell for each application row", async () => {
@@ -533,8 +535,9 @@ describe("ApplicationsPage", () => {
         screen.getByRole("heading", { level: 2, name: /applications/i }),
       ).toBeInTheDocument(),
     );
-    const updatedLines = screen.getAllByText(/^Updated: /);
-    expect(updatedLines.length).toBe(applications.length);
+    for (const app of applications) {
+      expect(screen.getByTestId(`updated-${app.id}`)).toBeInTheDocument();
+    }
   });
 
   it("invokes markApplicationRejected when 'Mark rejected' is clicked", async () => {
