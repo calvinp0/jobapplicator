@@ -7,7 +7,23 @@
 
 export const browserApi = globalThis.browser ?? globalThis.chrome;
 
-// `chrome.tabs.sendMessage` and `chrome.scripting.executeScript` return
-// Promises in MV3 (Chrome 99+) and in Firefox via `browser.*`. We only
-// rely on these APIs from popup contexts, where the Promise form is
-// universally available.
+// Inject a content script into the active tab.
+//
+// Chrome (MV3) exposes `scripting.executeScript({ target, files })`.
+// Firefox is shipped as an MV2 temporary add-on (see
+// `extension/manifest.firefox.json`) and only exposes the older
+// `tabs.executeScript(tabId, { file })`. Feature-detect the MV3 API and
+// fall back to the MV2 form, so popup.js can call a single helper without
+// branching on host browser.
+export async function injectContentScript(tabId, file) {
+  if (
+    browserApi.scripting &&
+    typeof browserApi.scripting.executeScript === "function"
+  ) {
+    return browserApi.scripting.executeScript({
+      target: { tabId },
+      files: [file],
+    });
+  }
+  return browserApi.tabs.executeScript(tabId, { file });
+}
