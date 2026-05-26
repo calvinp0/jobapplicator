@@ -2054,7 +2054,7 @@ tasks:
     file: "agent_tasks/102-fix-firefox-extension-manifest.md"
     branch: "agent/102-fix-firefox-extension-manifest"
     worktree: "agent-102-fix-firefox-extension-manifest"
-    status: "ready"
+    status: "done"
     depends_on:
       - "097-add-firefox-extension-support"
     verification:
