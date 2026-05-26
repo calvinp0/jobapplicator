@@ -1794,7 +1794,7 @@ tasks:
     file: "agent_tasks/089-fix-gmail-oauth-pkce-callback.md"
     branch: "agent/089-fix-gmail-oauth-pkce-callback"
     worktree: "agent-089-fix-gmail-oauth-pkce-callback"
-    status: "ready"
+    status: "done"
     depends_on:
       - "088-store-gmail-oauth-config-in-settings"
     verification:
