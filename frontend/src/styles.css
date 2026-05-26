@@ -1957,3 +1957,104 @@ button[type="submit"]:disabled,
     justify-content: flex-start;
   }
 }
+
+
+/* Prompt harness editor (task 098) */
+.prompts-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.prompts-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  padding: var(--space-2);
+  background: var(--surface);
+}
+
+.prompts-list-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.prompts-list-button strong {
+  font-weight: 600;
+}
+
+.settings-list-item-active {
+  background: var(--accent-subtle, rgba(0, 0, 0, 0.05));
+  border-radius: var(--radius-2);
+}
+
+.prompts-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.prompts-detail-header h3 {
+  margin: 0 0 var(--space-1) 0;
+}
+
+.prompts-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.prompts-tab {
+  background: transparent;
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  color: var(--muted-fg);
+  border-bottom: 2px solid transparent;
+}
+
+.prompts-tab-active {
+  color: var(--fg);
+  border-bottom-color: var(--accent, currentColor);
+  font-weight: 600;
+}
+
+.prompt-textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: var(--surface);
+  color: var(--fg);
+  resize: vertical;
+  min-height: 320px;
+}
+
+.prompts-warning {
+  background: var(--surface-warning, rgba(255, 200, 0, 0.1));
+  border-left: 3px solid var(--accent-warning, #c08400);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-2);
+}
+
+.prompts-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 760px) {
+  .prompts-layout {
+    grid-template-columns: 1fr;
+  }
+}
+

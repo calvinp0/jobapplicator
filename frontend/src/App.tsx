@@ -10,6 +10,7 @@ import { RunDetailPage } from "./pages/RunDetailPage";
 import { ResumeVersionDetailPage } from "./pages/ResumeVersionDetailPage";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { ApplicationDetailPage } from "./pages/ApplicationDetailPage";
+import { PromptsPage } from "./pages/PromptsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
@@ -33,6 +34,7 @@ export function App() {
           element={<ApplicationDetailPage />}
         />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/prompts" element={<PromptsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

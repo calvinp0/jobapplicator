@@ -33,12 +33,20 @@ def _prime_fs(tmp_path: Path, monkeypatch) -> Path:
     (prompts_root / "resume_tailoring.md").write_text(
         "# Prompt\nRead inputs and write outputs.\n", encoding="utf-8"
     )
+    # Revision runs read this prompt via the prompt_harness module when
+    # the caller supplies revision_feedback.
+    (prompts_root / "resume_revision.md").write_text(
+        "# Revision Prompt\nApply user feedback to the current tailored draft.\n",
+        encoding="utf-8",
+    )
     runs_root = tmp_path / "runs"
     runs_root.mkdir()
+    overrides_root = tmp_path / "prompt_overrides"
 
     monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
     monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
     monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
+    monkeypatch.setenv("JOBAPPLY_PROMPT_OVERRIDES_ROOT", str(overrides_root))
     return runs_root
 
 
@@ -235,6 +243,10 @@ def test_revision_feedback_followup_run_input_dir_contains_expected_files(
         "tailoring_preferences.md",
         "resume_dos_and_donts.md",
         "tailoring_prompt.md",
+        # Task 098: every run stages a verbatim snapshot of the
+        # effective runtime prompt so the run is reproducible even if
+        # the prompt body later changes.
+        "prompt_snapshot.md",
         "revision_feedback.md",
         # Task 091: revision runs also stage the prior tailored draft so
         # the worker can revise it rather than regenerate from scratch.
@@ -339,6 +351,9 @@ def test_revision_feedback_stages_filesystem_master_resume_docx(
     (prompts_root / "resume_tailoring.md").write_text(
         "# Prompt\n", encoding="utf-8"
     )
+    (prompts_root / "resume_revision.md").write_text(
+        "# Revision Prompt\n", encoding="utf-8"
+    )
     runs_root = tmp_path / "runs"
     runs_root.mkdir()
     master_resumes_root = candidate_root / "master_resumes"
@@ -346,10 +361,12 @@ def test_revision_feedback_stages_filesystem_master_resume_docx(
     docx_src = master_resumes_root / "calvin.docx"
     _make_docx_file(docx_src, body="FS_DOCX_RESUME_SENTINEL")
 
+    overrides_root = tmp_path / "prompt_overrides"
     monkeypatch.setenv("JOBAPPLY_CANDIDATE_CONTEXT_ROOT", str(candidate_root))
     monkeypatch.setenv("JOBAPPLY_RUNTIME_PROMPTS_ROOT", str(prompts_root))
     monkeypatch.setenv("JOBAPPLY_RUNS_ROOT", str(runs_root))
     monkeypatch.setenv("JOBAPPLY_MASTER_RESUMES_ROOT", str(master_resumes_root))
+    monkeypatch.setenv("JOBAPPLY_PROMPT_OVERRIDES_ROOT", str(overrides_root))
 
     job = client.post(
         "/jobs",

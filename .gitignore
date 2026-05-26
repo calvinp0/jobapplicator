@@ -291,3 +291,10 @@ candidate_context/gmail/*.json
 # future change writes a settings file under candidate_context/settings/.
 candidate_context/settings/gmail_oauth.json
 candidate_context/settings/*.secret.json
+
+# Local prompt overrides (task 098). The prompt harness editor UI
+# writes user-edited prompt bodies under
+# candidate_context/settings/prompt_overrides/. They override the
+# shipped defaults under runtime_prompts/ and are local-machine
+# settings, not tracked configuration.
+candidate_context/settings/prompt_overrides/

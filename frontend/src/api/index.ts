@@ -34,6 +34,9 @@ import type {
   LlmProviderSetting,
   MasterResume,
   MasterResumeCreate,
+  PromptHarnessDetail,
+  PromptHarnessSummary,
+  PromptValidationResult,
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
@@ -80,6 +83,9 @@ export type {
   LlmProviderSetting,
   MasterResume,
   MasterResumeCreate,
+  PromptHarnessDetail,
+  PromptHarnessSummary,
+  PromptValidationResult,
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
@@ -237,6 +243,36 @@ export function importWordResult(
 
 export function listLlmProviders(): Promise<LlmProvider[]> {
   return apiRequest("/llm-providers");
+}
+
+export function listPromptHarnesses(): Promise<PromptHarnessSummary[]> {
+  return apiRequest("/prompts");
+}
+
+export function getPromptHarness(promptId: string): Promise<PromptHarnessDetail> {
+  return apiRequest(`/prompts/${promptId}`);
+}
+
+export function savePromptOverride(
+  promptId: string,
+  content: string,
+): Promise<PromptHarnessDetail> {
+  return apiRequest(`/prompts/${promptId}/override`, {
+    method: "PUT",
+    body: { content },
+  });
+}
+
+export function deletePromptOverride(
+  promptId: string,
+): Promise<PromptHarnessDetail> {
+  return apiRequest(`/prompts/${promptId}/override`, { method: "DELETE" });
+}
+
+export function validatePromptHarness(
+  promptId: string,
+): Promise<PromptValidationResult> {
+  return apiRequest(`/prompts/${promptId}/validate`, { method: "POST" });
 }
 
 export function getLlmProviderSetting(): Promise<LlmProviderSetting> {

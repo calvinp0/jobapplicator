@@ -17,6 +17,7 @@ const PRIMARY_NAV: NavItem[] = [
 const ADVANCED_NAV: NavItem[] = [
   { to: "/captures", label: "Captures" },
   { to: "/runs", label: "Runs" },
+  { to: "/prompts", label: "Prompt harnesses" },
 ];
 
 export function Layout() {
