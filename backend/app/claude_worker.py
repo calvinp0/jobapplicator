@@ -250,6 +250,18 @@ def _extract_master_resume_docx(
 
     relpath = f"{INPUT_DIRNAME}/{result.docx_path.name}"
     _append_progress(log_path, f"found source resume DOCX={relpath}")
+    # When a master DOCX is present, the tailoring contract treats it as
+    # both the evidence source (via the extracted markdown projection) and
+    # the formatting/style template for output/tailored_resume.docx. Log
+    # the style-preservation contract so the operator can see in the run
+    # log that Claude was asked to keep the master's visual styling
+    # (colored headings, fonts, spacing, bullet indentation, etc.).
+    _append_progress(
+        log_path, "source DOCX style preservation requested"
+    )
+    _append_progress(
+        log_path, "master resume DOCX staged as formatting source"
+    )
     if result.extracted:
         _append_progress(
             log_path,

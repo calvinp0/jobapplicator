@@ -114,8 +114,20 @@ in `output/ats_audit.md` exactly as the first-draft prompt requires.
 
 When a `.docx` current draft is present, prefer editing it in-place via
 the Office Word MCP server (`word-document-server`) or the DOCX/Word
-document skill. Preserve formatting and layout from the current draft
-unless the feedback explicitly asks for layout changes.
+document skill. Preserve existing DOCX styling from both the current
+tailored draft and the original master resume, including:
+
+- section heading colors (e.g. blue headers stay blue)
+- font families and sizes
+- margins and paragraph spacing
+- bullet indentation and list styles
+- bold/italic emphasis patterns
+- simple horizontal rules or separators
+
+Do not restyle the resume unless the user explicitly asks. Apply the
+requested content changes while preserving existing DOCX styling. Do
+not rebuild the document from scratch when a usable current draft is
+present.
 
 If DOCX/MCP editing fails, write the markdown output and document the
 DOCX failure in `output/claim_audit.md` so the operator can recover.
