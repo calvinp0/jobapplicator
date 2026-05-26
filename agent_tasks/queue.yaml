@@ -2128,7 +2128,7 @@ tasks:
     file: "agent_tasks/106-apply-bold-frontend-visual-redesign.md"
     branch: "agent/106-apply-bold-frontend-visual-redesign"
     worktree: "agent-106-apply-bold-frontend-visual-redesign"
-    status: "ready"
+    status: "done"
     depends_on:
       - "103-redesign-frontend-design-system-and-app-shell"
     verification:
