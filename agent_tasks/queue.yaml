@@ -2013,3 +2013,75 @@ tasks:
       - "docs/contracts/agent_orchestration.md"
       - "agent_tasks/099-fix-agentctl-verification-failure-repair.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "100-frontend-applications-table-full-width"
+    title: "Let Applications table use full content width and drop redundant cell prefixes"
+    file: "agent_tasks/100-frontend-applications-table-full-width.md"
+    branch: "agent/100-frontend-applications-table-full-width"
+    worktree: "agent-100-frontend-applications-table-full-width"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ApplicationsPage.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/layout/Layout.tsx"
+      - "frontend/src/test/applicationsPage.test.tsx"
+      - "agent_tasks/100-frontend-applications-table-full-width.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "101-frontend-applications-table-column-consolidation"
+    title: "Consolidate Applications table to five columns"
+    file: "agent_tasks/101-frontend-applications-table-column-consolidation.md"
+    branch: "agent/101-frontend-applications-table-column-consolidation"
+    worktree: "agent-101-frontend-applications-table-column-consolidation"
+    status: "planned"
+    depends_on:
+      - "100-frontend-applications-table-full-width"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/ApplicationsPage.tsx"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/applicationsPage.test.tsx"
+      - "agent_tasks/101-frontend-applications-table-column-consolidation.md"
+      - "agent_tasks/queue.yaml"
+  - id: "102-fix-firefox-extension-manifest"
+    title: "Fix Firefox extension manifest compatibility"
+    file: "agent_tasks/102-fix-firefox-extension-manifest.md"
+    branch: "agent/102-fix-firefox-extension-manifest"
+    worktree: "agent-102-fix-firefox-extension-manifest"
+    status: "ready"
+    depends_on:
+      - "097-add-firefox-extension-support"
+    verification:
+      - "python -m json.tool extensions/firefox/manifest.json"
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "extensions/**"
+      - "docs/browser_extension.md"
+      - "README_INSTALL.md"
+      - "agent_tasks/102-fix-firefox-extension-manifest.md"
+      - "agent_tasks/queue.yaml"
+  - id: "103-redesign-frontend-design-system-and-app-shell"
+    title: "Redesign frontend design system and app shell"
+    file: "agent_tasks/103-redesign-frontend-design-system-and-app-shell.md"
+    branch: "agent/103-redesign-frontend-design-system-and-app-shell"
+    worktree: "agent-103-redesign-frontend-design-system-and-app-shell"
+    status: "ready"
+    depends_on:
+      - "095-redesign-applications-page-as-table"
+    verification:
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/**"
+      - "backend/app/schemas.py"
+      - "backend/app/routers/**"
+      - "backend/tests/**"
+      - "docs/**"
+      - "agent_tasks/103-redesign-frontend-design-system-and-app-shell.md"
+      - "agent_tasks/queue.yaml"
