@@ -1855,3 +1855,27 @@ tasks:
       - "docs/contracts/**"
       - "agent_tasks/091-fix-revision-context-provenance.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "092-add-ats-optimization-harness"
+    title: "Add ATS optimization harness to resume tailoring"
+    file: "agent_tasks/092-add-ats-optimization-harness.md"
+    branch: "agent/092-add-ats-optimization-harness"
+    worktree: "agent-092-add-ats-optimization-harness"
+    status: "ready"
+    depends_on:
+      - "091-fix-revision-context-provenance"
+    verification:
+      - "pytest backend/tests/test_claude_worker.py"
+      - "pytest backend/tests/test_revision_feedback_api.py"
+      - "pytest backend/tests/test_run_directory.py"
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "runtime_prompts/resume_tailoring.md"
+      - "runtime_prompts/resume_revision.md"
+      - "docs/contracts/**"
+      - "agent_tasks/092-add-ats-optimization-harness.md"
+      - "agent_tasks/queue.yaml"
