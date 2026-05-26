@@ -2004,7 +2004,7 @@ tasks:
     file: "agent_tasks/099-fix-agentctl-verification-failure-repair.md"
     branch: "agent/099-fix-agentctl-verification-failure-repair"
     worktree: "agent-099-fix-agentctl-verification-failure-repair"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "bash -n scripts/agentctl.sh"
