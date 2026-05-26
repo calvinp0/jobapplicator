@@ -1725,3 +1725,326 @@ The tests do not require real Google credentials and do not import
 `google-auth-oauthlib` — the validation paths run on Python alone, and
 the success / failure paths inject a fake `Flow` class via
 `sys.modules`.
+
+## Manual Email Linking (task 093)
+
+Task 093 lets the user manually confirm/link a Gmail message to an
+application when the automatic matcher misses or returns only
+low-confidence candidates. The privacy and scope rules above are
+unchanged: read-only Gmail use only, no send/archive/delete/label, no
+full bodies, no background polling.
+
+### Candidate thresholds
+
+The application-search scorer (task 083) is unchanged, but the
+threshold band that decides `email_search_state` / `email_status` is
+now explicit:
+
+| Band | Score | Effect |
+|---|---|---|
+| Strong | `>= 0.70` | At least one strong match → `email_status = email_received`. |
+| Possible | `0.25 ≤ score < 0.70` | No strong match but ≥ 1 possible → `email_status = needs_review` *(new value emitted by the search path)*. |
+| Hidden | `< 0.25` | Hidden from the default search response. Surfaced through the manual candidates endpoint when `include_low_confidence=true` or when the user passes an explicit `query`. |
+
+`email_status` is only set to `no_match` when **both** the strong and
+possible bands are empty. The dashboard therefore stops claiming "No
+related emails found" when low-confidence candidates exist.
+
+`derive_email_status` recognises `needs_review` as a valid
+`email_search_state` for the same reason — a submitted application
+whose last search produced only possible candidates surfaces as
+"needs review" until the user either manually links one of them or
+re-runs the search.
+
+### Low-confidence candidate review
+
+The user reviews low-confidence candidates through a dedicated
+endpoint that surfaces the broader candidate pool plus the classifier's
+label guess. This endpoint never mutates `Application.status`; status
+changes only flow through the explicit `link-email` call.
+
+```
+POST /applications/{application_id}/gmail/candidates
+```
+
+Request body (every field optional):
+
+```jsonc
+{
+  "query": "Infinity Labs",          // optional manual Gmail query
+  "max_results": 20,                  // capped at 50 (and the gmail_client ceiling)
+  "include_low_confidence": true      // include the hidden band
+}
+```
+
+When `query` is omitted the endpoint uses the same auto-built query as
+the task-083 search. When `query` is set, it is passed to Gmail
+verbatim and the heuristic-hidden band is *always* returned because
+the scorer cannot evaluate user queries reliably.
+
+Response shape:
+
+```jsonc
+{
+  "application_id": "...",
+  "gmail_connected": true,
+  "query_used": "Infinity Labs",
+  "count": 1,
+  "strong_count": 0,
+  "possible_count": 1,
+  "candidates": [
+    {
+      "message_id": "...",
+      "thread_id": "...",
+      "subject": "Thank you for contacting Infinity Labs R&D",
+      "from": "Infinity Labs R&D <hr@infinitylabsrd.co.il>",
+      "date": "Mon, 25 May 2026 12:00:00 +0000",
+      "snippet": "Thank you for applying to Infinity Labs R&D...",
+      "match_score": 0.42,
+      "matched_signals": ["company_name"],
+      "classification_guess": "submission_confirmation"
+    }
+  ]
+}
+```
+
+A successful call also persists `Application.last_gmail_check_at` and
+`Application.email_search_state` using the threshold rules above. No
+`EmailLink` rows are written by this endpoint — linking is the user's
+next step.
+
+### Manual Gmail search
+
+The Application detail page renders a `Search Gmail manually` input
+that POSTs the same `/gmail/candidates` endpoint with the user's
+free-text `query`. Example query a user might type:
+
+```
+Infinity Labs
+```
+
+The query is forwarded to Gmail verbatim (subject to the existing
+read-only scope). The backend does not re-write or expand the query;
+the user sees exactly the Gmail-side result set.
+
+### Linked email evidence model
+
+Manual linking writes an `EmailLink` row with three new columns:
+
+| Column | Type | Default | Purpose |
+|---|---|---|---|
+| `snippet` | `TEXT NULL` | `NULL` | Short safe metadata snippet returned by the search. **Never** the full email body. |
+| `match_method` | `VARCHAR(32) NULL` | `NULL` | `"manual"` when written by the manual-link flow; `NULL` for older rows; future values: `"auto"` / `"classifier"`. |
+| `match_score` | `FLOAT NULL` | `NULL` | The candidate score at the moment the user clicked Link. Stored verbatim for audit. |
+| `linked_by_user` | `BOOLEAN NOT NULL` | `false` | `true` when the row was created (or upgraded) through an explicit user click. |
+| `evidence_json` | `TEXT NULL` | `NULL` | JSON-encoded list of `{field, text, reason}` evidence items. The manual-link flow writes a single item with `reason = "User manually confirmed this email belongs to the application"`. |
+
+The `EmailLinkRead` response carries these as `match_method`,
+`match_score`, `linked_by_user`, `evidence` (decoded list), and
+`snippet`.
+
+### `link-email` endpoint
+
+```
+POST /applications/{application_id}/gmail/link-email
+```
+
+Request body:
+
+```jsonc
+{
+  "message_id": "...",                    // required
+  "thread_id": "...",
+  "classification": "submission_confirmation", // classifier label; default "unknown"
+  "sender": "Infinity Labs R&D <hr@infinitylabsrd.co.il>",
+  "subject": "Thank you for contacting Infinity Labs R&D",
+  "snippet": "Thank you for applying...",
+  "received_at": "2026-05-25T20:01:00Z",
+  "match_score": 0.42,
+  "user_confirmed": true
+}
+```
+
+Accepted `classification` values (mirrors the classifier vocabulary):
+
+```
+submission_confirmation
+rejection
+interview_request
+recruiter_followup
+assessment
+offer
+application_update
+unknown
+```
+
+Behavior:
+
+- The application must exist; 404 otherwise.
+- The classification (or its `unknown` default) is mapped onto the
+  smaller `EmailLink.classified_status` vocabulary using
+  `LABEL_TO_EMAIL_LINK_STATUS` — the same map task 084 uses for the
+  classifier. This keeps the manual and classifier flows producing the
+  same persisted vocabulary.
+- The existing `_EMAIL_SIDE_EFFECTS` rules apply: `withdrawn` is
+  sticky, `rejected`/`offer` block `next_step`, etc. The user's
+  manual link **does not override** terminal-status protection. The
+  test suite pins this: a manual rejection on a withdrawn application
+  is recorded as evidence but leaves the application withdrawn.
+- The row stores `match_method = "manual"` and
+  `linked_by_user = true`.
+- An `ApplicationEvent` (`email_<classification>_received` or
+  `email_manual_link` for `unknown`) is appended with
+  `source = "email"` so the audit log is consistent with the
+  classifier-driven flow.
+- Re-linking the same `(application_id, gmail_message_id)` is
+  idempotent: the manual-link metadata (snippet, score) is refreshed
+  on the existing row, but no new event is appended and no side
+  effects are re-applied.
+
+Response:
+
+```jsonc
+{
+  "application_id": "...",
+  "email_link": {
+    "id": "...",
+    "application_id": "...",
+    "gmail_message_id": "...",
+    "gmail_thread_id": "...",
+    "subject": "...",
+    "sender": "...",
+    "snippet": "...",
+    "received_at": null,
+    "classified_status": "confirmation",
+    "confidence": null,
+    "match_method": "manual",
+    "match_score": 0.42,
+    "linked_by_user": true,
+    "evidence": [
+      { "field": "snippet", "text": "…", "reason": "User manually confirmed …" }
+    ],
+    "created_at": "..."
+  },
+  "classification": "submission_confirmation",
+  "email_status": "confirmation_found",
+  "application_status": "submitted",
+  "application_status_changed": false
+}
+```
+
+### Status mapping for manual classifications
+
+The manual-link flow uses the same classifier-label → `email_status`
+mapping documented in *Application Status Interaction* above. For
+reference:
+
+| `classification` | `email_status` | `application.status` target |
+|---|---|---|
+| `submission_confirmation` | `confirmation_found` | unchanged |
+| `rejection` | `classified_rejection` | `rejected` *(unless `withdrawn`)* |
+| `interview_request` / `recruiter_followup` | `classified_interview` | `interview` *(unless `rejected`/`withdrawn`/`offer`)* |
+| `assessment` | `classified_assessment` | `interview` *(today)* |
+| `offer` | `classified_offer` | `offer` *(unless `withdrawn`)* |
+| `application_update` | `classified_neutral` | unchanged |
+| `unknown` | `needs_review` | unchanged |
+
+If the application is already in a terminal state, the side-effect
+rules above prevent any auto-change. The user can still override the
+main status through the existing `mark-rejected` / `mark-interview`
+routes if they want to force a transition.
+
+### Linked emails listing
+
+```
+GET /applications/{application_id}/gmail/linked-emails
+```
+
+Returns every `EmailLink` row attached to the application, in the same
+order the dashboard uses (received_at desc, then created_at desc).
+Both manually-linked rows and classifier-linked rows appear in this
+list; `linked_by_user` / `match_method` distinguish the two.
+
+Response:
+
+```jsonc
+{
+  "application_id": "...",
+  "linked_emails": [
+    { /* EmailLinkRead, including manual-link metadata */ }
+  ]
+}
+```
+
+### Unlink endpoint
+
+```
+DELETE /applications/{application_id}/gmail/linked-emails/{linked_email_id}
+```
+
+Behavior:
+
+- Deletes the join row from the local DB.
+- **Never** modifies Gmail — no archive, delete, label, mark-read, or
+  any other Gmail-side state change is performed.
+- Appends an `ApplicationEvent` with
+  `event_type = "email_manual_unlink"` and `source = "user"` so the
+  audit log records the dismissal.
+- If the unlink removes the only attached email link and the prior
+  `email_search_state` was a positive value (`email_received` /
+  `needs_review`), the state is reset to `needs_review` so the UI
+  prompts the user to retry the search rather than silently flipping
+  back to `watching`. Otherwise the standard
+  `derive_email_status` fall-through applies.
+
+Response:
+
+```jsonc
+{
+  "application_id": "...",
+  "removed_email_link_id": "...",
+  "remaining_linked_count": 0
+}
+```
+
+### Privacy constraints
+
+The manual-linking surface inherits every rule from *Privacy and
+Safety Rules* above and adds explicit guarantees:
+
+- Read-only Gmail use only; the manual-link endpoint never touches
+  Gmail at all (the metadata is supplied by the client).
+- No send, archive, delete, label, modify, or filter routes are
+  added.
+- The `evidence_json` column stores a short user-confirmation note,
+  not the email body. The snippet column stores Gmail's own snippet
+  (a short excerpt, capped by Gmail).
+- OAuth tokens are not stored on the `EmailLink` model.
+- Every manual link records a user-confirmation event; nothing is
+  written without an explicit click.
+- The "Not related" UI action drops the candidate from the local view
+  only — it does **not** persist a "user dismissed" row in the
+  database (no signal worth keeping).
+
+### Frontend surface
+
+The Application detail page's `GmailEvidence` card grows three
+affordances:
+
+| Action | Endpoint |
+|---|---|
+| `Check Gmail` | `POST /applications/{id}/gmail/search` (unchanged) |
+| `Review possible emails` | `POST /applications/{id}/gmail/candidates` with `include_low_confidence=true` |
+| `Search Gmail manually` (form) | `POST /applications/{id}/gmail/candidates` with the user's `query` |
+
+For each candidate the manual-link UI exposes one button per
+classification (`Link as confirmation`, `Link as rejection`,
+`Link as interview`, `Link as assessment`, `Link as neutral/update`,
+plus `Not related`). The previously-attached `Email evidence` panel
+renders the linked rows and offers an `Unlink` action per row.
+
+When the search returns only low-confidence candidates the UI replaces
+`Gmail: No related emails found` with the more nuanced label
+`No strong Gmail match found. Possible related emails are available for review.`
+When neither strong nor possible candidates exist, the manual list
+shows `No related Gmail emails found. Try a manual Gmail search.`

@@ -329,9 +329,24 @@ class EmailLink(Base):
     gmail_thread_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     subject: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     sender: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     received_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     classified_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Task 093: manual linking metadata. ``match_method`` records whether
+    # the link came from the manual-entry UI (``"manual"``), the
+    # classifier (``"classifier"``), or the auto-sync top-candidate
+    # writer (``"auto"``). ``linked_by_user`` is true when the row was
+    # created by an explicit user click. ``match_score`` mirrors the
+    # candidate score the manual UI showed at the time of linking.
+    # ``evidence_json`` stores the evidence list as JSON text (snippets
+    # only — full bodies are never persisted).
+    match_method: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    match_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    linked_by_user: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    evidence_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
     application: Mapped[Application] = relationship(back_populates="email_links")

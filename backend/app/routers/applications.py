@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
@@ -139,11 +140,13 @@ def derive_email_status(
             return "needs_review"
         return _EMAIL_CLASSIFICATION_TO_STATE.get(classification, "email_received")
     if application.submitted_at is not None or application.status == "submitted":
-        # Task 083: a Gmail application-search may have produced a
-        # zero-classification outcome (``no_match`` or ``email_received``)
-        # without writing an ``EmailLink`` row yet. Honor it when set.
+        # Task 083 / 093: a Gmail application-search may have produced a
+        # zero-classification outcome (``no_match`` / ``email_received`` /
+        # ``needs_review``) without writing an ``EmailLink`` row yet.
+        # Honor it when set. ``needs_review`` is emitted by task 093 when
+        # only low-confidence (possible) candidates exist.
         search_state = getattr(application, "email_search_state", None)
-        if search_state in ("no_match", "email_received", "error"):
+        if search_state in ("no_match", "email_received", "needs_review", "error"):
             return search_state
         return "watching"
     return "not_watching"
@@ -262,7 +265,7 @@ def _build_application_read(
         updated_at=application.updated_at,
         timeline_stage=compute_timeline_stage(application, application.email_links),
         last_email_link=(
-            EmailLinkRead.model_validate(latest_link) if latest_link else None
+            _email_link_to_read(latest_link) if latest_link else None
         ),
         email_link_count=len(application.email_links),
         submission_status=_derive_submission_status(application),
@@ -538,6 +541,44 @@ def _find_existing_email_link(
     )
 
 
+def _decode_email_link_evidence(link: EmailLink) -> Optional[list[dict[str, Any]]]:
+    raw = getattr(link, "evidence_json", None)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    return None
+
+
+def _email_link_to_read(link: EmailLink) -> EmailLinkRead:
+    """Build an :class:`EmailLinkRead` from an :class:`EmailLink` row.
+
+    Decodes the JSON-encoded ``evidence_json`` column into the structured
+    ``evidence`` field exposed on the wire shape.
+    """
+    return EmailLinkRead(
+        id=link.id,
+        application_id=link.application_id,
+        gmail_message_id=link.gmail_message_id,
+        gmail_thread_id=link.gmail_thread_id,
+        subject=link.subject,
+        sender=link.sender,
+        snippet=getattr(link, "snippet", None),
+        received_at=link.received_at,
+        classified_status=link.classified_status,
+        confidence=link.confidence,
+        match_method=getattr(link, "match_method", None),
+        match_score=getattr(link, "match_score", None),
+        linked_by_user=bool(getattr(link, "linked_by_user", False)),
+        evidence=_decode_email_link_evidence(link),
+        created_at=link.created_at,
+    )
+
+
 @router.post(
     "/{application_id}/email-links",
     response_model=EmailLinkRead,
@@ -565,7 +606,7 @@ def create_email_link(
     existing = _find_existing_email_link(db, application_id, payload.gmail_message_id)
     if existing is not None:
         response.status_code = status.HTTP_200_OK
-        return EmailLinkRead.model_validate(existing)
+        return _email_link_to_read(existing)
 
     rules = _EMAIL_SIDE_EFFECTS[payload.classified_status]
     target_status = rules["target_status"]
@@ -596,7 +637,7 @@ def create_email_link(
 
     db.commit()
     db.refresh(link)
-    return EmailLinkRead.model_validate(link)
+    return _email_link_to_read(link)
 
 
 @router.get(
@@ -615,7 +656,7 @@ def list_email_links(
         .filter(EmailLink.application_id == application_id)
         .all()
     )
-    return [EmailLinkRead.model_validate(link) for link in _sorted_email_links(links)]
+    return [_email_link_to_read(link) for link in _sorted_email_links(links)]
 
 
 # ---- Gmail application search (task 083) ------------------------------
@@ -624,6 +665,29 @@ def list_email_links(
 # router stays thin so it does not pull google libraries into the import
 # graph (the task-080 safety guard
 # ``test_no_gmail_outbound_modules_imported`` enforces this).
+
+# Task 093 thresholds. ``STRONG`` corresponds to "we are confident
+# enough to surface as a primary match"; ``POSSIBLE`` corresponds to
+# "this might be relevant, ask the user to review". Candidates with a
+# score below ``POSSIBLE`` are hidden from the default search response
+# but remain available through the manual candidates endpoint when
+# ``include_low_confidence=true`` (or when the user passes a manual
+# query, since the heuristic does not score user queries reliably).
+STRONG_MATCH_THRESHOLD = 0.70
+POSSIBLE_MATCH_THRESHOLD = 0.25
+
+
+def _email_search_state_for_scores(scores: list[float]) -> str:
+    """Map a list of candidate scores onto the ``email_search_state`` value.
+
+    Pure helper so the threshold logic stays in one place and is easy
+    to test directly.
+    """
+    if any(s >= STRONG_MATCH_THRESHOLD for s in scores):
+        return "email_received"
+    if any(s >= POSSIBLE_MATCH_THRESHOLD for s in scores):
+        return "needs_review"
+    return "no_match"
 
 
 class GmailApplicationSearchRequest(BaseModel):
@@ -770,7 +834,12 @@ def search_application_gmail(
     candidates.sort(key=lambda c: c.match_score, reverse=True)
 
     app_obj.last_gmail_check_at = _utcnow()
-    app_obj.email_search_state = "email_received" if candidates else "no_match"
+    # Task 093: use threshold-based state so low-confidence candidates
+    # surface as ``needs_review`` rather than the misleading
+    # ``no_match`` / ``email_received`` binary.
+    app_obj.email_search_state = _email_search_state_for_scores(
+        [c.match_score for c in candidates]
+    )
     db.commit()
 
     return GmailApplicationSearchResponse(
@@ -979,3 +1048,478 @@ def classify_application_gmail(
         application_status_changed=application_status_changed,
         email_link_id=email_link_row_id,
     )
+
+
+# ---- Manual Gmail email linking (task 093) ----------------------------
+
+# Manual linking lets the user confirm/link a Gmail message to an
+# application when the automatic matcher missed it. The flow is
+# explicitly user-driven and never modifies Gmail itself: no send, no
+# archive, no delete, no label.
+
+
+# Classifier labels accepted by the manual link endpoint. Mirrors the
+# classifier vocabulary in :mod:`app.gmail_application_classifier`. The
+# router resolves the classifier label down to an
+# ``EmailLink.classified_status`` using ``LABEL_TO_EMAIL_LINK_STATUS``.
+_MANUAL_LINK_LABELS: frozenset[str] = frozenset(
+    {
+        "submission_confirmation",
+        "rejection",
+        "interview_request",
+        "recruiter_followup",
+        "assessment",
+        "offer",
+        "application_update",
+        "unknown",
+    }
+)
+
+
+class GmailCandidatesRequest(BaseModel):
+    """Body for ``POST /applications/{id}/gmail/candidates``.
+
+    ``query`` is an optional manual Gmail search override. When set, the
+    backend uses it verbatim instead of the auto-built query.
+    ``include_low_confidence`` controls whether candidates below the
+    ``POSSIBLE_MATCH_THRESHOLD`` floor are returned in the response.
+    """
+
+    query: Optional[str] = Field(default=None, max_length=512)
+    max_results: int = Field(default=20, ge=1, le=50)
+    include_low_confidence: bool = True
+
+
+class GmailCandidateOut(BaseModel):
+    message_id: Optional[str] = None
+    thread_id: Optional[str] = None
+    subject: Optional[str] = None
+    from_: Optional[str] = Field(default=None, alias="from")
+    date: Optional[str] = None
+    snippet: Optional[str] = None
+    match_score: float = 0.0
+    matched_signals: list[str] = Field(default_factory=list)
+    classification_guess: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class GmailCandidatesResponse(BaseModel):
+    application_id: str
+    gmail_connected: bool
+    query_used: Optional[str] = None
+    count: int = 0
+    strong_count: int = 0
+    possible_count: int = 0
+    candidates: list[GmailCandidateOut] = Field(default_factory=list)
+    message: Optional[str] = None
+
+
+@router.post(
+    "/{application_id}/gmail/candidates",
+    response_model=GmailCandidatesResponse,
+)
+def list_gmail_candidates(
+    application_id: str,
+    payload: GmailCandidatesRequest,
+    db: Session = Depends(get_db),
+) -> GmailCandidatesResponse:
+    """Return Gmail candidates for manual review against an application.
+
+    Includes low-confidence candidates by default so the user can review
+    matches the auto-matcher would otherwise have hidden. Read-only —
+    no Gmail mutation, no full bodies, no classification side-effects on
+    the application until the user explicitly calls ``link-email``.
+    """
+    from .. import gmail_client
+    from ..gmail_application_classifier import (
+        candidate_from_metadata,
+        classify_candidate,
+    )
+    from ..gmail_application_search import (
+        ApplicationQueryInputs,
+        MAX_APPLICATION_SEARCH_RESULTS,
+        MatchInputs,
+        build_application_query,
+        safe_metadata,
+        score_candidate,
+    )
+
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+    job_obj = db.get(Job, app_obj.job_id)
+    if job_obj is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    status_info = gmail_client.get_status()
+    if not status_info.get("connected"):
+        return GmailCandidatesResponse(
+            application_id=app_obj.id,
+            gmail_connected=False,
+            message="Connect Gmail before reviewing application emails",
+        )
+
+    manual_query = (payload.query or "").strip() or None
+    if manual_query:
+        query = manual_query
+    else:
+        query = build_application_query(
+            ApplicationQueryInputs(
+                company=job_obj.company,
+                job_title=job_obj.title,
+                submitted_at=app_obj.submitted_at,
+                extra_terms=(),
+                include_ats_terms=True,
+            )
+        )
+
+    capped = min(
+        int(payload.max_results),
+        MAX_APPLICATION_SEARCH_RESULTS,
+        gmail_client.MAX_TEST_SEARCH_RESULTS,
+    )
+
+    try:
+        raw_messages: list[dict[str, Any]] = gmail_client.search_messages(
+            query, capped
+        )
+    except gmail_client.GmailNotConnectedError:
+        return GmailCandidatesResponse(
+            application_id=app_obj.id,
+            gmail_connected=False,
+            query_used=query,
+            message="Connect Gmail before reviewing application emails",
+        )
+    except gmail_client.GmailDependencyError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    match_inputs = MatchInputs(
+        company=job_obj.company,
+        job_title=job_obj.title,
+        submitted_at=app_obj.submitted_at,
+    )
+
+    scored: list[GmailCandidateOut] = []
+    for raw in raw_messages:
+        meta = safe_metadata(raw)
+        score, signals = score_candidate(meta, match_inputs)
+        candidate = candidate_from_metadata(meta)
+        classification = classify_candidate(candidate)
+        scored.append(
+            GmailCandidateOut(
+                message_id=meta.get("id"),
+                thread_id=meta.get("thread_id"),
+                subject=meta.get("subject"),
+                **{"from": meta.get("from")},
+                date=meta.get("date"),
+                snippet=meta.get("snippet"),
+                match_score=round(score, 4),
+                matched_signals=signals,
+                classification_guess=classification.classification,
+            )
+        )
+    scored.sort(key=lambda c: c.match_score, reverse=True)
+
+    strong_count = sum(
+        1 for c in scored if c.match_score >= STRONG_MATCH_THRESHOLD
+    )
+    possible_count = sum(
+        1
+        for c in scored
+        if POSSIBLE_MATCH_THRESHOLD <= c.match_score < STRONG_MATCH_THRESHOLD
+    )
+
+    # Hide noise-level candidates from the default response. A manual
+    # query is treated as the user's explicit choice to see everything,
+    # since the heuristic does not score user queries reliably.
+    if payload.include_low_confidence or manual_query:
+        visible = scored
+    else:
+        visible = [c for c in scored if c.match_score >= POSSIBLE_MATCH_THRESHOLD]
+
+    app_obj.last_gmail_check_at = _utcnow()
+    app_obj.email_search_state = _email_search_state_for_scores(
+        [c.match_score for c in scored]
+    )
+    db.commit()
+
+    return GmailCandidatesResponse(
+        application_id=app_obj.id,
+        gmail_connected=True,
+        query_used=query,
+        count=len(visible),
+        strong_count=strong_count,
+        possible_count=possible_count,
+        candidates=visible,
+    )
+
+
+class GmailLinkEmailRequest(BaseModel):
+    """Body for ``POST /applications/{id}/gmail/link-email``.
+
+    ``classification`` is a classifier label (see
+    ``CLASSIFIER_LABELS``). When omitted the link is recorded as
+    ``unknown`` so the user can revisit it later. ``user_confirmed``
+    must be ``true`` — the endpoint exists *because* the user is
+    making the call — but is part of the contract so reviewers know
+    the row carries an explicit user click.
+    """
+
+    message_id: str = Field(min_length=1)
+    thread_id: Optional[str] = None
+    classification: Optional[str] = None
+    sender: Optional[str] = None
+    subject: Optional[str] = None
+    snippet: Optional[str] = None
+    received_at: Optional[datetime] = None
+    match_score: Optional[float] = None
+    user_confirmed: bool = True
+
+
+class GmailLinkEmailResponse(BaseModel):
+    application_id: str
+    email_link: EmailLinkRead
+    classification: str
+    email_status: str
+    application_status: str
+    application_status_changed: bool = False
+
+
+@router.post(
+    "/{application_id}/gmail/link-email",
+    response_model=GmailLinkEmailResponse,
+)
+def link_gmail_email(
+    application_id: str,
+    payload: GmailLinkEmailRequest,
+    db: Session = Depends(get_db),
+) -> GmailLinkEmailResponse:
+    """Manually link a Gmail message to ``application_id``.
+
+    Records the link with ``match_method="manual"`` and
+    ``linked_by_user=True``. Applies the existing
+    ``_EMAIL_SIDE_EFFECTS`` rules so terminal-status protection
+    (``withdrawn``, ``rejected`` → blocks downgrades, etc.) stays in
+    one place. **Does not** modify Gmail.
+    """
+    from ..gmail_application_classifier import (
+        LABEL_TO_APPLICATION_STATUS,
+        LABEL_TO_EMAIL_LINK_STATUS,
+        LABEL_TO_EMAIL_STATUS,
+    )
+
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    classification = payload.classification or "unknown"
+    if classification not in _MANUAL_LINK_LABELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid classification: {classification}",
+        )
+
+    pre_status = app_obj.status
+    email_link_status = LABEL_TO_EMAIL_LINK_STATUS.get(classification)
+    email_status_label = LABEL_TO_EMAIL_STATUS.get(classification, "needs_review")
+    _ = LABEL_TO_APPLICATION_STATUS  # imported for contract parity / future use
+
+    existing = _find_existing_email_link(db, application_id, payload.message_id)
+    if existing is not None:
+        # Idempotent: re-linking the same message updates the manual-link
+        # metadata (snippet, score, classification) but does not append a
+        # duplicate event or re-apply side effects.
+        existing.match_method = "manual"
+        existing.linked_by_user = True
+        if payload.match_score is not None:
+            existing.match_score = float(payload.match_score)
+        if payload.snippet is not None:
+            existing.snippet = payload.snippet
+        if payload.subject is not None and not existing.subject:
+            existing.subject = payload.subject
+        if payload.sender is not None and not existing.sender:
+            existing.sender = payload.sender
+        if payload.thread_id is not None and not existing.gmail_thread_id:
+            existing.gmail_thread_id = payload.thread_id
+        if payload.received_at is not None and existing.received_at is None:
+            existing.received_at = payload.received_at
+        db.commit()
+        db.refresh(existing)
+        # No new event recorded — keep the original audit trail.
+        return GmailLinkEmailResponse(
+            application_id=app_obj.id,
+            email_link=_email_link_to_read(existing),
+            classification=classification,
+            email_status=email_status_label,
+            application_status=app_obj.status,
+            application_status_changed=False,
+        )
+
+    evidence_items = [
+        {
+            "field": "snippet",
+            "text": (payload.snippet or "")[:240],
+            "reason": "User manually confirmed this email belongs to the application",
+        }
+    ]
+
+    link = EmailLink(
+        application_id=app_obj.id,
+        gmail_message_id=payload.message_id,
+        gmail_thread_id=payload.thread_id,
+        subject=payload.subject,
+        sender=payload.sender,
+        snippet=payload.snippet,
+        received_at=payload.received_at,
+        classified_status=email_link_status,
+        confidence=None,
+        match_method="manual",
+        match_score=float(payload.match_score) if payload.match_score is not None else None,
+        linked_by_user=True,
+        evidence_json=json.dumps(evidence_items),
+    )
+    db.add(link)
+
+    if email_link_status is not None:
+        rules = _EMAIL_SIDE_EFFECTS[email_link_status]
+        target_status = rules["target_status"]
+        if (
+            target_status is not None
+            and app_obj.status not in rules["blocked_by"]
+        ):
+            app_obj.status = target_status
+        db.add(
+            ApplicationEvent(
+                application_id=app_obj.id,
+                event_type=rules["event_type"],
+                source="email",
+                notes=f"manual_link:{classification}",
+            )
+        )
+    else:
+        db.add(
+            ApplicationEvent(
+                application_id=app_obj.id,
+                event_type="email_manual_link",
+                source="email",
+                notes=f"manual_link:{classification}",
+            )
+        )
+
+    app_obj.last_gmail_check_at = _utcnow()
+    db.commit()
+    db.refresh(link)
+    db.refresh(app_obj)
+
+    application_status_changed = app_obj.status != pre_status
+
+    return GmailLinkEmailResponse(
+        application_id=app_obj.id,
+        email_link=_email_link_to_read(link),
+        classification=classification,
+        email_status=email_status_label,
+        application_status=app_obj.status,
+        application_status_changed=application_status_changed,
+    )
+
+
+class GmailLinkedEmailsResponse(BaseModel):
+    application_id: str
+    linked_emails: list[EmailLinkRead] = Field(default_factory=list)
+
+
+@router.get(
+    "/{application_id}/gmail/linked-emails",
+    response_model=GmailLinkedEmailsResponse,
+)
+def list_linked_gmail_emails(
+    application_id: str, db: Session = Depends(get_db)
+) -> GmailLinkedEmailsResponse:
+    """Return every EmailLink attached to ``application_id``.
+
+    Both manually-linked and classifier-linked rows are returned so the
+    UI can render a single timeline. The ``linked_by_user`` / ``match_method``
+    fields distinguish the two.
+    """
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    links = (
+        db.query(EmailLink)
+        .filter(EmailLink.application_id == application_id)
+        .all()
+    )
+    return GmailLinkedEmailsResponse(
+        application_id=app_obj.id,
+        linked_emails=[
+            _email_link_to_read(link) for link in _sorted_email_links(links)
+        ],
+    )
+
+
+@router.delete(
+    "/{application_id}/gmail/linked-emails/{linked_email_id}",
+    status_code=status.HTTP_200_OK,
+)
+def unlink_gmail_email(
+    application_id: str,
+    linked_email_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Remove a manually-linked Gmail email from ``application_id``.
+
+    Unlinking only deletes the join row; Gmail itself is **not** modified.
+    If the unlink removes the only attached email link and the
+    application's main status was driven by that link, the email-status
+    derivation falls back to the previous safe state through the
+    existing ``derive_email_status`` rules.
+    """
+    app_obj = db.get(Application, application_id)
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail="application not found")
+
+    link = (
+        db.query(EmailLink)
+        .filter(
+            EmailLink.id == linked_email_id,
+            EmailLink.application_id == application_id,
+        )
+        .one_or_none()
+    )
+    if link is None:
+        raise HTTPException(status_code=404, detail="linked email not found")
+
+    db.add(
+        ApplicationEvent(
+            application_id=app_obj.id,
+            event_type="email_manual_unlink",
+            source="user",
+            notes=f"unlink:{link.gmail_message_id}",
+        )
+    )
+    db.delete(link)
+    db.flush()
+
+    remaining = (
+        db.query(EmailLink)
+        .filter(EmailLink.application_id == application_id)
+        .count()
+    )
+    # If no email links remain and the application has no email_search_state,
+    # the derivation already falls back to ``watching`` / ``not_watching``.
+    # When the prior search left ``email_search_state`` as a positive value,
+    # we reset it to ``needs_review`` so the UI prompts the user to retry.
+    if remaining == 0 and app_obj.email_search_state in (
+        "email_received",
+        "needs_review",
+    ):
+        app_obj.email_search_state = "needs_review"
+
+    db.commit()
+    return {
+        "application_id": app_obj.id,
+        "removed_email_link_id": linked_email_id,
+        "remaining_linked_count": remaining,
+    }

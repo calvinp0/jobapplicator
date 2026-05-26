@@ -145,9 +145,16 @@ export interface EmailLink {
   gmail_thread_id: string | null;
   subject: string | null;
   sender: string | null;
+  snippet?: string | null;
   received_at: string | null;
   classified_status: string | null;
   confidence: number | null;
+  // Task 093: manual-linking metadata. Present on rows created (or
+  // re-linked) through ``POST /applications/{id}/gmail/link-email``.
+  match_method?: string | null;
+  match_score?: number | null;
+  linked_by_user?: boolean;
+  evidence?: Array<{ field: string; text: string; reason: string }> | null;
   created_at: string;
 }
 
@@ -243,6 +250,74 @@ export interface GmailClassificationResponse {
   reason: string;
   application_status_changed: boolean;
   email_link_id: string | null;
+}
+
+// Task 093: manual Gmail email linking. These types mirror the
+// candidate / link-email / linked-emails surface added by the backend.
+
+export interface GmailManualCandidate {
+  message_id: string | null;
+  thread_id: string | null;
+  subject: string | null;
+  from: string | null;
+  date: string | null;
+  snippet: string | null;
+  match_score: number;
+  matched_signals: string[];
+  classification_guess: string | null;
+}
+
+export interface GmailCandidatesResponse {
+  application_id: string;
+  gmail_connected: boolean;
+  query_used: string | null;
+  count: number;
+  strong_count: number;
+  possible_count: number;
+  candidates: GmailManualCandidate[];
+  message?: string | null;
+}
+
+export type ManualLinkClassification =
+  | "submission_confirmation"
+  | "rejection"
+  | "interview_request"
+  | "recruiter_followup"
+  | "assessment"
+  | "offer"
+  | "application_update"
+  | "unknown";
+
+export interface GmailLinkEmailPayload {
+  message_id: string;
+  thread_id?: string | null;
+  classification?: ManualLinkClassification;
+  sender?: string | null;
+  subject?: string | null;
+  snippet?: string | null;
+  received_at?: string | null;
+  match_score?: number | null;
+  user_confirmed: boolean;
+}
+
+export interface GmailLinkEmailResponse {
+  application_id: string;
+  email_link: EmailLink;
+  classification: string;
+  email_status: string;
+  application_status: string;
+  application_status_changed: boolean;
+}
+
+export interface GmailLinkedEmailsResponse {
+  application_id: string;
+  linked_emails: EmailLink[];
+}
+
+export interface GmailUnlinkResponse {
+  application_id: string;
+  removed_email_link_id: string;
+  remaining_linked_count: number;
 }
 
 export interface GmailSyncApplicationResult {

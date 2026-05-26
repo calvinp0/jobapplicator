@@ -13,12 +13,19 @@ import type {
   EvidenceSourceType,
   GmailAuthUrlResponse,
   GmailCandidateEmail,
+  GmailCandidatesResponse,
   GmailClassificationResponse,
   GmailEvidenceItem,
+  GmailLinkedEmailsResponse,
+  GmailLinkEmailPayload,
+  GmailLinkEmailResponse,
+  GmailManualCandidate,
+  ManualLinkClassification,
   GmailSearchResponse,
   GmailStatusResponse,
   GmailSyncApplicationResult,
   GmailSyncApplicationsResponse,
+  GmailUnlinkResponse,
   GmailOAuthSettings,
   GmailOAuthSettingsUpdate,
   Job,
@@ -52,12 +59,19 @@ export type {
   EvidenceSourceType,
   GmailAuthUrlResponse,
   GmailCandidateEmail,
+  GmailCandidatesResponse,
   GmailClassificationResponse,
   GmailEvidenceItem,
+  GmailLinkedEmailsResponse,
+  GmailLinkEmailPayload,
+  GmailLinkEmailResponse,
+  GmailManualCandidate,
+  ManualLinkClassification,
   GmailSearchResponse,
   GmailStatusResponse,
   GmailSyncApplicationResult,
   GmailSyncApplicationsResponse,
+  GmailUnlinkResponse,
   GmailOAuthSettings,
   GmailOAuthSettingsUpdate,
   Job,
@@ -386,4 +400,58 @@ export function createApplicationEmailLink(
     method: "POST",
     body: payload,
   });
+}
+
+// ---- Task 093: manual Gmail email linking --------------------------
+
+export interface ListGmailCandidatesPayload {
+  query?: string | null;
+  max_results?: number;
+  include_low_confidence?: boolean;
+}
+
+export function listGmailCandidates(
+  applicationId: string,
+  payload: ListGmailCandidatesPayload = {},
+): Promise<GmailCandidatesResponse> {
+  const body: Record<string, unknown> = {
+    include_low_confidence:
+      payload.include_low_confidence === undefined
+        ? true
+        : payload.include_low_confidence,
+    max_results: payload.max_results ?? 20,
+  };
+  if (payload.query !== undefined && payload.query !== null) {
+    body.query = payload.query;
+  }
+  return apiRequest(`/applications/${applicationId}/gmail/candidates`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function linkGmailEmail(
+  applicationId: string,
+  payload: GmailLinkEmailPayload,
+): Promise<GmailLinkEmailResponse> {
+  return apiRequest(`/applications/${applicationId}/gmail/link-email`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function listLinkedGmailEmails(
+  applicationId: string,
+): Promise<GmailLinkedEmailsResponse> {
+  return apiRequest(`/applications/${applicationId}/gmail/linked-emails`);
+}
+
+export function unlinkGmailEmail(
+  applicationId: string,
+  linkedEmailId: string,
+): Promise<GmailUnlinkResponse> {
+  return apiRequest(
+    `/applications/${applicationId}/gmail/linked-emails/${linkedEmailId}`,
+    { method: "DELETE" },
+  );
 }
