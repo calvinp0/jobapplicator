@@ -824,3 +824,96 @@ on `--port 8001` or behind a reverse proxy), update **both**:
 
 A mismatch surfaces as Google's `redirect_uri_mismatch` error during
 the consent step.
+
+## 12. Reset local database safely
+
+The local development database can accumulate demo data, test rows, and
+half-imported runs over time. `scripts/backup_and_reset_db.py`
+(introduced in task 094) provides a safe, explicit way to back up and
+reset it.
+
+The script always writes a timestamped SQLite snapshot under
+`backups/database/` *before* doing anything destructive, and it
+refuses to reset without either `--confirm-reset` or an interactive
+`RESET`/`yes` confirmation.
+
+### Preview what would change
+
+```bash
+python scripts/backup_and_reset_db.py --dry-run
+```
+
+Prints the resolved database path, the backup path that would be
+created, what would be reset, and the paths the script preserves by
+default. Performs no filesystem changes.
+
+### Back up and reset
+
+```bash
+python scripts/backup_and_reset_db.py --confirm-reset
+```
+
+1. Resolves the active database from `JOBAPPLY_DATABASE_URL` (default:
+   `backend/jobapply.db`).
+2. Copies it to `backups/database/jobapply_<YYYY-MM-DD_HHMMSS>.db`
+   using SQLite's online backup API.
+3. Removes the active DB file (plus any `-wal`/`-shm`/`-journal`
+   sidecars).
+4. Re-creates the empty schema via `app.db.init_db`.
+
+### Reset and reload demo data
+
+```bash
+python scripts/backup_and_reset_db.py --confirm-reset --reseed-demo
+```
+
+After the reset, runs `scripts/seed_demo_data.py` to repopulate the
+demo job, run, resume, and application.
+
+### What is preserved by default
+
+The script only touches the application database. These paths are
+left alone unless you pass the matching opt-in flag:
+
+```text
+candidate_context/
+candidate_context/master_resumes/
+candidate_context/evidence_banks/
+candidate_context/project_notes/
+candidate_context/resume_variants/
+candidate_context/gmail/token.json
+candidate_context/settings/gmail_oauth.json
+runs/
+```
+
+Optional, explicit deletions:
+
+```bash
+python scripts/backup_and_reset_db.py --confirm-reset --delete-runs
+python scripts/backup_and_reset_db.py --confirm-reset --delete-gmail-token
+python scripts/backup_and_reset_db.py --confirm-reset --delete-local-gmail-config
+```
+
+These flags only operate on the specific repo-relative path listed
+above; the script refuses to delete anything outside the whitelist.
+
+### Restore from a backup
+
+The backup files are plain SQLite databases. Copy one back over the
+active DB path to restore:
+
+```bash
+cp backups/database/jobapply_2026-05-26_121530.db backend/jobapply.db
+```
+
+If you have overridden `JOBAPPLY_DATABASE_URL` to point at a custom
+location, copy the backup back to that path instead. Restart the
+backend after restoring so SQLAlchemy reopens the file.
+
+### Non-SQLite backends
+
+The script only handles SQLite. If `JOBAPPLY_DATABASE_URL` points at
+another backend (e.g. Postgres), the script exits with status 2 and a
+short message — use the vendor's native backup/restore tool
+(`pg_dump` / `pg_restore`, etc.) and document the path here.
+

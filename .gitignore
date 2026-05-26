@@ -231,6 +231,12 @@ runs/*
 backend/jobapply.db
 /jobapply.db
 
+# Local database backups (task 094)
+# scripts/backup_and_reset_db.py writes timestamped SQLite snapshots
+# under backups/database/. They contain real application data and must
+# never be committed.
+backups/
+
 # Editor / OS
 .DS_Store
 .idea/
