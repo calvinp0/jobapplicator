@@ -190,9 +190,14 @@ class EmailLinkRead(_ORMModel):
     gmail_thread_id: Optional[str]
     subject: Optional[str]
     sender: Optional[str]
+    snippet: Optional[str] = None
     received_at: Optional[datetime]
     classified_status: Optional[str]
     confidence: Optional[float]
+    match_method: Optional[str] = None
+    match_score: Optional[float] = None
+    linked_by_user: bool = False
+    evidence: Optional[list[Dict[str, Any]]] = None
     created_at: datetime
 
 
@@ -201,6 +206,7 @@ class EmailLinkCreate(BaseModel):
     gmail_thread_id: Optional[str] = None
     subject: Optional[str] = None
     sender: Optional[str] = None
+    snippet: Optional[str] = None
     received_at: Optional[datetime] = None
     classified_status: str
     confidence: Optional[float] = None

@@ -106,3 +106,33 @@ def ensure_runtime_columns() -> None:
                         "ADD COLUMN email_search_state VARCHAR(32)"
                     )
                 )
+    if "email_links" in table_names:
+        existing_link_cols = {
+            col["name"] for col in inspector.get_columns("email_links")
+        }
+        # Backfill for task 093 (manual Gmail email linking). All columns
+        # are nullable / boolean-with-default so pre-existing rows load
+        # without further migration steps.
+        for col_name, ddl in (
+            ("snippet", "ALTER TABLE email_links ADD COLUMN snippet TEXT"),
+            (
+                "match_method",
+                "ALTER TABLE email_links ADD COLUMN match_method VARCHAR(32)",
+            ),
+            (
+                "match_score",
+                "ALTER TABLE email_links ADD COLUMN match_score FLOAT",
+            ),
+            (
+                "linked_by_user",
+                "ALTER TABLE email_links ADD COLUMN linked_by_user "
+                "BOOLEAN NOT NULL DEFAULT 0",
+            ),
+            (
+                "evidence_json",
+                "ALTER TABLE email_links ADD COLUMN evidence_json TEXT",
+            ),
+        ):
+            if col_name not in existing_link_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))

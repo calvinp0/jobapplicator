@@ -16,6 +16,10 @@ const {
   getGmailAuthUrlMock,
   searchApplicationGmailMock,
   classifyApplicationGmailMock,
+  listGmailCandidatesMock,
+  linkGmailEmailMock,
+  listLinkedGmailEmailsMock,
+  unlinkGmailEmailMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -41,6 +45,10 @@ const {
     getGmailAuthUrlMock: vi.fn(),
     searchApplicationGmailMock: vi.fn(),
     classifyApplicationGmailMock: vi.fn(),
+    listGmailCandidatesMock: vi.fn(),
+    linkGmailEmailMock: vi.fn(),
+    listLinkedGmailEmailsMock: vi.fn(),
+    unlinkGmailEmailMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -58,6 +66,10 @@ vi.mock("../api", () => ({
   getGmailAuthUrl: getGmailAuthUrlMock,
   searchApplicationGmail: searchApplicationGmailMock,
   classifyApplicationGmail: classifyApplicationGmailMock,
+  listGmailCandidates: listGmailCandidatesMock,
+  linkGmailEmail: linkGmailEmailMock,
+  listLinkedGmailEmails: listLinkedGmailEmailsMock,
+  unlinkGmailEmail: unlinkGmailEmailMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -176,6 +188,46 @@ describe("ApplicationDetailPage", () => {
       gmail_query: "(\"Acme Corp\") newer_than:180d",
       count: 0,
       candidates: [],
+    });
+    listGmailCandidatesMock.mockResolvedValue({
+      application_id: "app-1",
+      gmail_connected: true,
+      query_used: null,
+      count: 0,
+      strong_count: 0,
+      possible_count: 0,
+      candidates: [],
+    });
+    linkGmailEmailMock.mockResolvedValue({
+      application_id: "app-1",
+      email_link: {
+        id: "el-new",
+        application_id: "app-1",
+        gmail_message_id: "msg-1",
+        gmail_thread_id: null,
+        subject: null,
+        sender: null,
+        received_at: null,
+        classified_status: "confirmation",
+        confidence: null,
+        match_method: "manual",
+        linked_by_user: true,
+        evidence: null,
+        created_at: "2026-05-25T12:00:00Z",
+      },
+      classification: "submission_confirmation",
+      email_status: "confirmation_found",
+      application_status: "submitted",
+      application_status_changed: false,
+    });
+    listLinkedGmailEmailsMock.mockResolvedValue({
+      application_id: "app-1",
+      linked_emails: [],
+    });
+    unlinkGmailEmailMock.mockResolvedValue({
+      application_id: "app-1",
+      removed_email_link_id: "el-1",
+      remaining_linked_count: 0,
     });
     classifyApplicationGmailMock.mockResolvedValue({
       application_id: "app-1",
