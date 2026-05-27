@@ -198,10 +198,57 @@ def test_instructions_file_is_created(fixture_layout):
 
     instructions_path = info.handoff_dir / INSTRUCTIONS_FILENAME
     assert instructions_path.is_file()
+    # The task renumbers the instructions file from 04 to 03 so the
+    # required-files list (resume_docx, prompt_txt, instructions_md) sits
+    # contiguously at the top of the directory.
+    assert instructions_path.name == "03_instructions.md"
     body = instructions_path.read_text(encoding="utf-8")
     assert "01_resume_for_claude_word.docx" in body
     assert "02_prompt_for_claude_word.txt" in body
     assert "../output/word_tailored_resume.docx" in body
+
+
+def test_prompt_includes_target_job_title_and_company(fixture_layout):
+    from app.word_handoff import PROMPT_FILENAME, create_word_handoff_package
+
+    run_dir = _create_run(fixture_layout)
+    info = create_word_handoff_package(run_dir)
+
+    prompt_text = (info.handoff_dir / PROMPT_FILENAME).read_text(
+        encoding="utf-8"
+    )
+    # ``_make_objects`` stamps title=ML Engineer, company=Acme; both should
+    # land in the prompt so the operator does not have to remember which
+    # role the package was packaged for.
+    assert "ML Engineer" in prompt_text
+    assert "Acme" in prompt_text
+
+
+def test_prompt_includes_ats_keyword_instructions(fixture_layout):
+    from app.word_handoff import PROMPT_FILENAME, create_word_handoff_package
+
+    run_dir = _create_run(fixture_layout)
+    info = create_word_handoff_package(run_dir)
+
+    prompt_text = (info.handoff_dir / PROMPT_FILENAME).read_text(
+        encoding="utf-8"
+    )
+    assert "ATS keyword" in prompt_text
+    assert "Claim and evidence rules" in prompt_text
+
+
+def test_prompt_includes_evidence_sources_index(fixture_layout):
+    from app.word_handoff import PROMPT_FILENAME, create_word_handoff_package
+
+    run_dir = _create_run(fixture_layout)
+    info = create_word_handoff_package(run_dir)
+
+    prompt_text = (info.handoff_dir / PROMPT_FILENAME).read_text(
+        encoding="utf-8"
+    )
+    # The run_directory writer always stages an index (a "(none)" stub
+    # when nothing was supplied), so the section must appear unconditionally.
+    assert "Evidence Sources Index" in prompt_text
 
 
 def test_missing_docx_does_not_fail_if_markdown_exists(fixture_layout):
@@ -464,3 +511,100 @@ def test_import_word_result_missing_run_directory_raises(tmp_path):
 
     with pytest.raises(WordHandoffError, match="run directory does not exist"):
         import_word_result(tmp_path / "does_not_exist")
+
+
+# --- get_word_handoff_status (task 112) ---
+
+
+def test_status_is_not_prepared_when_folder_absent(fixture_layout):
+    from app.word_handoff import (
+        HANDOFF_STATE_NOT_PREPARED,
+        get_word_handoff_status,
+    )
+
+    run_dir = _create_run(fixture_layout)
+    assert not (run_dir / "word_handoff").exists()
+
+    info = get_word_handoff_status(run_dir)
+
+    assert info.state == HANDOFF_STATE_NOT_PREPARED
+    assert info.handoff_dir_exists is False
+    assert info.prompt_txt.exists is False
+    assert info.instructions_md.exists is False
+
+
+def test_status_is_prepared_when_all_required_files_exist(fixture_layout):
+    from app.word_handoff import (
+        HANDOFF_STATE_PREPARED,
+        create_word_handoff_package,
+        get_word_handoff_status,
+    )
+
+    run_dir = _create_run(fixture_layout)
+    create_word_handoff_package(run_dir)
+
+    info = get_word_handoff_status(run_dir)
+
+    assert info.state == HANDOFF_STATE_PREPARED
+    assert info.handoff_dir_exists is True
+    assert info.prompt_txt.exists is True
+    assert info.instructions_md.exists is True
+    assert info.missing_required_files == ()
+
+
+def test_status_is_missing_files_when_required_file_deleted(fixture_layout):
+    from app.word_handoff import (
+        HANDOFF_STATE_MISSING_FILES,
+        INSTRUCTIONS_FILENAME,
+        create_word_handoff_package,
+        get_word_handoff_status,
+    )
+
+    run_dir = _create_run(fixture_layout)
+    create_word_handoff_package(run_dir)
+    # Simulate a half-cleaned package: the folder exists but the operator
+    # deleted the instructions file. The UI should regenerate, not pretend
+    # everything is fine.
+    (run_dir / "word_handoff" / INSTRUCTIONS_FILENAME).unlink()
+
+    info = get_word_handoff_status(run_dir)
+
+    assert info.state == HANDOFF_STATE_MISSING_FILES
+    assert INSTRUCTIONS_FILENAME in info.missing_required_files
+
+
+def test_status_is_import_ready_when_word_result_exists(fixture_layout):
+    from app.word_handoff import (
+        HANDOFF_STATE_IMPORT_READY,
+        create_word_handoff_package,
+        get_word_handoff_status,
+    )
+
+    run_dir = _create_run(fixture_layout)
+    create_word_handoff_package(run_dir)
+    _stage_word_result(run_dir)
+
+    info = get_word_handoff_status(run_dir)
+
+    assert info.state == HANDOFF_STATE_IMPORT_READY
+    assert info.expected_output_docx.exists is True
+    assert info.final_resume_docx.exists is False
+
+
+def test_status_is_imported_after_final_resume_written(fixture_layout):
+    from app.word_handoff import (
+        HANDOFF_STATE_IMPORTED,
+        create_word_handoff_package,
+        get_word_handoff_status,
+        import_word_result,
+    )
+
+    run_dir = _create_run(fixture_layout)
+    create_word_handoff_package(run_dir)
+    _stage_word_result(run_dir)
+    import_word_result(run_dir)
+
+    info = get_word_handoff_status(run_dir)
+
+    assert info.state == HANDOFF_STATE_IMPORTED
+    assert info.final_resume_docx.exists is True

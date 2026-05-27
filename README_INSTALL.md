@@ -15,6 +15,18 @@ a new machine.
 > [`docs/office_word_mcp_setup.md`](docs/office_word_mcp_setup.md))
 > but is no longer the primary formatting path.
 
+> **Claude for Word handoff.** When you click *Prepare for Claude for
+> Word*, the backend writes
+> `runs/<run_id>/word_handoff/01_resume_for_claude_word.docx`,
+> `02_prompt_for_claude_word.txt`, and `03_instructions.md`. The
+> cockpit only shows the prompt + instructions once these files exist
+> on disk, and only shows *Import Word Result* once you save the
+> completed Word document at
+> `runs/<run_id>/output/word_tailored_resume.docx`. See
+> [`docs/office_word_mcp_setup.md`](docs/office_word_mcp_setup.md) and
+> [`docs/contracts/claude_run_directory.md`](docs/contracts/claude_run_directory.md)
+> for the full lifecycle.
+
 For the browser extension specifically, see
 [`docs/browser_extension.md`](docs/browser_extension.md).
 

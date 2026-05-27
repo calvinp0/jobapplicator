@@ -40,7 +40,9 @@ from .word_handoff import (
     WORD_HANDOFF_DIRNAME,
     WORD_RESULT_FILENAME,
     WordHandoffError,
+    WordHandoffStatusInfo,
     create_word_handoff_package,
+    get_word_handoff_status,
     import_word_result,
 )
 
@@ -76,6 +78,30 @@ class WordResultImportResponse(BaseModel):
     word_result: Optional[str] = None
     final_resume: Optional[str] = None
     expected_output: Optional[str] = None
+
+
+class WordHandoffFileStatusRead(BaseModel):
+    name: str
+    path: str
+    exists: bool
+
+
+class WordHandoffStatusRead(BaseModel):
+    """Filesystem-derived view of the handoff package — see task 112.
+
+    ``state`` is one of ``not_prepared``, ``prepared``, ``missing_files``,
+    ``import_ready``, or ``imported``. The UI uses ``state`` to decide
+    which controls and copy to render, and the file map to show which
+    artifacts already exist on disk.
+    """
+
+    run_id: str
+    state: str
+    handoff_dir: str
+    handoff_dir_exists: bool
+    files: dict[str, WordHandoffFileStatusRead]
+    missing_required_files: list[str]
+    message: str
 
 
 word_handoff_router = APIRouter(prefix="/runs", tags=["word_handoff"])
@@ -131,6 +157,41 @@ def _build_metadata_response(run: ClaudeRun) -> WordHandoffMetadata:
     )
 
 
+def _file_status_to_read(
+    run_id: str, file_status
+) -> WordHandoffFileStatusRead:
+    return WordHandoffFileStatusRead(
+        name=file_status.name,
+        path=_rel_run_path(run_id, *file_status.path.split("/")),
+        exists=file_status.exists,
+    )
+
+
+def _build_status_response(
+    run_id: str, info: WordHandoffStatusInfo
+) -> WordHandoffStatusRead:
+    files = {
+        "resume_docx": _file_status_to_read(run_id, info.resume_docx),
+        "prompt_txt": _file_status_to_read(run_id, info.prompt_txt),
+        "instructions_md": _file_status_to_read(run_id, info.instructions_md),
+        "expected_output_docx": _file_status_to_read(
+            run_id, info.expected_output_docx
+        ),
+        "final_resume_docx": _file_status_to_read(
+            run_id, info.final_resume_docx
+        ),
+    }
+    return WordHandoffStatusRead(
+        run_id=run_id,
+        state=info.state,
+        handoff_dir=_rel_run_path(run_id, info.handoff_dir_relpath),
+        handoff_dir_exists=info.handoff_dir_exists,
+        files=files,
+        missing_required_files=list(info.missing_required_files),
+        message=info.message,
+    )
+
+
 @word_handoff_router.post(
     "/{run_id}/word-handoff",
     response_model=WordHandoffMetadata,
@@ -145,6 +206,24 @@ def create_or_refresh_word_handoff(
     except WordHandoffError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _build_metadata_response(run)
+
+
+@word_handoff_router.get(
+    "/{run_id}/word-handoff/status",
+    response_model=WordHandoffStatusRead,
+)
+def get_word_handoff_status_endpoint(
+    run_id: str, db: Session = Depends(get_db)
+) -> WordHandoffStatusRead:
+    """Filesystem-derived view of the handoff package.
+
+    Always returns 200 with a ``state`` describing where the run is in
+    the handoff lifecycle, so the UI can render the right copy without
+    a try/catch around a 404. See task 112 for the state machine.
+    """
+    run = _get_run_or_404(run_id, db)
+    info = get_word_handoff_status(Path(run.run_dir))
+    return _build_status_response(run.id, info)
 
 
 @word_handoff_router.get(

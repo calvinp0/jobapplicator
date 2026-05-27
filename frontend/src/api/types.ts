@@ -480,6 +480,38 @@ export interface WordResultImportResponse {
   expected_output?: string | null;
 }
 
+export interface WordHandoffFileStatus {
+  name: string;
+  path: string;
+  exists: boolean;
+}
+
+// Filesystem-derived view of a run's Word handoff package — see task 112.
+// ``state`` drives which UI block renders; the ``files`` map drives the
+// per-file existence indicators and copy-path actions.
+export type WordHandoffState =
+  | "not_prepared"
+  | "prepared"
+  | "missing_files"
+  | "import_ready"
+  | "imported";
+
+export interface WordHandoffStatus {
+  run_id: string;
+  state: WordHandoffState;
+  handoff_dir: string;
+  handoff_dir_exists: boolean;
+  files: {
+    resume_docx: WordHandoffFileStatus;
+    prompt_txt: WordHandoffFileStatus;
+    instructions_md: WordHandoffFileStatus;
+    expected_output_docx: WordHandoffFileStatus;
+    final_resume_docx: WordHandoffFileStatus;
+  };
+  missing_required_files: string[];
+  message: string;
+}
+
 export interface LlmProvider {
   id: string;
   display_name: string;

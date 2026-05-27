@@ -86,7 +86,7 @@ def test_post_word_handoff_creates_package(client, tmp_path, monkeypatch):
         f"runs/{rid}/word_handoff/02_prompt_for_claude_word.txt"
     )
     assert body["instructions_file"] == (
-        f"runs/{rid}/word_handoff/04_instructions.md"
+        f"runs/{rid}/word_handoff/03_instructions.md"
     )
     assert body["expected_output"] == (
         f"runs/{rid}/output/word_tailored_resume.docx"
@@ -98,7 +98,7 @@ def test_post_word_handoff_creates_package(client, tmp_path, monkeypatch):
     # And the package files actually exist on disk.
     run_dir = Path(run["run_dir"])
     assert (run_dir / "word_handoff" / "02_prompt_for_claude_word.txt").is_file()
-    assert (run_dir / "word_handoff" / "04_instructions.md").is_file()
+    assert (run_dir / "word_handoff" / "03_instructions.md").is_file()
 
 
 def test_post_word_handoff_returns_word_handoff_ready_status(
@@ -222,6 +222,67 @@ def test_post_word_handoff_returns_400_when_input_is_unusable(
     assert resp.status_code == 400, resp.text
     detail = resp.json()["detail"]
     assert isinstance(detail, str) and detail
+
+
+def test_word_handoff_status_returns_not_prepared_before_post(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run_with_jd(client, tmp_path, monkeypatch)
+
+    resp = client.get(f"/runs/{run['id']}/word-handoff/status")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["run_id"] == run["id"]
+    assert body["state"] == "not_prepared"
+    assert body["handoff_dir_exists"] is False
+    assert body["handoff_dir"] == f"runs/{run['id']}/word_handoff"
+    files = body["files"]
+    assert files["prompt_txt"]["exists"] is False
+    assert files["instructions_md"]["exists"] is False
+    assert files["expected_output_docx"]["exists"] is False
+
+
+def test_word_handoff_status_returns_prepared_after_post(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run_with_jd(client, tmp_path, monkeypatch)
+    client.post(f"/runs/{run['id']}/word-handoff").raise_for_status()
+
+    resp = client.get(f"/runs/{run['id']}/word-handoff/status")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["state"] == "prepared"
+    assert body["handoff_dir_exists"] is True
+    assert body["files"]["prompt_txt"]["exists"] is True
+    assert body["files"]["instructions_md"]["exists"] is True
+    assert body["missing_required_files"] == []
+
+
+def test_word_handoff_status_returns_import_ready_when_result_exists(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run_with_jd(client, tmp_path, monkeypatch)
+    client.post(f"/runs/{run['id']}/word-handoff").raise_for_status()
+    # Drop the operator's saved Word result into the expected location.
+    output_dir = Path(run["run_dir"]) / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "word_tailored_resume.docx").write_bytes(
+        b"PK\x03\x04 word result body"
+    )
+
+    resp = client.get(f"/runs/{run['id']}/word-handoff/status")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["state"] == "import_ready"
+    assert body["files"]["expected_output_docx"]["exists"] is True
+
+
+def test_word_handoff_status_returns_404_for_unknown_run(client):
+    resp = client.get("/runs/does-not-exist/word-handoff/status")
+    assert resp.status_code == 404
 
 
 def test_post_import_word_result_returns_waiting_when_file_missing(

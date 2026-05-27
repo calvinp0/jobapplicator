@@ -9,6 +9,7 @@ import {
   getLlmProviderSetting,
   getWordHandoffInstructions,
   getWordHandoffPrompt,
+  getWordHandoffStatus,
   importWordResult,
   invokeRun,
   listApplications,
@@ -30,6 +31,7 @@ import type {
   ResumeVersion,
   RevisionFeedback,
   WordHandoffMetadata,
+  WordHandoffStatus,
   WordResultImportResponse,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
@@ -92,39 +94,114 @@ function WorkspaceStep({
 
 const EXPECTED_WORD_OUTPUT_DISPLAY = "output/word_tailored_resume.docx";
 
+function HandoffFileLine({
+  file,
+}: {
+  file: { name: string; path: string; exists: boolean };
+}) {
+  return (
+    <li className="word-handoff-file">
+      <span
+        className="word-handoff-file-mark"
+        aria-hidden="true"
+      >
+        {file.exists ? "✓" : "✗"}
+      </span>
+      <span className="word-handoff-file-name">{file.name}</span>
+      <code className="word-handoff-file-path">{file.path}</code>
+      <span className="visually-hidden">
+        {file.exists ? "present" : "missing"}
+      </span>
+    </li>
+  );
+}
+
 function WordHandoffPanel({
   handoff,
+  status,
   copyState,
   onCopyPrompt,
   onImport,
   importing,
   importResult,
   importError,
+  onRegenerate,
+  regenerating,
 }: {
+  // Inline prompt + instructions text. Only meaningful when ``status.state``
+  // is ``prepared`` or further along — for the not-prepared and missing-files
+  // branches we never render the prompt/instructions blocks at all.
   handoff: {
     runId: string;
     metadata: WordHandoffMetadata;
     promptText: string;
     instructionsText: string;
   };
+  status: WordHandoffStatus;
   copyState: "idle" | "copied";
   onCopyPrompt: () => void;
   onImport: () => void;
   importing: boolean;
   importResult: WordResultImportResponse | null;
   importError: string | null;
+  onRegenerate: () => void;
+  regenerating: boolean;
 }) {
-  const sourceMissing = handoff.metadata.resume_docx === null;
+  const sourceMissing = !status.files.resume_docx.exists;
   const isWaiting =
     importResult !== null && importResult.status !== "completed";
   const isImported =
-    importResult !== null && importResult.status === "completed";
+    (importResult !== null && importResult.status === "completed") ||
+    status.state === "imported";
+  const showImportReady =
+    status.state === "import_ready" || isImported || isWaiting;
+
+  if (status.state === "missing_files") {
+    return (
+      <section
+        className="word-handoff-panel"
+        aria-label="Claude for Word handoff"
+      >
+        <h4>Handoff folder exists, but required files are missing</h4>
+        <p className="word-handoff-warning" role="alert">
+          The folder is at <code>{status.handoff_dir}</code> but these files
+          are missing:
+        </p>
+        <ul className="word-handoff-files">
+          {status.missing_required_files.map((name) => (
+            <li key={name} className="word-handoff-file">
+              <span className="word-handoff-file-mark" aria-hidden="true">
+                ✗
+              </span>
+              <span className="word-handoff-file-name">{name}</span>
+            </li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          onClick={onRegenerate}
+          disabled={regenerating}
+        >
+          {regenerating ? "Regenerating…" : "Regenerate handoff package"}
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section
       className="word-handoff-panel"
       aria-label="Claude for Word handoff"
     >
-      <h4>Claude for Word handoff prepared</h4>
+      <h4>Claude for Word handoff ready</h4>
+      <p className="word-handoff-save-path">
+        Folder: <code>{status.handoff_dir}</code>
+      </p>
+      <ul className="word-handoff-files">
+        <HandoffFileLine file={status.files.resume_docx} />
+        <HandoffFileLine file={status.files.prompt_txt} />
+        <HandoffFileLine file={status.files.instructions_md} />
+      </ul>
       <ol className="word-handoff-steps">
         <li>Open the prepared DOCX in Word</li>
         <li>Open Claude for Word</li>
@@ -170,34 +247,45 @@ function WordHandoffPanel({
           {handoff.instructionsText}
         </pre>
       </div>
-      <div className="word-handoff-import">
-        <button
-          type="button"
-          onClick={onImport}
-          disabled={importing}
-        >
-          {importing ? "Importing…" : "Import Word Result"}
-        </button>
-        {importError ? (
-          <p role="alert" className="error">
-            {importError}
-          </p>
-        ) : null}
-        {isWaiting ? (
-          <p role="status" className="word-handoff-waiting">
-            Waiting for Word result. Save the completed document as{" "}
-            <code>{EXPECTED_WORD_OUTPUT_DISPLAY}</code>, then click Import
-            again.
-          </p>
-        ) : null}
-        {isImported ? (
-          <p role="status" className="word-handoff-success">
-            Imported. Final resume available at{" "}
-            <code>{importResult?.final_resume ?? "output/final_resume.docx"}</code>
-            .
-          </p>
-        ) : null}
-      </div>
+      {showImportReady ? (
+        <div className="word-handoff-import">
+          <button
+            type="button"
+            onClick={onImport}
+            disabled={importing}
+          >
+            {importing ? "Importing…" : "Import Word Result"}
+          </button>
+          {importError ? (
+            <p role="alert" className="error">
+              {importError}
+            </p>
+          ) : null}
+          {isWaiting ? (
+            <p role="status" className="word-handoff-waiting">
+              Waiting for Word result. Save the completed document as{" "}
+              <code>{EXPECTED_WORD_OUTPUT_DISPLAY}</code>, then click
+              Import again.
+            </p>
+          ) : null}
+          {isImported ? (
+            <p role="status" className="word-handoff-success">
+              Imported. Final resume available at{" "}
+              <code>
+                {importResult?.final_resume ??
+                  status.files.final_resume_docx.path}
+              </code>
+              .
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="word-handoff-waiting" role="status">
+          Word result not detected yet at{" "}
+          <code>{EXPECTED_WORD_OUTPUT_DISPLAY}</code>. The Import button
+          appears here once you save the completed document at that path.
+        </p>
+      )}
     </section>
   );
 }
@@ -248,6 +336,8 @@ export function JobDetailPage() {
     promptText: string;
     instructionsText: string;
   } | null>(null);
+  const [wordHandoffStatus, setWordHandoffStatus] =
+    useState<WordHandoffStatus | null>(null);
   const [isPreparingWordHandoff, setIsPreparingWordHandoff] = useState(false);
   const [wordHandoffError, setWordHandoffError] = useState<string | null>(null);
   const [isImportingWordResult, setIsImportingWordResult] = useState(false);
@@ -392,6 +482,18 @@ export function JobDetailPage() {
     }
   }
 
+  async function refreshWordHandoffStatus(runId: string) {
+    try {
+      const next = await getWordHandoffStatus(runId);
+      setWordHandoffStatus(next);
+      return next;
+    } catch {
+      // Best-effort: status is a UI hint, not a hard prerequisite. If the
+      // endpoint is unreachable the panel just won't show the file list.
+      return null;
+    }
+  }
+
   async function handlePrepareWordHandoff() {
     if (!jobId) return;
     if (!selectedResumeId) {
@@ -426,6 +528,33 @@ export function JobDetailPage() {
         promptText: prompt.content,
         instructionsText: instructions.content,
       });
+      // Verify on disk what the API just claimed to write. This is what
+      // gates the "prepared" UI — see task 112.
+      await refreshWordHandoffStatus(run.id);
+    } catch (err: unknown) {
+      setWordHandoffError(extractApiDetail(err));
+    } finally {
+      setIsPreparingWordHandoff(false);
+    }
+  }
+
+  async function handleRegenerateWordHandoff() {
+    if (!wordHandoff) return;
+    setIsPreparingWordHandoff(true);
+    setWordHandoffError(null);
+    try {
+      const metadata = await createWordHandoff(wordHandoff.runId);
+      const [prompt, instructions] = await Promise.all([
+        getWordHandoffPrompt(wordHandoff.runId),
+        getWordHandoffInstructions(wordHandoff.runId),
+      ]);
+      setWordHandoff({
+        runId: wordHandoff.runId,
+        metadata,
+        promptText: prompt.content,
+        instructionsText: instructions.content,
+      });
+      await refreshWordHandoffStatus(wordHandoff.runId);
     } catch (err: unknown) {
       setWordHandoffError(extractApiDetail(err));
     } finally {
@@ -440,6 +569,10 @@ export function JobDetailPage() {
     try {
       const response = await importWordResult(wordHandoff.runId);
       setWordImportResult(response);
+      // The import either created ``output/final_resume.docx`` or noted that
+      // the source DOCX was missing — either way the status changes, so
+      // refresh to keep the panel in sync with disk.
+      await refreshWordHandoffStatus(wordHandoff.runId);
     } catch (err: unknown) {
       setWordImportError(extractApiDetail(err));
     } finally {
@@ -542,6 +675,23 @@ export function JobDetailPage() {
     onImported: handleVersionImported,
     onImportError: handleImportError,
   });
+
+  // Poll the Word handoff status while the panel is showing and the run
+  // is not yet imported, so the Import Word Result button appears as soon
+  // as the operator saves output/word_tailored_resume.docx on disk.
+  const handoffRunId = wordHandoff?.runId ?? null;
+  const handoffPollActive =
+    handoffRunId !== null &&
+    wordHandoffStatus !== null &&
+    wordHandoffStatus.state !== "imported";
+  useEffect(() => {
+    if (!handoffPollActive || !handoffRunId) return;
+    const id = setInterval(() => {
+      void refreshWordHandoffStatus(handoffRunId);
+    }, 4000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoffPollActive, handoffRunId]);
 
   // Live recent-activity feed for the most-recent run. Active until the run
   // reaches a terminal state; the final lines stay visible after failure or
@@ -1056,15 +1206,29 @@ export function JobDetailPage() {
                 {wordHandoffError}
               </p>
             ) : null}
-            {wordHandoff ? (
+            {isPreparingWordHandoff && !wordHandoffStatus ? (
+              <p
+                className="word-handoff-waiting"
+                role="status"
+                aria-label="Claude for Word handoff status"
+              >
+                Preparing Claude for Word handoff…
+              </p>
+            ) : null}
+            {wordHandoff &&
+            wordHandoffStatus &&
+            wordHandoffStatus.state !== "not_prepared" ? (
               <WordHandoffPanel
                 handoff={wordHandoff}
+                status={wordHandoffStatus}
                 copyState={copyState}
                 onCopyPrompt={handleCopyPrompt}
                 onImport={handleImportWordResult}
                 importing={isImportingWordResult}
                 importResult={wordImportResult}
                 importError={wordImportError}
+                onRegenerate={handleRegenerateWordHandoff}
+                regenerating={isPreparingWordHandoff}
               />
             ) : null}
           </WorkspaceStep>
