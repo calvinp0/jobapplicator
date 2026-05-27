@@ -865,14 +865,13 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def test_runtime_prompt_requests_docx_skill():
-    """The shipped runtime prompt must ask Claude to use the DOCX skill.
-
-    Tracking task 074: the auto path should explicitly request the
-    DOCX / Word document skill when generating tailored_resume.docx so
-    Claude produces a real Word document instead of plain text dumped
-    into a .docx.
-    """
+def test_runtime_prompt_mentions_docx_word_skill_as_fallback():
+    """Task 074 originally asked Claude to use the DOCX skill for the
+    primary DOCX. Task 111 moved DOCX rendering to a deterministic
+    backend renderer, so the prompt must still mention the DOCX / Word
+    document skill but as an optional fallback path rather than the
+    primary one. The skill is named so a reader can locate the fallback
+    section."""
     prompt_path = _repo_root() / "runtime_prompts" / "resume_tailoring.md"
     text = prompt_path.read_text(encoding="utf-8")
     assert "DOCX / Word document skill" in text
@@ -894,41 +893,39 @@ def test_expected_outputs_includes_ats_audit():
     assert "ats_audit.md" in EXPECTED_OUTPUTS
 
 
-def test_runtime_prompt_requests_office_word_mcp():
-    """The shipped runtime prompt must prefer the Office Word MCP server.
+def test_runtime_prompt_office_word_mcp_remains_as_fallback():
+    """The shipped runtime prompt must keep the Office Word MCP server
+    documented as a fallback path.
 
-    Tracking task 075: the auto path should explicitly tell Claude Code
-    to use the ``word-document-server`` MCP server when available, and
-    to prioritize it over the DOCX skill / fallback generation.
+    Task 075 originally made the Office Word MCP the primary DOCX
+    producer. Task 111 moved that responsibility to the deterministic
+    backend renderer; the MCP and DOCX skill remain documented as
+    optional fallbacks for human-in-the-loop edits, and the prompt must
+    still name them so an operator can locate the fallback path.
     """
     prompt_path = _repo_root() / "runtime_prompts" / "resume_tailoring.md"
     text = prompt_path.read_text(encoding="utf-8")
 
     # The prompt must name the connected MCP server explicitly so Claude
-    # Code can pick the right tool when it inspects available MCPs.
+    # Code can pick the right tool when taking the fallback path.
     assert "word-document-server" in text
     assert "Office Word MCP" in text
+    # The DOCX / Word document skill must also remain documented.
+    assert "DOCX / Word document skill" in text
 
-    # The Office Word MCP must come before the DOCX skill, and the DOCX
-    # skill must come before fallback DOCX generation, in the priority
-    # ordering Claude Code is told to follow.
-    mcp_pos = text.find("Office Word MCP")
-    skill_pos = text.find("DOCX / Word document skill")
-    fallback_pos = text.find("fallback DOCX generation")
-    assert mcp_pos != -1 and skill_pos != -1 and fallback_pos != -1
-    assert mcp_pos < skill_pos < fallback_pos
-
-    # If a source DOCX exists, the prompt must say to copy/edit it as the
-    # base rather than rebuilding from scratch.
-    assert "copy it as the editable base" in text
-    assert "edit relevant text in place" in text
+    # If a source DOCX exists, the prompt's master-DOCX section must
+    # still describe the copy/edit workflow as the fallback formatting
+    # source. The original sentence is capitalized as "Copy" in the
+    # numbered workflow steps.
+    assert "Copy `input/master_resume.docx` as the editable base" in text
 
     # The prompt must still say the DOCX is not a plain-text dump.
     assert "not a plain-text dump" in text
 
-    # The prompt must still require post-generation validation that the
-    # DOCX exists with nonzero size.
-    assert "exists and has nonzero size" in text
+    # The new primary path must be explicitly documented: backend
+    # deterministic renderer reads tailored_resume.json.
+    assert "output/tailored_resume.json" in text
+    assert "deterministic" in text.lower()
 
     # The non-interactive contract from task 057 must still be present.
     assert "Do not ask clarifying questions" in text

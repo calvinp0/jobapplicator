@@ -38,6 +38,7 @@ EVIDENCE_SOURCES_INDEX_FILENAME = "evidence_sources_index.md"
 EXPECTED_OUTPUTS = (
     "tailored_resume.docx",
     "tailored_resume.md",
+    "tailored_resume.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",

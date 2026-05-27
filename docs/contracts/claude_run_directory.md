@@ -20,12 +20,13 @@ runs/<run_id>/
 │   ├── master_resume_extracted.md           # written by the backend when a DOCX is present
 │   └── master_resume_extraction_error.md    # written instead if extraction fails
 ├── output/
-│   ├── tailored_resume.docx
+│   ├── tailored_resume.json         # structured resume content; source of truth for the renderer
+│   ├── tailored_resume.docx         # rendered deterministically by the backend from the JSON
 │   ├── tailored_resume.md
 │   ├── change_log.md
 │   ├── claim_audit.md
 │   ├── ats_audit.md
-│   ├── template_fidelity_audit.md   # optional; requested when a master DOCX is present
+│   ├── template_fidelity_audit.md   # written deterministically by the backend renderer
 │   └── recruiter_review.md          # optional; recruiter/hiring-manager simulated review
 ├── progress/
 │   └── progress.log              # user-facing phase events + worker heartbeats
@@ -289,15 +290,29 @@ input/master_resume_extraction_error.md
 Claude Code may write:
 
 ```text
-output/tailored_resume.docx
+output/tailored_resume.json
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
-output/template_fidelity_audit.md
 output/recruiter_review.md
 progress/progress.log
 ```
+
+`output/tailored_resume.json` is the structured tailored resume
+content and the source of truth for the deterministic DOCX renderer
+(task 111). The backend reads this file after Claude exits, validates
+its schema, and renders `output/tailored_resume.docx` and
+`output/template_fidelity_audit.md` deterministically — Claude is no
+longer responsible for producing either of those files. See "Structured
+Tailored Resume JSON" below for the schema, and
+`backend/app/resume_docx_renderer.py` for the renderer.
+
+Claude may still optionally produce a preview/fallback
+`output/tailored_resume.docx` through the Office Word MCP server or
+the DOCX / Word document skill, but the backend deterministic
+renderer overrides that file with its own output. Treat the structured
+JSON, not any Claude-generated DOCX, as the canonical artifact.
 
 `output/ats_audit.md` is the structured ATS audit emitted by the
 tailoring worker. It records the keywords extracted from the job
@@ -308,16 +323,16 @@ runs missing this file are marked failed by the same output validation
 that gates the other required outputs.
 
 `output/template_fidelity_audit.md` is the structured template
-fidelity audit. It records how well the tailored DOCX preserves the
-master resume's visual template (centered header, colored headings,
-horizontal separators, bullet lists, date alignment, margins, font
-family/size, section spacing) and lists any known deviations and
-remediation steps. The audit is *optional* in the worker output
-contract today (task 107): a run is not marked failed when it is
-absent. The worker logs a ``warning: template fidelity audit missing``
-line when a master DOCX is present but the audit was not produced, so
-the operator can spot the regression. The runtime prompt still lists
-the audit as a required output for Claude.
+fidelity audit. As of task 111 it is written **deterministically by
+the backend renderer** (`backend/app/resume_docx_renderer.py`) after
+Claude exits, alongside `output/tailored_resume.docx`. It records the
+rendering mode (deterministic backend renderer vs. fallback), the
+source DOCX (when present), which style features the renderer applied
+(centered header, colored section headings, horizontal separators,
+bullet lists, margins, font family/size, section spacing), and known
+limitations. The audit is no longer produced by Claude and no longer
+falls under the "optional output" warning behavior; if the renderer
+runs successfully, the audit exists.
 
 `output/recruiter_review.md` is the simulated recruiter/hiring-manager
 review of the tailored resume against the target company and role
@@ -332,6 +347,71 @@ when the review was not produced, and the runtime prompts (first-draft
 and revision) still list the review as a required output for Claude.
 
 Claude Code must not write outside the run directory.
+
+### Structured Tailored Resume JSON
+
+`output/tailored_resume.json` is the structured tailored resume
+content. It is the source of truth for the deterministic DOCX renderer
+introduced in task 111. The backend rejects a run whose JSON is
+missing or fails schema validation, with a clear error like
+`expected output file missing: output/tailored_resume.json` or
+`invalid tailored resume JSON: <reason>`.
+
+Schema (stable, evolved additively):
+
+```json
+{
+  "header": {
+    "name": "Full Name",
+    "contact_items": ["email", "linkedin", "github", "City, Country"],
+    "subtitle": "Optional subtitle line"
+  },
+  "sections": [
+    {"type": "summary",      "heading": "PROFESSIONAL SUMMARY", "paragraphs": ["..."]},
+    {"type": "skills",       "heading": "SKILLS",
+      "groups": [{"label": "Languages", "items": ["Python"]}]},
+    {"type": "experience",   "heading": "EXPERIENCE",
+      "entries": [{
+        "title": "...", "organization": "...", "location": "...",
+        "dates": "2024 – Present", "subtitle": "...", "bullets": ["..."]
+      }]},
+    {"type": "education",    "heading": "EDUCATION",
+      "entries": [{
+        "institution": "...", "degree": "...",
+        "dates": "...", "location": "..."
+      }]},
+    {"type": "publications", "heading": "PUBLICATIONS", "items": ["..."]}
+  ],
+  "metadata": {
+    "target_company": "...",
+    "target_job_title": "...",
+    "generated_for_ats": true
+  }
+}
+```
+
+Rules:
+
+- `header.name` is required and must be non-empty.
+- `sections` must be a non-empty array.
+- Section `type` must be one of: `summary`, `skills`, `experience`,
+  `education`, `publications`, `projects`, `certifications`, `awards`,
+  `other`.
+- `summary` uses `paragraphs`; `skills` uses `groups`; `experience`
+  and `education` use `entries`; `publications`, `projects`,
+  `certifications`, `awards`, and `other` use `items`.
+- Bullets are plain strings (one bullet per array element). Do not
+  bake `•`, `-`, or newlines into bullet strings.
+- The JSON must not encode layout hints (fonts, colors, margins).
+  Layout is owned by the renderer.
+
+The renderer is `backend/app/resume_docx_renderer.py`. It applies a
+stable professional style (centered name/header, centered contact
+line, blue uppercase section headings, horizontal separators, real
+Word bullet lists, consistent margins and spacing) regardless of
+whether a master DOCX was provided. Word MCP / Claude for Word
+remains available as a manual fallback for human-in-the-loop edits
+when the deterministic renderer is insufficient.
 
 `progress/progress.log` is an append-only stream of short user-facing phase
 events (e.g., `Reading job description`, `Drafting tailored resume markdown`).

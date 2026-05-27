@@ -5,6 +5,16 @@ frontend, Claude Code, and the optional Office Word MCP. This file is
 a short quick-reference for the pieces users most often re-install on
 a new machine.
 
+> **Note on DOCX rendering.** As of task 111 the tailored resume DOCX
+> (`output/tailored_resume.docx`) is rendered deterministically by the
+> backend from `output/tailored_resume.json` using
+> `backend/app/resume_docx_renderer.py`. The renderer relies only on
+> `python-docx`, which is already installed as part of the backend
+> dependencies — no extra setup is required. Office Word MCP / Claude
+> for Word remains available as an optional manual fallback (see
+> [`docs/office_word_mcp_setup.md`](docs/office_word_mcp_setup.md))
+> but is no longer the primary formatting path.
+
 For the browser extension specifically, see
 [`docs/browser_extension.md`](docs/browser_extension.md).
 

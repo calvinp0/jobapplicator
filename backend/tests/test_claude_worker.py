@@ -21,9 +21,25 @@ CANDIDATE_FILES = (
 ALL_OUTPUTS = (
     "tailored_resume.md",
     "tailored_resume.docx",
+    "tailored_resume.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+)
+
+
+MINIMAL_VALID_RESUME_JSON = (
+    '{\n'
+    '  "header": {"name": "Test Candidate", "contact_items": ["test@example.com"]},\n'
+    '  "sections": [\n'
+    '    {"type": "summary", "heading": "SUMMARY",\n'
+    '     "paragraphs": ["Engineer with experience building things."]},\n'
+    '    {"type": "experience", "heading": "EXPERIENCE",\n'
+    '     "entries": [{"title": "Engineer", "organization": "Acme",\n'
+    '                  "dates": "2024", "bullets": ["Built systems."]}]}\n'
+    '  ],\n'
+    '  "metadata": {"target_company": "Acme", "target_job_title": "ML Engineer"}\n'
+    '}\n'
 )
 
 
@@ -43,6 +59,7 @@ def _write_fake_binary(
     """
     binary = tmp_path / f"fake_claude_{exit_code}_{'_'.join(write_outputs) or 'none'}"
     outputs_repr = repr(list(write_outputs))
+    json_payload_repr = repr(MINIMAL_VALID_RESUME_JSON)
     body = textwrap.dedent(
         f"""\
         #!{sys.executable}
@@ -61,8 +78,12 @@ def _write_fake_binary(
         (cwd / "stdin_received.txt").write_text(stdin_blob, encoding="utf-8")
         out = cwd / "output"
         out.mkdir(parents=True, exist_ok=True)
+        _json_payload = {json_payload_repr}
         for name in {outputs_repr}:
-            (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
+            if name == "tailored_resume.json":
+                (out / name).write_text(_json_payload, encoding="utf-8")
+            else:
+                (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
         {extra_body}
         sys.exit({exit_code})
         """
@@ -251,9 +272,16 @@ def test_invoke_run_dry_run_skips_subprocess(client, tmp_path, monkeypatch):
 def test_invoke_run_zero_exit_with_missing_outputs_marks_failed(
     client, tmp_path, monkeypatch
 ):
-    """Claude exit code 0 is not enough — the output contract must be satisfied."""
+    """Claude exit code 0 is not enough — the output contract must be satisfied.
+
+    Task 111 made ``output/tailored_resume.json`` the first gated output:
+    the deterministic renderer needs it before it can produce the final
+    DOCX, so a Claude that exits cleanly without writing the structured
+    JSON fails the run with a clear missing-file message.
+    """
     run = _seed_run(client, tmp_path, monkeypatch)
-    # Subprocess "succeeds" but only writes one of the four required files.
+    # Subprocess "succeeds" but writes the markdown projection without
+    # producing the structured JSON the renderer needs.
     binary = _write_fake_binary(
         tmp_path,
         exit_code=0,
@@ -269,16 +297,44 @@ def test_invoke_run_zero_exit_with_missing_outputs_marks_failed(
     assert body["completed_at"] is not None
     message = body["error_message"]
     assert "expected output file missing" in message
-    # All three missing files must be named so the user can see what went wrong.
+    assert "output/tailored_resume.json" in message
+
+
+def test_invoke_run_zero_exit_with_json_only_marks_failed_for_remaining_outputs(
+    client, tmp_path, monkeypatch
+):
+    """JSON present + everything else missing still fails the contract.
+
+    The deterministic renderer produces the DOCX and the template
+    fidelity audit from the JSON, so those two files appear; the rest
+    of the output contract (markdown, change log, audits) is still
+    required.
+    """
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(
+        tmp_path,
+        exit_code=0,
+        write_outputs=("tailored_resume.json",),
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["status"] == "failed"
+    message = body["error_message"]
+    assert "expected output file missing" in message
     for missing in (
-        "output/tailored_resume.docx",
+        "output/tailored_resume.md",
         "output/change_log.md",
         "output/claim_audit.md",
         "output/ats_audit.md",
     ):
         assert missing in message, f"{missing!r} not in {message!r}"
-    # The one file that was written must NOT be listed as missing.
-    assert "output/tailored_resume.md" not in message
+    # JSON and DOCX (rendered from JSON) must not appear as missing.
+    assert "output/tailored_resume.json" not in message
+    assert "output/tailored_resume.docx" not in message
 
 
 def test_invoke_run_zero_exit_with_all_outputs_marks_completed(
@@ -410,7 +466,9 @@ def test_invoke_run_missing_outputs_marks_failed_under_print_mode(
 
     A fake Claude that writes nothing (mimicking a run that drifted into a
     conversational response and produced no files) must result in
-    ``failed`` even though the subprocess exits cleanly.
+    ``failed`` even though the subprocess exits cleanly. Task 111 made
+    the structured JSON the first gate, so the missing-file message
+    names it explicitly.
     """
     run = _seed_run(client, tmp_path, monkeypatch)
     binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=())
@@ -421,14 +479,8 @@ def test_invoke_run_missing_outputs_marks_failed_under_print_mode(
     body = resp.json()
     assert body["status"] == "failed"
     message = body["error_message"]
-    for missing in (
-        "output/tailored_resume.md",
-        "output/tailored_resume.docx",
-        "output/change_log.md",
-        "output/claim_audit.md",
-        "output/ats_audit.md",
-    ):
-        assert missing in message
+    assert "expected output file missing" in message
+    assert "output/tailored_resume.json" in message
 
 
 def test_invoke_run_permission_mode_env_override(client, tmp_path, monkeypatch):
@@ -1450,14 +1502,13 @@ def test_invoke_run_logs_template_fidelity_audit_expected_when_master_docx_prese
     ) in log_text
 
 
-def test_invoke_run_warns_when_template_fidelity_audit_missing(
+def test_invoke_run_writes_template_fidelity_audit_deterministically(
     client, tmp_path, monkeypatch
 ):
-    """When a master DOCX is staged but Claude omits the template
-    fidelity audit, the worker must record a warning line so the
-    operator can see the audit was expected and missing. The run still
-    completes because the audit is optional (task 107 elected not to
-    expand EXPECTED_OUTPUTS to avoid breaking import tests)."""
+    """Task 111: the renderer writes ``template_fidelity_audit.md`` from
+    the structured JSON regardless of whether Claude produced one, so
+    the "missing audit" warning that task 107 introduced should never
+    fire on a successful run."""
     run = _seed_run(client, tmp_path, monkeypatch)
     input_dir = Path(run["run_dir"]) / "input"
     _write_master_resume_docx(input_dir)
@@ -1470,11 +1521,14 @@ def test_invoke_run_warns_when_template_fidelity_audit_missing(
     body = resp.json()
     assert body["status"] == "completed"
 
-    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
-    assert (
-        "jobapply: warning: template fidelity audit missing at "
-        "output/template_fidelity_audit.md"
-    ) in log_text
+    run_dir = Path(body["run_dir"])
+    audit_path = run_dir / "output" / "template_fidelity_audit.md"
+    assert audit_path.is_file()
+    audit_text = audit_path.read_text(encoding="utf-8")
+    assert "Deterministic backend DOCX renderer" in audit_text
+
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert "template fidelity audit missing" not in log_text
 
 
 def test_invoke_run_no_audit_warning_when_no_master_docx(
