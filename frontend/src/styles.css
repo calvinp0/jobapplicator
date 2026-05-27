@@ -1964,6 +1964,51 @@ button[type="submit"]:disabled,
   color: #1f6a2a;
 }
 
+.word-handoff-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.word-handoff-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+
+.word-handoff-file-mark {
+  width: 1em;
+  text-align: center;
+  font-weight: 600;
+}
+
+.word-handoff-file-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.word-handoff-file-path {
+  font-size: 11px;
+  color: var(--muted-fg);
+  word-break: break-all;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ----- Applications page (table dashboard) ----- */
 
 .applications-page-header {

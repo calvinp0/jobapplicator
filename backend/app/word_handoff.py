@@ -36,17 +36,35 @@ Manual review required.
 WORD_HANDOFF_DIRNAME = "word_handoff"
 RESUME_DOCX_FILENAME = "01_resume_for_claude_word.docx"
 PROMPT_FILENAME = "02_prompt_for_claude_word.txt"
-JOB_DESCRIPTION_FILENAME = "03_job_description.txt"
-INSTRUCTIONS_FILENAME = "04_instructions.md"
+INSTRUCTIONS_FILENAME = "03_instructions.md"
+
+# Required files for a "prepared" handoff. ``RESUME_DOCX_FILENAME`` is
+# intentionally not included — a markdown-only run is still considered
+# prepared (the operator opens the markdown text in Word manually).
+REQUIRED_HANDOFF_FILES: tuple[str, ...] = (
+    PROMPT_FILENAME,
+    INSTRUCTIONS_FILENAME,
+)
 
 RUN_LOG_FILENAME = "run.log"
 
 WORD_HANDOFF_STATUS = "word_handoff_ready"
 
 # Where the user is asked to save the Claude for Word output. Relative to the
-# run directory; surfaced to the operator via 04_instructions.md and the run
+# run directory; surfaced to the operator via 03_instructions.md and the run
 # log so the import step (a follow-up task) knows where to look.
 EXPECTED_WORD_OUTPUT_RELPATH = "output/word_tailored_resume.docx"
+FINAL_RESUME_RELPATH = "output/final_resume.docx"
+
+# State labels reported by ``get_word_handoff_status``. These are independent
+# of the metadata-level ``status`` field (which describes the broader run
+# workflow) — they describe only the on-disk readiness of the handoff
+# package and the imported Word result. See task 112.
+HANDOFF_STATE_NOT_PREPARED = "not_prepared"
+HANDOFF_STATE_PREPARED = "prepared"
+HANDOFF_STATE_MISSING_FILES = "missing_files"
+HANDOFF_STATE_IMPORT_READY = "import_ready"
+HANDOFF_STATE_IMPORTED = "imported"
 
 # Accepted source resume DOCX names, searched in order inside ``input/``.
 # ``master_resume.docx`` matches the project's existing input naming; the
@@ -109,10 +127,21 @@ def _append_run_log(run_dir: Path, message: str) -> None:
 def _render_prompt(
     job_description: str,
     *,
+    target_job_title: Optional[str] = None,
+    target_company: Optional[str] = None,
     resume_markdown: Optional[str] = None,
+    evidence_sources_index: Optional[str] = None,
 ) -> str:
+    header_lines = ["Use this document as the source resume and tailor it for the target job."]
+    if target_job_title or target_company:
+        bits: list[str] = []
+        if target_job_title:
+            bits.append(f"Target role: {target_job_title}")
+        if target_company:
+            bits.append(f"Target company: {target_company}")
+        header_lines.append(" — ".join(bits))
     parts = [
-        "Use this document as the source resume and tailor it for the target job.",
+        *header_lines,
         "",
         "Preserve the master resume's existing visual style, including "
         "the centered name/contact header, colored headings (colored "
@@ -129,10 +158,26 @@ def _render_prompt(
         "- Preserve bold/italic emphasis patterns and simple separators.",
         "- Edit inside the resume rather than rebuilding the document from scratch.",
         "- Use tracked changes if available.",
+        "",
+        "Claim and evidence rules:",
         "- Do not invent employers, dates, degrees, technologies, metrics, "
         "publications, awards, responsibilities, or credentials.",
-        "- Only strengthen claims that are supported by the original resume.",
+        "- Only strengthen claims that are supported by the original resume "
+        "or the evidence sources listed below.",
+        "- If a claim is unsupported, omit it rather than weakening it with "
+        "vague language.",
         "- Prefer concise, high-signal bullets.",
+        "",
+        "ATS keyword guidance:",
+        "- Mirror exact keywords from the job description where the resume "
+        "evidence supports them (tools, technologies, certifications, role "
+        "titles).",
+        "- Do not pad the resume with keyword lists that are not anchored "
+        "to real experience.",
+        "- Keep section headings standard (Summary, Skills, Experience, "
+        "Education, Projects, Publications) so an ATS can parse them.",
+        "- Avoid tables, text boxes, columns, or images for content that "
+        "must be ATS-readable.",
         "",
         "Edit these areas first:",
         "1. Summary",
@@ -149,6 +194,15 @@ def _render_prompt(
         job_description.rstrip(),
         "",
     ]
+    if evidence_sources_index is not None:
+        parts.extend(
+            [
+                "## Evidence Sources Index",
+                "",
+                evidence_sources_index.rstrip(),
+                "",
+            ]
+        )
     if resume_markdown is not None:
         parts.extend(
             [
@@ -171,6 +225,27 @@ _INSTRUCTIONS_BODY = """\
 5. Save the completed file as ../output/word_tailored_resume.docx.
 6. Return to JobApplicator and import the Word result.
 """
+
+
+# Parsed from the leading "# <title> — <company>" line that
+# ``run_directory._format_job_description`` writes into ``job_description.md``.
+# Used so the prompt can name the target role explicitly without us having to
+# widen ``create_word_handoff_package`` to take a ``Job`` row.
+def _extract_title_and_company(job_description: str) -> tuple[Optional[str], Optional[str]]:
+    for line in job_description.splitlines():
+        line = line.strip()
+        if not line.startswith("# "):
+            continue
+        header = line[2:].strip()
+        # The em-dash separator is what ``_format_job_description`` writes,
+        # but accept a plain dash as a fallback so manually-edited inputs
+        # do not break the heuristic.
+        for sep in (" — ", " - "):
+            if sep in header:
+                title, company = header.split(sep, 1)
+                return title.strip() or None, company.strip() or None
+        return header or None, None
+    return None, None
 
 
 def create_word_handoff_package(
@@ -230,9 +305,25 @@ def create_word_handoff_package(
     if md_src is not None:
         resume_md_text = md_src.read_text(encoding="utf-8")
 
-    prompt_text = _render_prompt(jd_text, resume_markdown=resume_md_text)
+    target_title, target_company = _extract_title_and_company(jd_text)
+
+    # The evidence sources index lives next to the staged sources at
+    # ``input/evidence_sources_index.md``. It exists for every run
+    # (``run_directory._stage_evidence_sources`` writes a "(none)" stub
+    # when no sources are staged), so include it whenever it is present.
+    evidence_index_path = input_dir / "evidence_sources_index.md"
+    evidence_index_text: Optional[str] = None
+    if evidence_index_path.is_file():
+        evidence_index_text = evidence_index_path.read_text(encoding="utf-8")
+
+    prompt_text = _render_prompt(
+        jd_text,
+        target_job_title=target_title,
+        target_company=target_company,
+        resume_markdown=resume_md_text,
+        evidence_sources_index=evidence_index_text,
+    )
     (handoff_dir / PROMPT_FILENAME).write_text(prompt_text, encoding="utf-8")
-    (handoff_dir / JOB_DESCRIPTION_FILENAME).write_text(jd_text, encoding="utf-8")
     (handoff_dir / INSTRUCTIONS_FILENAME).write_text(
         _INSTRUCTIONS_BODY, encoding="utf-8"
     )
@@ -358,4 +449,122 @@ def import_word_result(
         change_log_placeholder_created=change_log_created,
         claim_audit_placeholder_created=claim_audit_created,
         ats_audit_placeholder_created=ats_audit_created,
+    )
+
+
+# --- handoff status (task 112) ---
+
+
+@dataclass(frozen=True)
+class WordHandoffFileStatus:
+    """One file in a handoff package, with its run-relative path and presence."""
+
+    name: str
+    path: str
+    exists: bool
+
+
+@dataclass(frozen=True)
+class WordHandoffStatusInfo:
+    """Filesystem-derived view of the Word handoff package for a run.
+
+    Drives the UI's decision to show "not prepared", "prepared",
+    "missing files", or "import ready" without depending on
+    metadata.json being in sync with the on-disk files.
+    """
+
+    state: str
+    handoff_dir_relpath: str
+    handoff_dir_exists: bool
+    resume_docx: WordHandoffFileStatus
+    prompt_txt: WordHandoffFileStatus
+    instructions_md: WordHandoffFileStatus
+    expected_output_docx: WordHandoffFileStatus
+    final_resume_docx: WordHandoffFileStatus
+    missing_required_files: tuple[str, ...]
+    message: str
+
+
+def _file_status(
+    *, name: str, run_dir: Path, relpath: str
+) -> WordHandoffFileStatus:
+    exists = (run_dir / relpath).is_file()
+    return WordHandoffFileStatus(name=name, path=relpath, exists=exists)
+
+
+def get_word_handoff_status(run_dir: Path) -> WordHandoffStatusInfo:
+    """Return the on-disk state of the Word handoff package.
+
+    Pure filesystem check — does not read metadata.json, so the result
+    stays consistent even if the handoff folder is deleted out from
+    under a run or its metadata says one thing and the disk says
+    another. The UI relies on this so it never claims the package is
+    prepared before the files actually exist.
+    """
+    run_dir = Path(run_dir)
+    handoff_dir = run_dir / WORD_HANDOFF_DIRNAME
+
+    resume_docx = _file_status(
+        name=RESUME_DOCX_FILENAME,
+        run_dir=run_dir,
+        relpath=f"{WORD_HANDOFF_DIRNAME}/{RESUME_DOCX_FILENAME}",
+    )
+    prompt_txt = _file_status(
+        name=PROMPT_FILENAME,
+        run_dir=run_dir,
+        relpath=f"{WORD_HANDOFF_DIRNAME}/{PROMPT_FILENAME}",
+    )
+    instructions_md = _file_status(
+        name=INSTRUCTIONS_FILENAME,
+        run_dir=run_dir,
+        relpath=f"{WORD_HANDOFF_DIRNAME}/{INSTRUCTIONS_FILENAME}",
+    )
+    expected_output_docx = _file_status(
+        name=WORD_RESULT_FILENAME,
+        run_dir=run_dir,
+        relpath=EXPECTED_WORD_OUTPUT_RELPATH,
+    )
+    final_resume_docx = _file_status(
+        name=FINAL_RESUME_FILENAME,
+        run_dir=run_dir,
+        relpath=FINAL_RESUME_RELPATH,
+    )
+
+    handoff_dir_exists = handoff_dir.is_dir()
+    missing_required: list[str] = []
+    if handoff_dir_exists:
+        for required in REQUIRED_HANDOFF_FILES:
+            if not (handoff_dir / required).is_file():
+                missing_required.append(required)
+
+    if final_resume_docx.exists:
+        state = HANDOFF_STATE_IMPORTED
+        message = "Claude for Word result imported."
+    elif expected_output_docx.exists:
+        state = HANDOFF_STATE_IMPORT_READY
+        message = "Word result detected — ready to import."
+    elif not handoff_dir_exists:
+        state = HANDOFF_STATE_NOT_PREPARED
+        message = "Claude for Word handoff is not prepared yet."
+    elif missing_required:
+        state = HANDOFF_STATE_MISSING_FILES
+        message = (
+            "Claude for Word handoff folder exists, but required files are "
+            "missing: " + ", ".join(missing_required)
+        )
+    else:
+        state = HANDOFF_STATE_PREPARED
+        message = "Claude for Word handoff is ready."
+
+    return WordHandoffStatusInfo(
+        state=state,
+        handoff_dir_relpath=WORD_HANDOFF_DIRNAME,
+        handoff_dir_exists=handoff_dir_exists,
+        resume_docx=resume_docx,
+        prompt_txt=prompt_txt,
+        instructions_md=instructions_md,
+        expected_output_docx=expected_output_docx,
+        final_resume_docx=final_resume_docx,
+        missing_required_files=tuple(missing_required),
+        message=message,
     )

@@ -44,6 +44,7 @@ import type {
   RunLog,
   RunProgress,
   WordHandoffMetadata,
+  WordHandoffStatus,
   WordHandoffTextRead,
   WordResultImportResponse,
 } from "./types";
@@ -94,6 +95,7 @@ export type {
   RunLog,
   RunProgress,
   WordHandoffMetadata,
+  WordHandoffStatus,
   WordHandoffTextRead,
   WordResultImportResponse,
 };
@@ -229,6 +231,12 @@ export function createWordHandoff(runId: string): Promise<WordHandoffMetadata> {
 
 export function getWordHandoff(runId: string): Promise<WordHandoffMetadata> {
   return apiRequest(`/runs/${runId}/word-handoff`);
+}
+
+export function getWordHandoffStatus(
+  runId: string,
+): Promise<WordHandoffStatus> {
+  return apiRequest(`/runs/${runId}/word-handoff/status`);
 }
 
 export function getWordHandoffPrompt(

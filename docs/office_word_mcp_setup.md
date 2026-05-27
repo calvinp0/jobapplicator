@@ -339,6 +339,40 @@ Claude for Word, accepts edits in Word, and re-imports the result.
 The Office Word MCP, by contrast, runs *inside* the non-interactive
 `auto` tailoring path. The user does not touch Word during the run.
 
+### Claude for Word handoff package and lifecycle
+
+The handoff package is created by `POST /runs/{run_id}/word-handoff`
+and lives at:
+
+```text
+runs/<run_id>/word_handoff/
+├── 01_resume_for_claude_word.docx
+├── 02_prompt_for_claude_word.txt
+└── 03_instructions.md
+```
+
+The operator opens `01_resume_for_claude_word.docx` in Word, opens
+Claude for Word, pastes the contents of `02_prompt_for_claude_word.txt`
+into the conversation, accepts the edits, and saves the result as:
+
+```text
+runs/<run_id>/output/word_tailored_resume.docx
+```
+
+`GET /runs/{run_id}/word-handoff/status` is the source of truth for
+the UI state. It checks the filesystem and reports one of
+`not_prepared`, `prepared`, `missing_files`, `import_ready`, or
+`imported` along with a per-file existence map (see
+`docs/contracts/claude_run_directory.md`). The cockpit only shows the
+prompt + instructions once `state == prepared`, only shows the
+*Import Word Result* button once the saved Word output exists
+(`state == import_ready`), and surfaces a *Regenerate handoff
+package* action when files are missing.
+
+Posting to `POST /runs/{run_id}/import-word-result` copies the saved
+Word document to `output/final_resume.docx` and advances the run to
+`completed`.
+
 ## How this differs from Google Docs
 
 Google Docs MCP is not part of the core `auto` DOCX path.

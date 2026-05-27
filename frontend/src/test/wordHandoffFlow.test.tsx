@@ -16,6 +16,7 @@ const {
   createWordHandoffMock,
   getWordHandoffPromptMock,
   getWordHandoffInstructionsMock,
+  getWordHandoffStatusMock,
   importWordResultMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
@@ -42,6 +43,7 @@ const {
     createWordHandoffMock: vi.fn(),
     getWordHandoffPromptMock: vi.fn(),
     getWordHandoffInstructionsMock: vi.fn(),
+    getWordHandoffStatusMock: vi.fn(),
     importWordResultMock: vi.fn(),
     ApiErrorMock,
   };
@@ -61,6 +63,7 @@ vi.mock("../api", () => ({
   createWordHandoff: createWordHandoffMock,
   getWordHandoffPrompt: getWordHandoffPromptMock,
   getWordHandoffInstructions: getWordHandoffInstructionsMock,
+  getWordHandoffStatus: getWordHandoffStatusMock,
   importWordResult: importWordResultMock,
   getRun: vi.fn(() => new Promise(() => {})),
   importRun: vi.fn(() => new Promise(() => {})),
@@ -133,9 +136,56 @@ const metadata = {
   handoff_dir: "runs/run-word-1/word_handoff",
   resume_docx: "runs/run-word-1/word_handoff/01_resume_for_claude_word.docx",
   prompt_file: "runs/run-word-1/word_handoff/02_prompt_for_claude_word.txt",
-  instructions_file: "runs/run-word-1/word_handoff/04_instructions.md",
+  instructions_file: "runs/run-word-1/word_handoff/03_instructions.md",
   expected_output: "runs/run-word-1/output/word_tailored_resume.docx",
 };
+
+function makeStatus(overrides: Partial<{
+  state: "not_prepared" | "prepared" | "missing_files" | "import_ready" | "imported";
+  resume_docx: boolean;
+  prompt_txt: boolean;
+  instructions_md: boolean;
+  expected_output_docx: boolean;
+  final_resume_docx: boolean;
+  missing_required_files: string[];
+}> = {}) {
+  const state = overrides.state ?? "prepared";
+  return {
+    run_id: "run-word-1",
+    state,
+    handoff_dir: "runs/run-word-1/word_handoff",
+    handoff_dir_exists: state !== "not_prepared",
+    files: {
+      resume_docx: {
+        name: "01_resume_for_claude_word.docx",
+        path: "runs/run-word-1/word_handoff/01_resume_for_claude_word.docx",
+        exists: overrides.resume_docx ?? true,
+      },
+      prompt_txt: {
+        name: "02_prompt_for_claude_word.txt",
+        path: "runs/run-word-1/word_handoff/02_prompt_for_claude_word.txt",
+        exists: overrides.prompt_txt ?? true,
+      },
+      instructions_md: {
+        name: "03_instructions.md",
+        path: "runs/run-word-1/word_handoff/03_instructions.md",
+        exists: overrides.instructions_md ?? true,
+      },
+      expected_output_docx: {
+        name: "word_tailored_resume.docx",
+        path: "runs/run-word-1/output/word_tailored_resume.docx",
+        exists: overrides.expected_output_docx ?? false,
+      },
+      final_resume_docx: {
+        name: "final_resume.docx",
+        path: "runs/run-word-1/output/final_resume.docx",
+        exists: overrides.final_resume_docx ?? false,
+      },
+    },
+    missing_required_files: overrides.missing_required_files ?? [],
+    message: "test status",
+  };
+}
 
 describe("JobDetailPage Claude for Word handoff flow", () => {
   beforeEach(() => {
@@ -157,6 +207,7 @@ describe("JobDetailPage Claude for Word handoff flow", () => {
       run_id: "run-word-1",
       content: "INSTRUCTIONS BODY HERE",
     });
+    getWordHandoffStatusMock.mockResolvedValue(makeStatus({ state: "prepared" }));
   });
 
   afterEach(() => {
@@ -243,6 +294,10 @@ describe("JobDetailPage Claude for Word handoff flow", () => {
       message: "save it first",
       expected_output: "runs/run-word-1/output/word_tailored_resume.docx",
     });
+    // Pretend the operator saved the file so the Import button renders.
+    getWordHandoffStatusMock.mockResolvedValue(
+      makeStatus({ state: "import_ready", expected_output_docx: true }),
+    );
     renderJob("job-1");
     await waitFor(() =>
       expect(
@@ -270,6 +325,125 @@ describe("JobDetailPage Claude for Word handoff flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not show the handoff panel when status reports not_prepared", async () => {
+    const user = userEvent.setup();
+    // Even after the POST returns, if the filesystem check says no folder,
+    // the UI must not claim the handoff is prepared (task 112).
+    getWordHandoffStatusMock.mockResolvedValue(
+      makeStatus({ state: "not_prepared", resume_docx: false, prompt_txt: false, instructions_md: false }),
+    );
+    renderJob("job-1");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^prepare for claude for word$/i }),
+    );
+    await waitFor(() => expect(createWordHandoffMock).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("region", { name: /claude for word handoff/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders folder path and file existence indicators when prepared", async () => {
+    const user = userEvent.setup();
+    renderJob("job-1");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^prepare for claude for word$/i }),
+    );
+    const panel = await screen.findByRole("region", {
+      name: /claude for word handoff/i,
+    });
+    // Folder path is shown so the operator knows where the files live.
+    expect(
+      within(panel).getAllByText(/runs\/run-word-1\/word_handoff/i).length,
+    ).toBeGreaterThan(0);
+    // Each required file is listed with its name.
+    expect(
+      within(panel).getAllByText(/01_resume_for_claude_word\.docx/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(panel).getAllByText(/02_prompt_for_claude_word\.txt/i).length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(panel).getAllByText(/03_instructions\.md/i).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("hides the Import button until the Word result file is on disk", async () => {
+    const user = userEvent.setup();
+    renderJob("job-1");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^prepare for claude for word$/i }),
+    );
+    const panel = await screen.findByRole("region", {
+      name: /claude for word handoff/i,
+    });
+    expect(
+      within(panel).queryByRole("button", { name: /import word result/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByText(/word result not detected yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("offers a regenerate action when files are missing", async () => {
+    const user = userEvent.setup();
+    getWordHandoffStatusMock.mockResolvedValue(
+      makeStatus({
+        state: "missing_files",
+        prompt_txt: false,
+        missing_required_files: ["02_prompt_for_claude_word.txt"],
+      }),
+    );
+    renderJob("job-1");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /senior engineer/i }),
+      ).toBeInTheDocument(),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(/master resume/i),
+      "resume-1",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^prepare for claude for word$/i }),
+    );
+    const panel = await screen.findByRole("region", {
+      name: /claude for word handoff/i,
+    });
+    expect(
+      within(panel).getByRole("button", { name: /regenerate handoff/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByText(/02_prompt_for_claude_word\.txt/i),
+    ).toBeInTheDocument();
+  });
+
   it("shows the final resume location when import succeeds", async () => {
     const user = userEvent.setup();
     importWordResultMock.mockResolvedValue({
@@ -279,6 +453,9 @@ describe("JobDetailPage Claude for Word handoff flow", () => {
       word_result: "runs/run-word-1/output/word_tailored_resume.docx",
       final_resume: "runs/run-word-1/output/final_resume.docx",
     });
+    getWordHandoffStatusMock.mockResolvedValue(
+      makeStatus({ state: "import_ready", expected_output_docx: true }),
+    );
     renderJob("job-1");
     await waitFor(() =>
       expect(

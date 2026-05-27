@@ -48,8 +48,7 @@ following layout into `runs/<run_id>/word_handoff/`:
 word_handoff/
 ├── 01_resume_for_claude_word.docx   # source DOCX, copied from input/ when present
 ├── 02_prompt_for_claude_word.txt    # prompt the user pastes into Claude for Word
-├── 03_job_description.txt           # the captured job description text
-└── 04_instructions.md               # manual steps for the operator
+└── 03_instructions.md               # manual steps for the operator
 ```
 
 The numeric prefixes reflect reading order; the directory is opened by a
@@ -93,6 +92,32 @@ directory path and the expected Word output relative path
 
 The Word output itself is imported by a follow-up step (the run-import
 flow); creating the handoff package only stages inputs and records intent.
+
+### Handoff lifecycle states
+
+`GET /runs/{run_id}/word-handoff/status` reports the on-disk state of the
+package, independently of `metadata.json`. The UI uses these states to
+decide which controls and copy to render, so the handoff is never claimed
+to be "prepared" before the files actually exist on disk:
+
+- `not_prepared` — `word_handoff/` does not exist. The "Prepare for
+  Claude for Word" button is enabled.
+- `prepared` — `word_handoff/` exists and contains every required file
+  (`02_prompt_for_claude_word.txt`, `03_instructions.md`). The prompt
+  and instructions panel is rendered along with the folder path and a
+  per-file existence list.
+- `missing_files` — `word_handoff/` exists but at least one required
+  file is absent (typically because the operator deleted or moved
+  something). The UI surfaces the missing names and exposes a
+  *Regenerate handoff package* action.
+- `import_ready` — `output/word_tailored_resume.docx` is present and
+  non-empty. The *Import Word Result* button is rendered.
+- `imported` — `output/final_resume.docx` is present. Post-import
+  success copy is rendered.
+
+The status endpoint is a pure filesystem check — it does not read
+`metadata.json` so it stays accurate even if the package was edited or
+deleted out from under the run.
 
 ## Input Files
 
