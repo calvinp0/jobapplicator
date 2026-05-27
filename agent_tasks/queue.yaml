@@ -2262,7 +2262,7 @@ tasks:
     file: "agent_tasks/112-fix-claude-word-handoff-state-and-files.md"
     branch: "agent/112-fix-claude-word-handoff-state-and-files"
     worktree: "agent-112-fix-claude-word-handoff-state-and-files"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "pytest backend/tests/test_word_handoff.py"
