@@ -2188,7 +2188,7 @@ tasks:
     file: "agent_tasks/109-fix-firefox-linkedin-capture-extraction.md"
     branch: "agent/109-fix-firefox-linkedin-capture-extraction"
     worktree: "agent-109-fix-firefox-linkedin-capture-extraction"
-    status: "ready"
+    status: "done"
     depends_on:
       - "102-fix-firefox-extension-manifest"
     verification:
