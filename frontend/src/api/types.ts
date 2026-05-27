@@ -27,6 +27,21 @@ export interface PromptValidationResult {
   warnings: string[];
 }
 
+export interface CaptureDiagnostics {
+  extractor?: string;
+  selectors_matched?: {
+    title?: boolean;
+    company?: boolean;
+    location?: boolean;
+    description?: boolean;
+  };
+  fallbacks_used?: Record<string, boolean>;
+  document_title?: string | null;
+  body_text_length?: number;
+  url_has_current_job_id?: boolean;
+  has_selected_text?: boolean;
+}
+
 export interface JobCapture {
   id: string;
   source_platform: string;
@@ -39,6 +54,13 @@ export interface JobCapture {
   description_text: string;
   application_method: string | null;
   raw_text: string | null;
+  // Task 109: fallback fields populated by the browser extension when
+  // LinkedIn's structured selectors did not resolve. Older captures may
+  // not have any of these (all nullable).
+  page_title?: string | null;
+  page_text?: string | null;
+  selected_text?: string | null;
+  diagnostics?: CaptureDiagnostics | null;
   captured_at: string;
   user_confirmed: boolean;
   created_at: string;

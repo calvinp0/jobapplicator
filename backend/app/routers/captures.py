@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -64,6 +65,12 @@ def _job_from_capture(capture: JobCapture) -> Job:
 def create_capture(
     payload: JobCaptureCreate, db: Session = Depends(get_db)
 ) -> JobCaptureCreateResponse:
+    diagnostics_json = (
+        json.dumps(payload.diagnostics, ensure_ascii=False)
+        if payload.diagnostics is not None
+        else None
+    )
+
     capture = JobCapture(
         source_platform=payload.source_platform,
         capture_method=payload.capture_method,
@@ -75,6 +82,10 @@ def create_capture(
         description_text=payload.description_text or "",
         application_method=payload.application_method,
         raw_text=payload.raw_text,
+        page_title=payload.page_title,
+        page_text=payload.page_text,
+        selected_text=payload.selected_text,
+        diagnostics_json=diagnostics_json,
         captured_at=payload.captured_at or datetime.now(timezone.utc),
         user_confirmed=False,
     )

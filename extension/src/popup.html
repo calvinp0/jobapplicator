@@ -53,6 +53,18 @@
         background: #ffebe9;
         color: #cf222e;
       }
+      .summary {
+        display: block;
+        margin-top: 4px;
+        font-size: 11px;
+        color: #57606a;
+      }
+      .summary.ok {
+        color: #1a7f37;
+      }
+      .summary.err {
+        color: #9a6700;
+      }
       #job-link,
       #frontend-link {
         display: inline-block;
@@ -119,6 +131,7 @@
       <div class="row"><span class="label">Apply</span><div class="value" id="f-apply"></div></div>
       <div class="row"><span class="label">URL</span><div class="value" id="f-url"></div></div>
       <div class="row"><span class="label" id="f-desc-label">Description</span><pre id="f-desc"></pre></div>
+      <div class="row"><span class="summary" id="f-summary" hidden></span></div>
     </div>
     <script src="popup.js"></script>
   </body>

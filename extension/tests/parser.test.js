@@ -194,6 +194,101 @@ describe("parseLinkedInJob — description selector fallback", () => {
   });
 });
 
+describe("parseLinkedInJob — fallback fields and diagnostics", () => {
+  const url =
+    "https://www.linkedin.com/jobs/collections/recommended/?currentJobId=4415730750";
+
+  function buildDoc(headHtml, bodyHtml) {
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${headHtml}</head><body>${bodyHtml}</body></html>`,
+    );
+    return dom.window.document;
+  }
+
+  it("includes page_title and page_text on every parse", async () => {
+    const document = await loadFixtureDocument("linkedin_job_full.html");
+    const payload = parseLinkedInJob({
+      document,
+      url: "https://www.linkedin.com/jobs/view/4012345678/",
+    });
+    expect(payload.page_title).toContain("Senior Machine Learning Engineer");
+    expect(payload.page_text).toBeTruthy();
+    expect(payload.page_text.length).toBeGreaterThan(20);
+    expect(payload.page_text.length).toBeLessThanOrEqual(20000);
+  });
+
+  it("bounds page_text to 20000 chars", () => {
+    const huge = "x".repeat(50000);
+    const document = buildDoc("<title>t</title>", `<p>${huge}</p>`);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.page_text.length).toBe(20000);
+  });
+
+  it("falls back to og:title when structured title is missing", () => {
+    const document = buildDoc(
+      `<title>Doc Title at Example Co | LinkedIn</title>
+       <meta property="og:title" content="OG Captured Title" />`,
+      `<div>no top card at all</div>`,
+    );
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.title).toBe("OG Captured Title");
+    expect(payload.diagnostics.selectors_matched.title).toBe(false);
+    expect(payload.diagnostics.fallbacks_used.og_title).toBe(true);
+  });
+
+  it("falls back to document.title (stripping the LinkedIn suffix) when og:title is also missing", () => {
+    const document = buildDoc(
+      `<title>Senior ML Engineer at Example Co | LinkedIn</title>`,
+      `<div>no top card at all</div>`,
+    );
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.title).toBe("Senior ML Engineer at Example Co");
+    expect(payload.diagnostics.fallbacks_used.document_title).toBe(true);
+  });
+
+  it("falls back to meta description when no description container resolves", () => {
+    const document = buildDoc(
+      `<title>t</title>
+       <meta name="description" content="Meta-level job description text from LinkedIn." />`,
+      `<div>only nav chrome here, no #job-details</div>`,
+    );
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toContain("Meta-level job description");
+    expect(payload.diagnostics.selectors_matched.description).toBe(false);
+    expect(payload.diagnostics.fallbacks_used.meta_description).toBe(true);
+  });
+
+  it("reports url_has_current_job_id and external_job_id together", () => {
+    const document = buildDoc("<title>t</title>", "<div>x</div>");
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.external_job_id).toBe("4415730750");
+    expect(payload.diagnostics.url_has_current_job_id).toBe(true);
+  });
+
+  it("captures selected_text when the caller provides one", () => {
+    const document = buildDoc("<title>t</title>", "<div>x</div>");
+    const payload = parseLinkedInJob({
+      document,
+      url,
+      selectedText: "  user selected this  ",
+    });
+    expect(payload.selected_text).toBe("user selected this");
+    expect(payload.diagnostics.has_selected_text).toBe(true);
+  });
+
+  it("emits diagnostics with extractor=linkedin and selectors_matched flags", () => {
+    const document = buildDoc("<title>t</title>", "<div>x</div>");
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.diagnostics.extractor).toBe("linkedin");
+    expect(payload.diagnostics.selectors_matched).toEqual({
+      title: false,
+      company: false,
+      location: false,
+      description: false,
+    });
+  });
+});
+
 describe("parseLinkedInJob — non-LinkedIn page rejection", () => {
   it("throws when the URL is not a LinkedIn job page", async () => {
     const document = await loadFixtureDocument("non_linkedin_page.html");
