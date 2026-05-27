@@ -1999,3 +1999,133 @@ def test_get_run_recruiter_review_returns_available_false_when_missing(
 def test_get_run_recruiter_review_unknown_run_returns_404(client):
     resp = client.get("/runs/does-not-exist/recruiter-review")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Task 112: require actual structured resume output files
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_prompt_mentions_tailored_resume_json():
+    """The runtime prompt must explicitly name output/tailored_resume.json
+    as a required output file (not just describe the schema)."""
+    text = _runtime_prompt_text()
+    assert "output/tailored_resume.json" in text
+    # The prompt must label the JSON as required, not optional.
+    assert "**required**" in text or "is required" in text
+
+
+def test_runtime_prompt_requires_actually_writing_files():
+    """The prompt must forbid describing files in place of writing them.
+
+    The original failure (run d6df714b) was a Claude that summarized the
+    expected files in its response and exited 0 without writing them.
+    The prompt must make the "write the files" requirement loud and
+    explicit so the same failure mode cannot recur.
+    """
+    text = _runtime_prompt_text()
+    normalized = _normalize_whitespace(text)
+    assert "Actually write the files" in normalized
+    assert "Do not merely describe what each file should contain" in normalized
+    assert "Do not end your response until the files have been written" in normalized
+    assert "Use shell/file-writing operations if needed" in normalized
+
+
+def test_runtime_prompt_final_checklist_lists_all_required_files():
+    """The Final Verification Checklist must enumerate every required
+    output file by path so the model has a concrete list to verify
+    against before ending its response."""
+    text = _runtime_prompt_text()
+    assert "Final Verification Checklist" in text
+    checklist_idx = text.find("Final Verification Checklist")
+    checklist = text[checklist_idx:]
+    for required in (
+        "output/tailored_resume.json",
+        "output/tailored_resume.md",
+        "output/change_log.md",
+        "output/claim_audit.md",
+        "output/ats_audit.md",
+        "output/template_fidelity_audit.md",
+        "output/recruiter_review.md",
+    ):
+        assert required in checklist, f"missing from checklist: {required!r}"
+
+
+def test_runtime_prompt_includes_structured_resume_schema():
+    """The prompt must carry the structured resume JSON schema so Claude
+    has the exact shape it must produce on disk."""
+    text = _runtime_prompt_text()
+    assert "Structured Resume JSON" in text
+    # Schema sentinels — header.name + sections + the type enum entries.
+    assert '"header"' in text
+    assert '"contact_items"' in text
+    assert '"sections"' in text
+    assert "`summary`" in text
+    assert "`experience`" in text
+
+
+def test_invoke_run_missing_tailored_resume_json_marks_failed(
+    client, tmp_path, monkeypatch
+):
+    """A fake Claude that exits cleanly but writes every output *except*
+    tailored_resume.json must fail with a clear missing-file message
+    naming the JSON path.
+
+    Mirrors run d6df714b: Claude exit code 0 with no JSON on disk.
+    """
+    run = _seed_run(client, tmp_path, monkeypatch)
+    write_outputs = tuple(
+        name for name in ALL_OUTPUTS if name != "tailored_resume.json"
+    )
+    binary = _write_fake_binary(
+        tmp_path, exit_code=0, write_outputs=write_outputs
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "failed"
+    message = body["error_message"]
+    assert "expected output file missing" in message
+    assert "output/tailored_resume.json" in message
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert (
+        "jobapply: structured resume JSON expected at "
+        "output/tailored_resume.json"
+    ) in log_text
+    assert (
+        "jobapply: expected output file missing: "
+        "output/tailored_resume.json"
+    ) in log_text
+
+
+def test_invoke_run_with_tailored_resume_json_passes_validation(
+    client, tmp_path, monkeypatch
+):
+    """A fake Claude that writes the full output set including a valid
+    tailored_resume.json must reach completed, and the worker log must
+    show the validation step explicitly so operators can see the
+    structured JSON was checked."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["error_message"] is None
+
+    run_dir = Path(body["run_dir"])
+    json_path = run_dir / "output" / "tailored_resume.json"
+    assert json_path.is_file()
+    assert json_path.read_text(encoding="utf-8").strip()
+
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert (
+        "jobapply: structured resume JSON expected at "
+        "output/tailored_resume.json"
+    ) in log_text
+    assert "jobapply: validating structured resume JSON" in log_text

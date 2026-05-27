@@ -333,6 +333,13 @@ longer responsible for producing either of those files. See "Structured
 Tailored Resume JSON" below for the schema, and
 `backend/app/resume_docx_renderer.py` for the renderer.
 
+The runtime prompt requires Claude to **actually write the files on
+disk** and includes a Final Verification Checklist enumerating each
+required path. A response that describes the expected files in prose
+without writing them counts as missing files — exit code 0 alone is
+not enough to mark the run completed (run d6df714b regressed on this
+before the prompt mandate was hardened).
+
 Claude may still optionally produce a preview/fallback
 `output/tailored_resume.docx` through the Office Word MCP server or
 the DOCX / Word document skill, but the backend deterministic

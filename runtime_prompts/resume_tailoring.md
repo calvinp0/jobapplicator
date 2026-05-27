@@ -168,7 +168,11 @@ limitations in `output/claim_audit.md`.
 
 ## Required Outputs
 
-Write:
+You must create the following files on disk inside this run directory.
+Actually write the files. Do not merely describe what each file should
+contain. Do not summarize the contents in your reply instead of writing
+the file. Use shell, file-writing, or editor operations as needed to
+ensure each file exists on disk and is non-empty before you finish.
 
 ```text
 output/tailored_resume.json
@@ -179,11 +183,16 @@ output/ats_audit.md
 output/recruiter_review.md
 ```
 
+`output/tailored_resume.json` is **required**. The backend will fail
+the run if `output/tailored_resume.json` is missing or invalid — a
+response that describes the JSON but does not write the file counts as
+a missing file. See the "Structured Resume JSON" section below for the
+required schema.
+
 `output/tailored_resume.json` is the structured tailored resume content
 and is the **source of truth** for the final DOCX. The backend deterministic
 DOCX renderer reads this file and produces
-`output/tailored_resume.docx` from it. See the "Structured Resume JSON"
-section below for the required schema.
+`output/tailored_resume.docx` from it.
 
 You should still write `output/tailored_resume.md` so the markdown
 preview, claim audit, and run import flow have a stable textual
@@ -894,3 +903,34 @@ Do not create a plain-text dump inside a DOCX. Real Word headings,
 paragraphs, and bullet structures are still expected even on the
 fallback path. Any DOCX (deterministic render or fallback) must be a
 professional resume document, not a plain-text dump.
+
+## Final Verification Checklist
+
+Before you end your response, verify that the following files exist on
+disk inside the run directory and are non-empty. Use a directory
+listing, file read, or shell command to confirm — do not rely on
+memory of what you intended to write.
+
+```text
+output/tailored_resume.json
+output/tailored_resume.md
+output/change_log.md
+output/claim_audit.md
+output/ats_audit.md
+output/template_fidelity_audit.md
+output/recruiter_review.md
+```
+
+Rules:
+
+- Do not end your response until the files have been written.
+- Do not merely summarize what each file should contain.
+- Use shell/file-writing operations if needed.
+- If a file is missing or empty when you reach this checklist, write it
+  before finishing. A response that lists the files but does not write
+  them is a failed run.
+
+`output/template_fidelity_audit.md` is written by the backend
+deterministic renderer after this run finishes, so you do not need to
+produce that file yourself; but if you do produce it, it must be
+non-empty.

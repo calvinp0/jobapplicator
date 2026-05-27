@@ -344,6 +344,7 @@ def _render_docx_from_structured_json(
         _append_progress(log_path, message)
         raise RendererError(message)
 
+    _append_progress(log_path, "validating structured resume JSON")
     _append_progress(
         log_path,
         "rendering DOCX deterministically from structured resume JSON",
