@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Document title contains the unread-notification badge LinkedIn
+         shows on collections pages, and the sidebar list header — neither
+         should be used as the job title. -->
+    <title>(1) Top job picks for you | LinkedIn</title>
+  </head>
+  <body>
+    <nav>Top nav stuff that should not leak into the payload</nav>
+    <main>
+      <!-- Left-hand sidebar listing other recommended jobs. This is the
+           classic source of the wrong-title bug: it contains an h1 with
+           the sidebar header and a bunch of other job titles. -->
+      <aside class="scaffold-layout__list">
+        <h1>Top job picks for you</h1>
+        <ul class="jobs-search-results-list">
+          <li>
+            <a href="/jobs/view/9999999991/">
+              <span class="job-card-list__title">Software Engineer at SomeOtherCo</span>
+              <span class="job-card-container__company-name">SomeOtherCo</span>
+              <span class="job-card-container__metadata-item">Berlin, Germany</span>
+            </a>
+          </li>
+          <li>
+            <a href="/jobs/view/9999999992/">
+              <span class="job-card-list__title">Junior Developer at YetAnotherCo</span>
+              <span class="job-card-container__company-name">YetAnotherCo</span>
+              <span class="job-card-container__metadata-item">London, UK</span>
+            </a>
+          </li>
+        </ul>
+      </aside>
+
+      <!-- Right-hand active job detail pane. Everything we should extract
+           lives inside .jobs-search__job-details--container. -->
+      <section class="jobs-search__job-details--container">
+        <div class="job-view-layout">
+          <div class="job-details-jobs-unified-top-card__container--two-pane">
+            <h1 class="job-details-jobs-unified-top-card__job-title">
+              <a href="/jobs/view/4012345678/">Software Development Engineer, AWS Agentic AI</a>
+            </h1>
+            <div class="job-details-jobs-unified-top-card__company-name">
+              <a href="/company/amazon-web-services/">Amazon Web Services (AWS)</a>
+            </div>
+            <div class="job-details-jobs-unified-top-card__primary-description-container">
+              <span>Haifa, Haifa District, Israel</span>
+              <span class="job-details-jobs-unified-top-card__bullet">·</span>
+              <span>Reposted 5 days ago</span>
+              <span class="job-details-jobs-unified-top-card__bullet">·</span>
+              <span>Over 10 people clicked apply</span>
+            </div>
+
+            <div class="jobs-apply-button--top-card">
+              <button class="jobs-apply-button">
+                <span class="artdeco-button__text">Easy Apply</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="jobs-description">
+            <div class="jobs-description__container">
+              <div class="jobs-description__content">
+                <div id="job-details" class="jobs-box__html-content">
+                  <p>About the job:</p>
+                  <p>
+                    We are looking for a Software Development Engineer to join the
+                    AWS Agentic AI team. You will design, build, and operate large
+                    scale distributed systems that power autonomous agents on AWS.
+                  </p>
+                  <p>Basic qualifications:</p>
+                  <ul>
+                    <li>5+ years of software engineering experience</li>
+                    <li>Strong knowledge of distributed systems</li>
+                    <li>Experience with cloud infrastructure</li>
+                  </ul>
+                  <p>Preferred qualifications:</p>
+                  <ul>
+                    <li>Familiarity with LLM-driven agents</li>
+                    <li>Prior work on inference serving at scale</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>LinkedIn footer that should not leak into the payload</footer>
+  </body>
+</html>

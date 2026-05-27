@@ -121,6 +121,122 @@ describe("parseLinkedInJob — full fixture", () => {
   });
 });
 
+describe("parseLinkedInJob — two-pane collections page", () => {
+  // Reproduces the bug where the popup showed "(1) Top job picks for you"
+  // as the title and missed company/description because the parser was
+  // reading the sidebar list / document title instead of the active job
+  // detail pane on /jobs/collections/recommended/?currentJobId=…
+  const url =
+    "https://www.linkedin.com/jobs/collections/recommended/?currentJobId=4012345678";
+  let payload;
+
+  beforeAll(async () => {
+    const document = await loadFixtureDocument("linkedin_job_collections.html");
+    payload = parseLinkedInJob({ document, url });
+  });
+
+  it("extracts the active-pane title, not the sidebar h1 or document title", () => {
+    expect(payload.title).toBe(
+      "Software Development Engineer, AWS Agentic AI",
+    );
+    expect(payload.title).not.toContain("Top job picks for you");
+    expect(payload.diagnostics.fallbacks_used.document_title).toBe(false);
+    expect(payload.diagnostics.fallbacks_used.og_title).toBe(false);
+  });
+
+  it("extracts the active-pane company", () => {
+    expect(payload.company).toBe("Amazon Web Services (AWS)");
+  });
+
+  it("parses location as the first non-noise segment before `·`", () => {
+    expect(payload.location).toBe("Haifa, Haifa District, Israel");
+    expect(payload.location).not.toMatch(/reposted/i);
+    expect(payload.location).not.toMatch(/clicked apply/i);
+  });
+
+  it("extracts a description from .jobs-description__container", () => {
+    expect(payload.description_text).toContain("AWS Agentic AI team");
+    expect(payload.description_text).toContain("Basic qualifications");
+    expect(payload.description_text.length).toBeLessThanOrEqual(20000);
+  });
+
+  it("records which selectors matched in diagnostics", () => {
+    expect(payload.diagnostics.active_pane_selector).toBe(
+      ".jobs-search__job-details--container",
+    );
+    expect(payload.diagnostics.matched_selectors.title).toBe(
+      ".job-details-jobs-unified-top-card__job-title",
+    );
+    expect(payload.diagnostics.matched_selectors.company).toBe(
+      ".job-details-jobs-unified-top-card__company-name a",
+    );
+    expect(payload.diagnostics.matched_selectors.location).toBe(
+      ".job-details-jobs-unified-top-card__primary-description-container",
+    );
+    expect(payload.diagnostics.matched_selectors.description).toBe(
+      ".jobs-description__container",
+    );
+  });
+
+  it("scopes raw_text and page_text to the active pane, dropping the sidebar list", () => {
+    expect(payload.raw_text).toContain("AWS Agentic AI");
+    expect(payload.raw_text).not.toContain("Top job picks for you");
+    expect(payload.raw_text).not.toContain("SomeOtherCo");
+    expect(payload.page_text).toContain("AWS Agentic AI");
+    expect(payload.page_text).not.toContain("Top job picks for you");
+  });
+});
+
+describe("parseLinkedInJob — location noise filtering", () => {
+  const url = "https://www.linkedin.com/jobs/view/4012345678/";
+
+  function buildDoc(bodyHtml) {
+    const dom = new JSDOM(
+      `<!doctype html><html><body>${bodyHtml}</body></html>`,
+    );
+    return dom.window.document;
+  }
+
+  it("skips a leading 'Reposted' segment and returns the real location", () => {
+    const document = buildDoc(`
+      <section class="jobs-search__job-details--container">
+        <h1 class="job-details-jobs-unified-top-card__job-title">X</h1>
+        <div class="job-details-jobs-unified-top-card__primary-description-container">
+          Reposted 5 days ago · Haifa, Haifa District, Israel · Over 10 people clicked apply
+        </div>
+      </section>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.location).toBe("Haifa, Haifa District, Israel");
+  });
+
+  it("skips 'Promoted' and '42 applicants' style noise", () => {
+    const document = buildDoc(`
+      <section class="jobs-search__job-details--container">
+        <h1 class="job-details-jobs-unified-top-card__job-title">X</h1>
+        <div class="job-details-jobs-unified-top-card__primary-description-container">
+          Promoted · 42 applicants · Remote
+        </div>
+      </section>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.location).toBe("Remote");
+  });
+
+  it("returns null when every segment is noise", () => {
+    const document = buildDoc(`
+      <section class="jobs-search__job-details--container">
+        <h1 class="job-details-jobs-unified-top-card__job-title">X</h1>
+        <div class="job-details-jobs-unified-top-card__primary-description-container">
+          Reposted 5 days ago · Over 10 people clicked apply
+        </div>
+      </section>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.location).toBeNull();
+  });
+});
+
 describe("parseLinkedInJob — missing location", () => {
   it("returns null for location instead of throwing", async () => {
     const url = "https://www.linkedin.com/jobs/view/4099887766/";
