@@ -242,6 +242,49 @@ and `injectContentScript()` smooths over the MV3/MV2 script-injection
 difference — so neither popup, content, options, nor background code
 branches on the host browser.
 
+## Captured URL vs canonical URL
+
+LinkedIn renders the same posting at several URL shapes. A capture from the
+collections shell looks like:
+
+```text
+https://www.linkedin.com/jobs/collections/recommended/?currentJobId=4415730750&origin=…
+```
+
+The backend canonicalizes this deterministically (no LLM, no network call)
+into:
+
+```text
+https://www.linkedin.com/jobs/view/4415730750
+```
+
+Both URLs are persisted on the `JobCapture` and on the promoted `Job`:
+
+- `source_url` — the raw URL the extension shipped, preserved verbatim so
+  the original capture is recoverable for debugging.
+- `canonical_url` — the cleaned form used for display, copy-link, and
+  dedup.
+- `external_url` — equal to `canonical_url` going forward. The column
+  predates this split and is kept for backwards compatibility with code
+  that already reads it.
+- `external_job_id` — extracted from `/jobs/view/<id>` or the
+  `currentJobId` query parameter when the URL is a LinkedIn job page.
+
+The canonicalizer also strips common tracking parameters (`utm_*`,
+`fbclid`, `gclid`, `mc_cid`, `mc_eid`) from non-LinkedIn URLs while
+preserving platform-specific job-identifying query strings. Implementation
+is in `backend/app/url_canonicalizer.py`; see
+`docs/contracts/browser_extension_capture.md` for the contract.
+
+This is **not** a link shortener. The canonicalizer does not call any
+external service, does not shorten or hash URLs, and does not change the
+identity of the linked job — it only removes routing/tracking noise from
+URLs that already point at the same resource.
+
+The Review Capture page in the cockpit shows the canonical URL in the
+URL field and exposes the original captured URL behind a small
+**Original captured URL** disclosure when the two differ.
+
 ## Out of scope
 
 - Submitting job applications.
@@ -249,3 +292,5 @@ branches on the host browser.
 - Background polling or batch scraping of search results.
 - Profile / contact harvesting.
 - Capture providers other than the current-page LinkedIn parser.
+- URL shortening or any form of link rewriting that changes the identity
+  of the linked job.

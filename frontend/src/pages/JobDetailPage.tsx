@@ -689,10 +689,22 @@ export function JobDetailPage() {
       {job.location ? <p className="job-meta">{job.location}</p> : null}
       {job.external_url ? (
         <p className="job-meta">
-          <a href={job.external_url} target="_blank" rel="noreferrer">
-            {job.external_url}
+          <a
+            href={job.canonical_url ?? job.external_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {job.canonical_url ?? job.external_url}
           </a>
         </p>
+      ) : null}
+      {job.source_url &&
+      job.canonical_url &&
+      job.source_url !== job.canonical_url ? (
+        <details className="job-source-url" data-testid="job-source-url">
+          <summary>Original captured URL</summary>
+          <p className="job-source-url-value">{job.source_url}</p>
+        </details>
       ) : null}
     </>
   );

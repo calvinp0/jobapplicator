@@ -82,3 +82,23 @@ selection is sent through and used as the description fallback.
 See [`docs/browser_extension.md`](docs/browser_extension.md) for the
 full troubleshooting list (backend health, CORS, content-script
 access).
+
+### Captured URL vs canonical URL
+
+The backend canonicalizes captured URLs deterministically. A LinkedIn
+collections URL like
+
+```text
+https://www.linkedin.com/jobs/collections/recommended/?currentJobId=4415730750&origin=…
+```
+
+is normalized to
+
+```text
+https://www.linkedin.com/jobs/view/4415730750
+```
+
+and the original (`source_url`) is kept alongside for debugging. This is
+plain string surgery, not a link shortener — there is no external
+service call and no LLM. See `docs/browser_extension.md` and
+`docs/contracts/browser_extension_capture.md` for the rules.

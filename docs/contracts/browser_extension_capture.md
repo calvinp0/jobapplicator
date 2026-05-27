@@ -157,6 +157,49 @@ The backend treats this payload as untrusted input (ADR-005). The user
 must still confirm the capture via `POST /captures/{id}/confirm` before it
 becomes a `Job`.
 
+## URL canonicalization
+
+The backend canonicalizes the `external_url` value deterministically on
+ingest. This is plain string surgery — no LLM, no network round-trip, no
+shortening service. The implementation lives in
+`backend/app/url_canonicalizer.py`.
+
+LinkedIn rules:
+
+| Input | Output |
+| --- | --- |
+| `https://www.linkedin.com/jobs/collections/recommended/?currentJobId=4415730750&origin=...` | `https://www.linkedin.com/jobs/view/4415730750` |
+| `https://www.linkedin.com/jobs/view/4415730750/?trackingId=abc` | `https://www.linkedin.com/jobs/view/4415730750` |
+| `https://www.linkedin.com/jobs/search/?currentJobId=4415730750&keywords=...` | `https://www.linkedin.com/jobs/view/4415730750` |
+
+For non-LinkedIn URLs the canonicalizer only strips widely-recognized
+tracking parameters (`utm_source`, `utm_medium`, `utm_campaign`,
+`utm_term`, `utm_content`, `fbclid`, `gclid`, `mc_cid`, `mc_eid`) and
+preserves the rest of the URL unchanged so platform-specific job
+identifiers carried as query strings are not accidentally dropped.
+
+`POST /captures` persists three URL-related fields on the `JobCapture` (and
+mirrors them onto the `Job` when the capture is confirmed):
+
+- `source_url` — raw URL exactly as the extension shipped it.
+- `canonical_url` — output of the canonicalizer.
+- `external_url` — equal to `canonical_url` going forward; kept on the
+  table for backwards compatibility with code that already reads it.
+
+`external_job_id` is sourced from the extension first (it already
+extracts it for LinkedIn) and falls back to the canonicalizer's
+derivation when the extension does not supply one. Dedup of captures
+onto an existing `Job` runs against `canonical_url` first, then falls
+back to `external_url` so historical rows that pre-date this split
+still dedup.
+
+The canonicalizer is intentionally **not** a link shortener:
+
+- It does not call any external service.
+- It does not produce a hash, slug, or shortened URL.
+- It does not rewrite a URL into a different resource — only removes
+  routing/tracking noise from URLs that already point at the same job.
+
 ## Loading the extension locally
 
 ```bash

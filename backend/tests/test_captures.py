@@ -313,3 +313,112 @@ def test_capture_with_selected_text_fallback_persisted(client):
     create = client.post("/captures", json=payload).json()
     fetched = client.get(f"/captures/{create['id']}").json()
     assert fetched["selected_text"] == "Pasted job description from the page."
+
+
+# ---- Task 110: canonical URL persistence -----------------------------------
+#
+# The backend canonicalizes the captured URL deterministically (no LLM, no
+# network). The raw URL the extension shipped is preserved as ``source_url``;
+# the cleaned form lands on ``canonical_url`` and overwrites ``external_url``
+# so dedup and the UI both operate on the clean identity.
+
+
+def _messy_linkedin_payload(**overrides):
+    base = _capture_payload(
+        external_url=(
+            "https://www.linkedin.com/jobs/collections/recommended/"
+            "?currentJobId=4415730750&origin=JOB_SEARCH_PAGE_JOB_FILTER"
+        ),
+        external_job_id="4415730750",
+    )
+    base.update(overrides)
+    return base
+
+
+def test_capture_stores_source_url_unchanged(client):
+    payload = _messy_linkedin_payload()
+    r = client.post("/captures", json=payload)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["source_url"] == payload["external_url"]
+
+
+def test_capture_stores_canonical_url(client):
+    payload = _messy_linkedin_payload()
+    body = client.post("/captures", json=payload).json()
+    assert body["canonical_url"] == "https://www.linkedin.com/jobs/view/4415730750"
+    # ``external_url`` is the canonical form going forward so dedup and any
+    # existing consumer of that field operate on the clean identity.
+    assert body["external_url"] == body["canonical_url"]
+
+
+def test_capture_stores_external_job_id_from_url(client):
+    # Even if the extension forgot to pass external_job_id, the backend
+    # derives it from the URL during canonicalization.
+    payload = _messy_linkedin_payload(external_job_id=None)
+    body = client.post("/captures", json=payload).json()
+    assert body["external_job_id"] == "4415730750"
+
+
+def test_capture_canonicalizes_dedup_across_messy_and_clean_urls(client):
+    messy = client.post("/captures", json=_messy_linkedin_payload()).json()
+    assert messy["auto_confirmed"] is True
+    assert messy["job_id"]
+
+    # Same job, captured a second time via the canonical /jobs/view/<id>
+    # path with a tracking param tacked on. Should reuse the existing Job.
+    second = client.post(
+        "/captures",
+        json=_capture_payload(
+            external_url="https://www.linkedin.com/jobs/view/4415730750/?trackingId=abc",
+            external_job_id="4415730750",
+            title="Different Title",
+        ),
+    ).json()
+    assert second["job_reused"] is True
+    assert second["job_id"] == messy["job_id"]
+
+
+def test_capture_canonical_url_round_trips_via_get(client):
+    create = client.post("/captures", json=_messy_linkedin_payload()).json()
+    fetched = client.get(f"/captures/{create['id']}").json()
+    assert (
+        fetched["canonical_url"] == "https://www.linkedin.com/jobs/view/4415730750"
+    )
+    assert (
+        fetched["source_url"]
+        == "https://www.linkedin.com/jobs/collections/recommended/"
+        "?currentJobId=4415730750&origin=JOB_SEARCH_PAGE_JOB_FILTER"
+    )
+
+
+def test_capture_promotes_canonical_url_into_job(client):
+    create = client.post("/captures", json=_messy_linkedin_payload()).json()
+    job = client.get(f"/jobs/{create['job_id']}").json()
+    assert job["canonical_url"] == "https://www.linkedin.com/jobs/view/4415730750"
+    # The raw URL the extension captured is preserved on the Job too so the
+    # workspace UI can offer it under an "Original captured URL" affordance.
+    assert (
+        job["source_url"]
+        == "https://www.linkedin.com/jobs/collections/recommended/"
+        "?currentJobId=4415730750&origin=JOB_SEARCH_PAGE_JOB_FILTER"
+    )
+    assert job["external_url"] == job["canonical_url"]
+
+
+def test_capture_non_linkedin_url_passes_through_with_tracking_stripped(client):
+    payload = _capture_payload(
+        source_platform="greenhouse",
+        external_url="https://boards.greenhouse.io/example/jobs/42?utm_source=newsletter",
+        external_job_id="42",
+    )
+    body = client.post("/captures", json=payload).json()
+    assert (
+        body["canonical_url"]
+        == "https://boards.greenhouse.io/example/jobs/42"
+    )
+    # Non-LinkedIn captures keep the platform supplied by the extension.
+    assert body["source_platform"] == "greenhouse"
+    # External job id is preserved as supplied by the extension when the
+    # canonicalizer does not know how to derive one.
+    assert body["external_job_id"] == "42"

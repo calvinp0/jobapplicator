@@ -125,8 +125,33 @@ def ensure_runtime_columns() -> None:
                 "diagnostics_json",
                 "ALTER TABLE job_captures ADD COLUMN diagnostics_json TEXT",
             ),
+            # Task 110: canonical/source URL split. Both nullable so
+            # captures from before the canonicalizer landed still load.
+            (
+                "source_url",
+                "ALTER TABLE job_captures ADD COLUMN source_url VARCHAR(2048)",
+            ),
+            (
+                "canonical_url",
+                "ALTER TABLE job_captures ADD COLUMN canonical_url VARCHAR(2048)",
+            ),
         ):
             if col_name not in existing_capture_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+    if "jobs" in table_names:
+        existing_job_cols = {col["name"] for col in inspector.get_columns("jobs")}
+        # Task 110: Jobs carry the same canonical/source URL pair as the
+        # capture they were promoted from so the workspace UI can show the
+        # clean URL while keeping the original recoverable.
+        for col_name, ddl in (
+            ("source_url", "ALTER TABLE jobs ADD COLUMN source_url VARCHAR(2048)"),
+            (
+                "canonical_url",
+                "ALTER TABLE jobs ADD COLUMN canonical_url VARCHAR(2048)",
+            ),
+        ):
+            if col_name not in existing_job_cols:
                 with engine.begin() as conn:
                     conn.execute(text(ddl))
     if "email_links" in table_names:
