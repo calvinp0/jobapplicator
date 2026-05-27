@@ -2166,7 +2166,7 @@ tasks:
     file: "agent_tasks/108-add-recruiter-review-agent.md"
     branch: "agent/108-add-recruiter-review-agent"
     worktree: "agent-108-add-recruiter-review-agent"
-    status: "ready"
+    status: "done"
     depends_on:
       - "092-add-ats-optimization-harness"
     verification:
