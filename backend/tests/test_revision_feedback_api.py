@@ -83,6 +83,7 @@ def _seed_draft(client, tmp_path: Path, monkeypatch) -> dict:
     for name in (
         "tailored_resume.docx",
         "tailored_resume.md",
+        "tailored_resume.json",
         "change_log.md",
         "claim_audit.md",
         "ats_audit.md",
@@ -300,6 +301,7 @@ def test_revision_feedback_stages_master_resume_markdown(
     for name in (
         "tailored_resume.docx",
         "tailored_resume.md",
+        "tailored_resume.json",
         "change_log.md",
         "claim_audit.md",
         "ats_audit.md",
@@ -391,6 +393,7 @@ def test_revision_feedback_stages_filesystem_master_resume_docx(
     for name in (
         "tailored_resume.docx",
         "tailored_resume.md",
+        "tailored_resume.json",
         "change_log.md",
         "claim_audit.md",
         "ats_audit.md",
@@ -505,6 +508,7 @@ def test_revision_feedback_stages_original_evidence_sources(
     for name in (
         "tailored_resume.docx",
         "tailored_resume.md",
+        "tailored_resume.json",
         "change_log.md",
         "claim_audit.md",
         "ats_audit.md",
@@ -604,6 +608,7 @@ def test_revision_feedback_creates_new_resume_version_not_overwriting_source(
     for name in (
         "tailored_resume.docx",
         "tailored_resume.md",
+        "tailored_resume.json",
         "change_log.md",
         "claim_audit.md",
         "ats_audit.md",

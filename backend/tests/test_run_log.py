@@ -58,7 +58,14 @@ def test_run_log_endpoint_surfaces_missing_output_milestones(
     client, tmp_path, monkeypatch
 ):
     """A zero-exit run that fails the output contract must report the
-    missing-file milestones in run.log so the UI can show why."""
+    missing-file milestones in run.log so the UI can show why.
+
+    Task 111 made the structured JSON the first gate: a Claude that
+    exits cleanly without writing ``output/tailored_resume.json`` fails
+    on that file specifically, and the run log records the JSON gating
+    explicitly so the operator can see why deterministic rendering did
+    not run.
+    """
     run = _seed_run(client, tmp_path, monkeypatch)
     binary = _write_fake_binary(
         tmp_path,
@@ -75,11 +82,41 @@ def test_run_log_endpoint_surfaces_missing_output_milestones(
     assert resp.status_code == 200, resp.text
     joined = "\n".join(resp.json()["lines"])
 
-    assert "jobapply: validating output files" in joined
     assert (
-        "jobapply: missing expected output file: output/tailored_resume.docx"
+        "jobapply: structured resume JSON expected at "
+        "output/tailored_resume.json" in joined
+    )
+    assert (
+        "jobapply: expected output file missing: output/tailored_resume.json"
         in joined
     )
+    assert "jobapply: marking run failed" in joined
+
+
+def test_run_log_endpoint_surfaces_remaining_missing_outputs_after_render(
+    client, tmp_path, monkeypatch
+):
+    """When the structured JSON is present and the renderer succeeds,
+    the worker proceeds to the standard output validation and the run
+    log records the remaining missing files (markdown, audits)."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(
+        tmp_path,
+        exit_code=0,
+        write_outputs=("tailored_resume.json",),
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    invoke = client.post(f"/runs/{run['id']}/invoke")
+    assert invoke.status_code == 200, invoke.text
+    assert invoke.json()["status"] == "failed"
+
+    resp = client.get(f"/runs/{run['id']}/log")
+    assert resp.status_code == 200, resp.text
+    joined = "\n".join(resp.json()["lines"])
+
+    assert "jobapply: rendering DOCX deterministically" in joined
+    assert "jobapply: validating output files" in joined
     assert (
         "jobapply: missing expected output file: output/change_log.md" in joined
     )

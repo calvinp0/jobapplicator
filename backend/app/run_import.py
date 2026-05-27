@@ -15,6 +15,7 @@ from .models import ClaudeRun, ResumeVersion
 EXPECTED_OUTPUT_FILES = (
     "tailored_resume.docx",
     "tailored_resume.md",
+    "tailored_resume.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",

@@ -1,14 +1,27 @@
 # Office Word MCP Setup
 
-The auto tailoring path asks Claude Code to use the Office Word MCP
-server (`word-document-server`) as its preferred way of producing
-`output/tailored_resume.docx`. This gives Claude direct, in-process
-access to Word document operations — opening, copying, editing
-headings, paragraphs, bullets, styles, tables, comments, and tracked
-changes — rather than relying on plain-text DOCX assembly.
+As of task 111, the auto tailoring path produces
+`output/tailored_resume.docx` deterministically from
+`output/tailored_resume.json` via the backend renderer at
+`backend/app/resume_docx_renderer.py`. Office Word MCP / Claude for
+Word is **no longer the primary formatting path**; it remains
+available as:
+
+- a manual or experimental fallback when the deterministic renderer
+  cannot capture a particular visual identity;
+- a human-in-the-loop editor for reviewer-driven changes that are
+  easier to make inside Word than as JSON edits;
+- a tool for inspecting `input/master_resume.docx` when an operator
+  wants to compare visual fidelity by hand.
+
+When Claude Code does use the Office Word MCP server
+(`word-document-server`) as a fallback, the server gives it direct,
+in-process access to Word document operations — opening, copying,
+editing headings, paragraphs, bullets, styles, tables, comments, and
+tracked changes — rather than relying on plain-text DOCX assembly.
 
 This document describes how to install and verify the local MCP
-server.
+server for that fallback use.
 
 ## Why this helps DOCX tailoring
 

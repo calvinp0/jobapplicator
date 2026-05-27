@@ -78,14 +78,30 @@ outcome because the user asked for it.
 Write all required output files:
 
 ```text
+output/tailored_resume.json
 output/tailored_resume.md
-output/tailored_resume.docx
 output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
-output/template_fidelity_audit.md
 output/recruiter_review.md
 ```
+
+`output/tailored_resume.json` is the structured tailored resume content
+and is the source of truth for the deterministic DOCX renderer. Revise
+the JSON to reflect the requested changes. Use the schema documented in
+`runtime_prompts/resume_tailoring.md` (see "Structured Resume JSON") and
+in `docs/contracts/claude_run_directory.md`. Bullets stay as separate
+strings; do not encode layout instructions in prose.
+
+The backend will render `output/tailored_resume.docx` from
+`output/tailored_resume.json` after the revision run finishes. You do
+**not** need to produce the DOCX yourself. If a `.docx` current draft is
+present, treat it as content context to be revised — but the final DOCX
+will come from the deterministic renderer reading the revised JSON.
+
+The backend also writes `output/template_fidelity_audit.md` after
+rendering the DOCX, so this file does not need to be produced by Claude
+on revision runs.
 
 `output/template_fidelity_audit.md` follows the same structure as the
 first-draft tailoring contract documented in
@@ -127,10 +143,26 @@ in `output/ats_audit.md` exactly as the first-draft prompt requires.
 
 ## DOCX / Word Output
 
-When a `.docx` current draft is present, prefer editing it in-place via
-the Office Word MCP server (`word-document-server`) or the DOCX/Word
-document skill. Preserve existing DOCX styling from both the current
-tailored draft and the original master resume, including:
+You do **not** need to generate `output/tailored_resume.docx` yourself.
+
+The backend deterministic DOCX renderer reads
+`output/tailored_resume.json` and produces
+`output/tailored_resume.docx` after this revision run finishes. Layout
+is owned by the renderer; your job is to revise the structured JSON
+(and the markdown/audit projections) so the renderer can produce the
+final DOCX.
+
+When a `.docx` current draft is present, use it as content context to
+be revised — do not try to reproduce its byte-level formatting by
+hand. Apply the requested content changes inside the structured JSON
+and the markdown. Do not restyle the resume unless the user explicitly
+asks; layout decisions live in the renderer template and the structured
+JSON should not encode layout hints.
+
+The following style preservation list applies to the deterministic
+renderer's output template. It describes the visual identity the
+backend will apply when rendering — Claude does not need to enforce it
+by hand:
 
 - centered name/header block
 - centered contact line / links
@@ -145,13 +177,41 @@ tailored draft and the original master resume, including:
 - bold/italic emphasis patterns
 - simple horizontal rules or separators
 
-Do not restyle the resume unless the user explicitly asks. Apply the
-requested content changes while preserving existing DOCX styling and
-layout. Do not rebuild the document from scratch when a usable current
-draft is present.
+If a deterministic render fails for any reason, the backend will report
+the failure on the run. Office Word MCP / Claude for Word remains
+available as a manual fallback for human-in-the-loop edits when the
+deterministic renderer is insufficient.
 
-If DOCX/MCP editing fails, write the markdown output and document the
-DOCX failure in `output/claim_audit.md` so the operator can recover.
+If structured JSON output fails, write the markdown output and document
+the JSON failure in `output/claim_audit.md` so the operator can
+recover.
+
+### Optional Word MCP fallback
+
+If you generate a preview/fallback DOCX through the Office Word MCP
+server or the DOCX/Word document skill on a revision run, the same
+style rules that governed the prior contract still apply to that
+fallback artifact. Preserve existing DOCX styling from both the
+current tailored draft and the original master resume, including:
+
+- centered name/header block
+- centered contact line / links
+- section heading colors (e.g. blue headers stay blue)
+- colored section headings
+- horizontal separator/divider lines
+- bullet lists
+- font families
+- font sizes
+- margins and paragraph spacing
+- bullet indentation and list styles
+- date alignment
+- bold/italic emphasis patterns
+- simple horizontal rules or separators
+
+Apply the requested content changes while preserving existing DOCX
+styling and layout when producing any fallback DOCX. Do not rebuild
+the document from scratch when a usable current draft is present. The
+deterministic renderer's output is still the authoritative DOCX.
 
 ## Progress
 
@@ -161,8 +221,8 @@ work (one line per phase, <=120 chars, no secrets or paths). Examples:
 ```text
 Reading revision feedback
 Applying revision changes to tailored resume markdown
+Updating structured tailored resume JSON
 Refreshing ATS keyword coverage
-Refreshing template fidelity audit
 Refreshing recruiter review
 Validating required outputs
 ```

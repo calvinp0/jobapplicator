@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .test_claude_worker import (
     ALL_OUTPUTS,
+    MINIMAL_VALID_RESUME_JSON,
     _seed_run,
     _write_fake_binary,
 )
@@ -27,6 +28,7 @@ def _write_progress_writer_binary(
     binary = tmp_path / f"fake_claude_progress_{exit_code}"
     outputs_repr = repr(list(write_outputs))
     progress_repr = repr(list(progress_lines))
+    json_payload_repr = repr(MINIMAL_VALID_RESUME_JSON)
     body = textwrap.dedent(
         f"""\
         #!{sys.executable}
@@ -38,8 +40,12 @@ def _write_progress_writer_binary(
         print(f"fake claude running in {{cwd}}", flush=True)
         out = cwd / "output"
         out.mkdir(parents=True, exist_ok=True)
+        _json_payload = {json_payload_repr}
         for name in {outputs_repr}:
-            (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
+            if name == "tailored_resume.json":
+                (out / name).write_text(_json_payload, encoding="utf-8")
+            else:
+                (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
         progress = cwd / "progress" / "progress.log"
         progress.parent.mkdir(parents=True, exist_ok=True)
         with progress.open("a", encoding="utf-8") as f:
@@ -207,8 +213,12 @@ def test_worker_heartbeat_emits_lines_when_claude_is_silent(
             cwd = Path.cwd()
             out = cwd / "output"
             out.mkdir(parents=True, exist_ok=True)
+            _json_payload = {MINIMAL_VALID_RESUME_JSON!r}
             for name in {list(ALL_OUTPUTS)!r}:
-                (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
+                if name == "tailored_resume.json":
+                    (out / name).write_text(_json_payload, encoding="utf-8")
+                else:
+                    (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
             sys.exit(0)
             """
         ),

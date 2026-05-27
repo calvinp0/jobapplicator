@@ -171,18 +171,134 @@ limitations in `output/claim_audit.md`.
 Write:
 
 ```text
-output/tailored_resume.docx
+output/tailored_resume.json
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
-output/template_fidelity_audit.md
 output/recruiter_review.md
 ```
 
-`output/template_fidelity_audit.md` records how well the tailored DOCX
-preserves the master resume's visual template. See the "Template
-Fidelity Audit" section below for the required structure.
+`output/tailored_resume.json` is the structured tailored resume content
+and is the **source of truth** for the final DOCX. The backend deterministic
+DOCX renderer reads this file and produces
+`output/tailored_resume.docx` from it. See the "Structured Resume JSON"
+section below for the required schema.
+
+You should still write `output/tailored_resume.md` so the markdown
+preview, claim audit, and run import flow have a stable textual
+projection of the tailored resume. Keep the markdown content consistent
+with the JSON.
+
+The backend will render `output/tailored_resume.docx` from
+`output/tailored_resume.json` using the resume template. You do **not**
+need to produce the DOCX yourself. If you also produce a DOCX through
+the Office Word MCP server or another tool, treat it as an
+optional/fallback artifact — the backend may overwrite it with the
+deterministic render. The structured JSON is the source of truth, not
+the Claude-generated DOCX.
+
+The backend also writes `output/template_fidelity_audit.md` after
+rendering the DOCX, so you do not need to produce that file. The
+"Template Fidelity Audit" section below documents the audit structure
+for reference.
+
+## Structured Resume JSON
+
+`output/tailored_resume.json` is the source of truth for the
+deterministic DOCX renderer. Use the schema exactly. Do not omit
+required fields. Do not include unsupported claims. Keep bullets as
+separate bullet strings. Keep section entries structured. Do not encode
+layout instructions in prose. The backend deterministic renderer reads
+this file and produces `output/tailored_resume.docx` from it — the
+JSON, not the markdown or any Claude-generated DOCX, is what shapes the
+final document.
+
+The schema is stable and documented in
+`docs/contracts/claude_run_directory.md`. Use this exact shape:
+
+```json
+{
+  "header": {
+    "name": "Full Name",
+    "contact_items": [
+      "email@example.com",
+      "linkedin.com/in/handle",
+      "github.com/handle",
+      "City, Country"
+    ],
+    "subtitle": "Optional one-line subtitle (citizenship, location framing, etc.)"
+  },
+  "sections": [
+    {
+      "type": "summary",
+      "heading": "PROFESSIONAL SUMMARY",
+      "paragraphs": ["..."]
+    },
+    {
+      "type": "skills",
+      "heading": "SKILLS",
+      "groups": [
+        {"label": "Languages", "items": ["Python", "SQL"]}
+      ]
+    },
+    {
+      "type": "experience",
+      "heading": "EXPERIENCE",
+      "entries": [
+        {
+          "title": "Role title",
+          "organization": "Employer or project",
+          "location": "Optional location",
+          "dates": "2024 – Present",
+          "subtitle": "Optional subtitle",
+          "bullets": ["Achievement bullet."]
+        }
+      ]
+    },
+    {
+      "type": "education",
+      "heading": "EDUCATION",
+      "entries": [
+        {
+          "institution": "School",
+          "degree": "Degree, Field",
+          "dates": "2020 – 2023",
+          "location": "City, Country"
+        }
+      ]
+    },
+    {
+      "type": "publications",
+      "heading": "PUBLICATIONS",
+      "items": ["..."]
+    }
+  ],
+  "metadata": {
+    "target_company": "...",
+    "target_job_title": "...",
+    "generated_for_ats": true
+  }
+}
+```
+
+Rules:
+
+- `header.name` is required and must be non-empty.
+- `sections` must be a non-empty array.
+- Each section's `type` must be one of: `summary`, `skills`,
+  `experience`, `education`, `publications`, `projects`,
+  `certifications`, `awards`, `other`.
+- Use `paragraphs` for `summary`, `groups` for `skills`, `entries` for
+  `experience`/`education`, and `items` for `publications`/`projects`/
+  `certifications`/`awards`/`other`.
+- Bullets in `experience.entries[].bullets` must be plain strings —
+  one bullet per array element. Do not bake `•`, `-`, or newlines into
+  bullet strings.
+- Do not include layout hints (font sizes, colors, margins) in the
+  JSON. Layout is owned by the backend renderer.
+- All content must be truthful and supported by the master resume or
+  evidence sources, exactly as the rest of this prompt requires.
 
 `output/recruiter_review.md` records a simulated recruiter/hiring
 manager review of the tailored resume against the target company and
@@ -205,11 +321,10 @@ Reviewing evidence bank
 Extracting ATS keywords from job description
 Planning tailored resume changes
 Drafting tailored resume markdown
-Creating DOCX
+Writing structured tailored resume JSON
 Writing change log
 Writing claim audit
 Writing ATS audit
-Writing template fidelity audit
 Writing recruiter review
 Validating required outputs
 ```
@@ -711,25 +826,54 @@ In `output/change_log.md`, summarize:
 
 ## DOCX
 
-When creating `output/tailored_resume.docx`, prefer the Office Word MCP server
-if available. Use Word/DOCX tooling in this priority order:
+You do **not** need to generate `output/tailored_resume.docx` yourself.
 
-1. Office Word MCP tools through the `word-document-server` MCP server, if
-   available (look for tools such as `copy_document`, `add_heading`,
-   `add_paragraph`, `search_and_replace`, `format_text`).
-2. The DOCX / Word document skill, if available.
-3. The existing fallback DOCX generation behavior.
+The backend deterministic DOCX renderer
+(`backend/app/resume_docx_renderer.py`) reads
+`output/tailored_resume.json` and produces
+`output/tailored_resume.docx` after this run finishes. Layout decisions —
+centered name/contact header, blue uppercase section headings,
+horizontal separators, real Word bullet lists, margins, fonts, and
+spacing — are owned by the renderer. The structured JSON is the source
+of truth for the final document.
 
-If `input/` contains a source resume DOCX:
+If the Office Word MCP server (`word-document-server`) or the DOCX /
+Word document skill is available, you may optionally produce a
+preview/fallback DOCX, but treat it as an artifact subordinate to the
+structured JSON:
 
-- copy it as the editable base when possible (e.g. with the Office Word MCP
-  `copy_document` tool);
-- preserve the original margins, fonts, headings, bullet indentation, and
-  spacing;
-- edit relevant text in place rather than rebuilding the entire document
-  from scratch.
+- the backend may overwrite `output/tailored_resume.docx` with the
+  deterministic render;
+- visual fidelity to the master DOCX comes from the renderer's
+  code-defined template, not from preserving Claude-generated DOCX
+  styling;
+- do not encode layout instructions (fonts, colors, margins) into the
+  structured JSON — the renderer ignores them.
 
-When the `word-document-server` MCP server is available:
+Word MCP / Claude for Word remains available as a manual fallback for
+human-in-the-loop edits when the deterministic renderer is
+insufficient; it is no longer the primary path for producing the final
+DOCX.
+
+If you cannot produce valid structured JSON, still write
+`output/tailored_resume.md`, `output/change_log.md`, and
+`output/claim_audit.md`, and explain the JSON failure clearly in
+`output/claim_audit.md`. The backend will fail the run with a clear
+error if `output/tailored_resume.json` is missing or invalid.
+
+### Optional Word MCP fallback
+
+If you do generate a preview/fallback DOCX through the Office Word MCP
+server (`word-document-server`) or the DOCX / Word document skill —
+for example because the structured JSON would lose nuance you want to
+preserve — the same style guidance that previously governed the
+primary path still applies to the fallback artifact. The
+renderer-produced DOCX overrides any Claude or Word MCP output, but
+the fallback artifact is a useful operator checkpoint when comparing
+visual identity.
+
+When the `word-document-server` MCP server is available and you choose
+to use it as a fallback:
 
 - inspect the source DOCX structure/styles before editing;
 - copy the source DOCX as the editable base when possible;
@@ -741,25 +885,12 @@ When the `word-document-server` MCP server is available:
 - preserve horizontal separators if present;
 - replace/tailor content without flattening styles.
 
-If the MCP tools cannot preserve styling, document the limitation in
-`output/claim_audit.md`, `output/ats_audit.md`, and the "Known
-Deviations" section of `output/template_fidelity_audit.md` and still
-produce the required outputs.
+If the MCP tools cannot preserve a particular style element, document
+the limitation in `output/claim_audit.md` and the "Known Deviations"
+section of the template fidelity audit (the backend renderer writes
+that file).
 
-If no source DOCX exists:
-
-- create a professional resume DOCX using Office Word MCP tools or the
-  DOCX / Word document skill;
-- use real Word headings, paragraphs, and bullet structures;
-- do not create a plain-text dump inside a DOCX.
-
-The DOCX must be a professional resume document, not a plain-text dump.
-Preserve consistent heading styles, bullet indentation, margins, spacing,
-and readable typography. Prefer ATS-safe formatting. Avoid unnecessary
-tables or graphics.
-
-Always validate that `output/tailored_resume.docx` exists and has nonzero size before finishing.
-
-If DOCX generation fails, still write `output/tailored_resume.md`,
-`output/change_log.md`, and `output/claim_audit.md`, and explain the DOCX
-failure clearly in `output/claim_audit.md`.
+Do not create a plain-text dump inside a DOCX. Real Word headings,
+paragraphs, and bullet structures are still expected even on the
+fallback path. Any DOCX (deterministic render or fallback) must be a
+professional resume document, not a plain-text dump.
