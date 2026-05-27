@@ -2205,3 +2205,25 @@ tasks:
       - "README_INSTALL.md"
       - "agent_tasks/109-fix-firefox-linkedin-capture-extraction.md"
       - "agent_tasks/queue.yaml"
+
+  - id: "110-canonicalize-captured-job-urls"
+    title: "Canonicalize captured job URLs"
+    file: "agent_tasks/110-canonicalize-captured-job-urls.md"
+    branch: "agent/110-canonicalize-captured-job-urls"
+    worktree: "agent-110-canonicalize-captured-job-urls"
+    status: "ready"
+    depends_on:
+      - "109-fix-firefox-linkedin-capture-extraction"
+    verification:
+      - "pytest backend/tests/test_captures.py"
+      - "pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "extension/**"
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/**"
+      - "README_INSTALL.md"
+      - "agent_tasks/110-canonicalize-captured-job-urls.md"
+      - "agent_tasks/queue.yaml"
