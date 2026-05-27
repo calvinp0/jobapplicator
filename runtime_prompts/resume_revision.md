@@ -84,12 +84,21 @@ output/change_log.md
 output/claim_audit.md
 output/ats_audit.md
 output/template_fidelity_audit.md
+output/recruiter_review.md
 ```
 
 `output/template_fidelity_audit.md` follows the same structure as the
 first-draft tailoring contract documented in
 `runtime_prompts/resume_tailoring.md` (see "Template Fidelity Audit").
 Revision runs must refresh this file to reflect the revised DOCX.
+
+`output/recruiter_review.md` follows the same structure as the
+first-draft tailoring contract documented in
+`runtime_prompts/resume_tailoring.md` (see "Recruiter Review"). After
+applying the revision request, re-review the result as a
+recruiter/hiring manager and update `recruiter_review.md` to reflect
+the revised resume — including a fresh scorecard, recommendation,
+strengths, weaknesses, missing requirements, and suggested rewrites.
 
 The runtime prompt for first-draft tailoring
 (`runtime_prompts/resume_tailoring.md`) describes the structure of each
@@ -154,6 +163,7 @@ Reading revision feedback
 Applying revision changes to tailored resume markdown
 Refreshing ATS keyword coverage
 Refreshing template fidelity audit
+Refreshing recruiter review
 Validating required outputs
 ```
 

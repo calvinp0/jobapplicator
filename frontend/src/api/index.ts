@@ -40,6 +40,7 @@ import type {
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
+  RecruiterReview,
   RunLog,
   RunProgress,
   WordHandoffMetadata,
@@ -89,6 +90,7 @@ export type {
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
+  RecruiterReview,
   RunLog,
   RunProgress,
   WordHandoffMetadata,
@@ -174,6 +176,12 @@ export function getRunLog(runId: string): Promise<RunLog> {
 
 export function getRunProgress(runId: string): Promise<RunProgress> {
   return apiRequest(`/runs/${runId}/progress`);
+}
+
+export function getRunRecruiterReview(
+  runId: string,
+): Promise<RecruiterReview> {
+  return apiRequest(`/runs/${runId}/recruiter-review`);
 }
 
 export function importRun(runId: string): Promise<ResumeVersion> {

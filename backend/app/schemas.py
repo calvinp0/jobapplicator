@@ -369,6 +369,20 @@ class ClaudeRunProgressRead(BaseModel):
     truncated: bool
 
 
+class ClaudeRunRecruiterReviewRead(BaseModel):
+    """Contents of the recruiter review file for a run, when present.
+
+    ``available`` is False (and ``content`` is None) when the file has
+    not been written yet — the UI shows a "review not produced" hint
+    rather than treating the absence as an error.
+    """
+
+    run_id: str
+    available: bool
+    content: Optional[str] = None
+    path: Optional[str] = None
+
+
 # ---- ResumeVersion ----
 
 class ResumeVersionRead(_ORMModel):

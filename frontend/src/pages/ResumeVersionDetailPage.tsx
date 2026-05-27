@@ -7,12 +7,18 @@ import {
   getJob,
   getResumeVersion,
   getRun,
+  getRunRecruiterReview,
   listEvidenceSources,
   listMasterResumes,
   openResumeVersionFile,
   submitRevisionFeedback,
 } from "../api";
-import type { EvidenceSource, Job, ResumeVersion } from "../api";
+import type {
+  EvidenceSource,
+  Job,
+  RecruiterReview,
+  ResumeVersion,
+} from "../api";
 import { draftLabel, draftStatusLabel } from "../lib/workflow";
 import { extractApiDetail } from "../lib/api-errors";
 
@@ -39,6 +45,8 @@ export function ResumeVersionDetailPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [masterResumeName, setMasterResumeName] = useState<string | null>(null);
   const [evidenceSources, setEvidenceSources] = useState<EvidenceSource[]>([]);
+  const [recruiterReview, setRecruiterReview] =
+    useState<RecruiterReview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isApproving, setIsApproving] = useState(false);
@@ -82,6 +90,19 @@ export function ResumeVersionDetailPage() {
           /* listMasterResumes may be undefined in some test mocks */
         }
         if (v.claude_run_id) {
+          // The recruiter review lives under the draft's source run. The
+          // endpoint reports available=false when the file has not been
+          // written yet, so the catch block only fires on transport
+          // errors — not on a legitimately absent review file.
+          try {
+            getRunRecruiterReview(v.claude_run_id)
+              .then((review) => {
+                if (!cancelled) setRecruiterReview(review);
+              })
+              .catch(() => {});
+          } catch {
+            /* getRunRecruiterReview may be undefined in some test mocks */
+          }
           try {
             getRun(v.claude_run_id)
               .then((run) => {
@@ -332,6 +353,17 @@ export function ResumeVersionDetailPage() {
       {actionError ? (
         <p role="alert" className="error">
           {actionError}
+        </p>
+      ) : null}
+
+      {recruiterReview && recruiterReview.available ? (
+        <details className="recruiter-review">
+          <summary>Open recruiter review</summary>
+          <pre className="job-description">{recruiterReview.content}</pre>
+        </details>
+      ) : recruiterReview && !recruiterReview.available ? (
+        <p className="recruiter-review-missing">
+          Recruiter review not produced for this draft yet.
         </p>
       ) : null}
 

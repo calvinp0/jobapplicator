@@ -67,6 +67,14 @@ vi.mock("../api", () => ({
   getRunProgress: vi.fn(() =>
     Promise.resolve({ run_id: "stub", lines: [], truncated: false }),
   ),
+  getRunRecruiterReview: vi.fn(() =>
+    Promise.resolve({
+      run_id: "stub",
+      available: false,
+      content: null,
+      path: null,
+    }),
+  ),
   ApiError: ApiErrorMock,
 }));
 

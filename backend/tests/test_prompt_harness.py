@@ -146,7 +146,8 @@ def test_validate_tailoring_passes_with_required_elements():
     # Tailoring Prompt
     Non-interactive backend job. Do not ask clarifying questions.
     Read evidence and write tailored_resume.md tailored_resume.docx
-    change_log.md claim_audit.md ats_audit.md with ATS keywords.
+    change_log.md claim_audit.md ats_audit.md recruiter_review.md
+    with ATS keywords.
     """
     result = validate_prompt_content("resume_tailoring", body)
     assert result.valid is True

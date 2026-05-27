@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..claude_worker import (
+    OUTPUT_DIRNAME,
     PROGRESS_RELPATH,
+    RECRUITER_REVIEW_FILENAME,
     RUN_LOG_FILENAME,
     ClaudeWorkerError,
     invoke_claude_run,
@@ -43,6 +45,7 @@ from ..schemas import (
     ClaudeRunLogRead,
     ClaudeRunProgressRead,
     ClaudeRunRead,
+    ClaudeRunRecruiterReviewRead,
     ResumeVersionRead,
 )
 
@@ -269,6 +272,46 @@ def get_run_progress(
     lines, truncated = read_progress_lines(progress_path)
     return ClaudeRunProgressRead(
         run_id=run.id, lines=lines, truncated=truncated
+    )
+
+
+@router.get(
+    "/{run_id}/recruiter-review",
+    response_model=ClaudeRunRecruiterReviewRead,
+)
+def get_run_recruiter_review(
+    run_id: str, db: Session = Depends(get_db)
+) -> ClaudeRunRecruiterReviewRead:
+    """Return the recruiter review markdown for a run, when present.
+
+    The recruiter review is produced as ``output/recruiter_review.md``
+    inside the run directory. The file is requested but not strictly
+    required by the worker today (task 108), so callers must handle the
+    "not yet written" case — the endpoint reports ``available=False``
+    rather than returning 404, which lets the UI render a hint instead
+    of an error.
+    """
+    run = db.get(ClaudeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="claude run not found")
+    review_relpath = f"{OUTPUT_DIRNAME}/{RECRUITER_REVIEW_FILENAME}"
+    review_path = Path(run.run_dir) / OUTPUT_DIRNAME / RECRUITER_REVIEW_FILENAME
+    if not review_path.is_file():
+        return ClaudeRunRecruiterReviewRead(
+            run_id=run.id, available=False, content=None, path=None
+        )
+    try:
+        content = review_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed to read recruiter review: {exc}",
+        ) from exc
+    return ClaudeRunRecruiterReviewRead(
+        run_id=run.id,
+        available=True,
+        content=content,
+        path=review_relpath,
     )
 
 

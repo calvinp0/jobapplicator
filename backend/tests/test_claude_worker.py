@@ -1680,3 +1680,268 @@ def test_docx_style_audit_compare_no_issues_when_output_matches(tmp_path):
     output = summarize_docx_style(_build_styled_docx(tmp_path / "out.docx"))
     issues = compare_template_fidelity(source, output)
     assert issues == []
+
+
+# ---------------------------------------------------------------------------
+# Task 108: recruiter review agent
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_prompt_requests_recruiter_review_output():
+    """The tailoring prompt must list ``output/recruiter_review.md`` in
+    its Required Outputs section so Claude knows to write it."""
+    text = _runtime_prompt_text()
+    assert "output/recruiter_review.md" in text
+
+
+def test_runtime_prompt_recruiter_review_role_persona():
+    """The recruiter review section must instruct Claude to act as a
+    recruiter / hiring manager for the target company."""
+    text = _runtime_prompt_text()
+    # The Recruiter Review section must call out the multiple
+    # personas the review needs to cover.
+    assert "## Recruiter Review" in text
+    for phrase in (
+        "recruiter doing an initial screen",
+        "hiring manager doing a technical screen",
+        "ATS/human keyword-alignment reviewer",
+        "credibility/evidence reviewer",
+        "readability/formatting reviewer",
+    ):
+        assert phrase in text, f"missing recruiter review persona: {phrase!r}"
+
+
+def test_runtime_prompt_recruiter_review_scorecard():
+    """The recruiter review section must include the scorecard rows."""
+    text = _runtime_prompt_text()
+    for row in (
+        "Role fit",
+        "Technical keyword alignment",
+        "Evidence strength",
+        "Recruiter readability",
+        "Hiring manager credibility",
+        "Seniority/level fit",
+        "Formatting/professionalism",
+    ):
+        assert row in text, f"missing scorecard row: {row!r}"
+
+
+def test_runtime_prompt_recruiter_review_first_30_second_impression():
+    text = _runtime_prompt_text()
+    assert "First 30-Second Impression" in text
+
+
+def test_runtime_prompt_recruiter_review_strengths_and_weaknesses():
+    text = _runtime_prompt_text()
+    assert "## Strengths" in text
+    assert "## Weaknesses / Risks" in text
+
+
+def test_runtime_prompt_recruiter_review_missing_requirements():
+    text = _runtime_prompt_text()
+    assert "Missing or Under-emphasized Requirements" in text
+
+
+def test_runtime_prompt_recruiter_review_suggested_rewrites():
+    """The recruiter review section must require suggested rewrites for
+    weak lines/bullets so a later revision flow can apply them."""
+    text = _runtime_prompt_text()
+    assert "Lines or Bullets to Improve" in text
+    assert "Suggested rewrite" in text
+
+
+def test_runtime_prompt_recruiter_review_does_not_invent_company_facts():
+    """The recruiter review section must explicitly forbid inventing
+    company facts beyond the job description."""
+    text = _runtime_prompt_text()
+    assert (
+        "Do not invent facts about the company beyond what the\njob description states."
+        in text
+        or "Do not invent facts about the company beyond what the job description states."
+        in _normalize_whitespace(text)
+    )
+
+
+def test_runtime_prompt_recruiter_review_includes_overall_recommendation():
+    text = _runtime_prompt_text()
+    for option in (
+        "Strong submit",
+        "Submit after minor edits",
+        "Needs revision before submit",
+        "Do not submit yet",
+    ):
+        assert option in text, f"missing recommendation option: {option!r}"
+
+
+def test_revision_prompt_requests_recruiter_review_output():
+    """Revision runs must also update output/recruiter_review.md."""
+    text = _revision_prompt_text()
+    assert "output/recruiter_review.md" in text
+    normalized = _normalize_whitespace(text).lower()
+    assert (
+        "re-review the result as a recruiter/hiring manager and update"
+        in normalized
+    )
+
+
+def test_recruiter_review_runtime_prompt_file_exists_and_has_contract():
+    """The dedicated recruiter review prompt file must ship with the
+    same review contract as the inline section in the tailoring prompt."""
+    prompt_path = (
+        _repo_root() / "runtime_prompts" / "recruiter_review.md"
+    )
+    assert prompt_path.is_file(), "recruiter_review.md is not shipped"
+    text = prompt_path.read_text(encoding="utf-8")
+    # Non-interactive contract
+    assert "non-interactive backend job" in text.lower()
+    assert "Do not ask clarifying questions" in text
+    # Personas
+    for phrase in (
+        "recruiter doing an initial screen",
+        "hiring manager doing a technical screen",
+    ):
+        assert phrase in text, f"missing persona: {phrase!r}"
+    # Scorecard, recommendation, suggested rewrites, do-not-invent
+    assert "Scorecard" in text
+    assert "Overall Recommendation" in text
+    assert "First 30-Second Impression" in text
+    assert "Lines or Bullets to Improve" in text
+    assert "Suggested rewrite" in text
+    assert (
+        "Do not invent facts about the company beyond what the\njob description states."
+        in text
+        or "Do not invent facts about the company beyond what the job description states."
+        in _normalize_whitespace(text)
+    )
+
+
+def test_invoke_run_logs_recruiter_review_requested(
+    client, tmp_path, monkeypatch
+):
+    """The worker must log that recruiter review was requested for the run."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: recruiter review requested" in log_text
+    assert (
+        "jobapply: recruiter review expected at output/recruiter_review.md"
+        in log_text
+    )
+
+
+def test_invoke_run_warns_when_recruiter_review_missing(
+    client, tmp_path, monkeypatch
+):
+    """When Claude omits recruiter_review.md, the worker must log a
+    warning so the operator can spot the regression. The run still
+    completes because the file is requested rather than strictly
+    required by the worker today."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
+    assert (
+        "jobapply: warning: recruiter review missing at "
+        "output/recruiter_review.md"
+    ) in log_text
+
+
+def test_invoke_run_no_recruiter_review_warning_when_present(
+    client, tmp_path, monkeypatch
+):
+    """When Claude writes recruiter_review.md, the warning must not appear."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    extra_outputs = ALL_OUTPUTS + ("recruiter_review.md",)
+    binary = _write_fake_binary(
+        tmp_path, exit_code=0, write_outputs=extra_outputs
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    run_dir = Path(body["run_dir"])
+    assert (run_dir / "output" / "recruiter_review.md").is_file()
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert "recruiter review missing" not in log_text
+
+
+def test_invoke_run_dry_run_writes_recruiter_review_placeholder(
+    client, tmp_path, monkeypatch
+):
+    """Dry-run must populate recruiter_review.md so the artifact set is uniform."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    monkeypatch.setenv(
+        "JOBAPPLY_CLAUDE_BINARY", str(tmp_path / "would_explode_if_used")
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_DRY_RUN", "1")
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+
+    review = Path(body["run_dir"]) / "output" / "recruiter_review.md"
+    assert review.is_file()
+    assert "Recruiter Review" in review.read_text(encoding="utf-8")
+
+
+def test_get_run_recruiter_review_returns_content_when_present(
+    client, tmp_path, monkeypatch
+):
+    """``GET /runs/{id}/recruiter-review`` must return the file content."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    extra_outputs = ALL_OUTPUTS + ("recruiter_review.md",)
+    binary = _write_fake_binary(
+        tmp_path, exit_code=0, write_outputs=extra_outputs
+    )
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    invoke_resp = client.post(f"/runs/{run['id']}/invoke")
+    assert invoke_resp.status_code == 200, invoke_resp.text
+    review_resp = client.get(f"/runs/{run['id']}/recruiter-review")
+    assert review_resp.status_code == 200, review_resp.text
+    body = review_resp.json()
+    assert body["run_id"] == run["id"]
+    assert body["available"] is True
+    assert body["content"]
+    assert body["path"] == "output/recruiter_review.md"
+
+
+def test_get_run_recruiter_review_returns_available_false_when_missing(
+    client, tmp_path, monkeypatch
+):
+    """When the file is absent the endpoint reports available=False
+    rather than returning 404, so the UI can render a hint."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    invoke_resp = client.post(f"/runs/{run['id']}/invoke")
+    assert invoke_resp.status_code == 200, invoke_resp.text
+    review_resp = client.get(f"/runs/{run['id']}/recruiter-review")
+    assert review_resp.status_code == 200, review_resp.text
+    body = review_resp.json()
+    assert body["available"] is False
+    assert body["content"] is None
+    assert body["path"] is None
+
+
+def test_get_run_recruiter_review_unknown_run_returns_404(client):
+    resp = client.get("/runs/does-not-exist/recruiter-review")
+    assert resp.status_code == 404

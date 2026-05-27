@@ -5,11 +5,17 @@ import {
   getRun,
   getRunLog,
   getRunProgress,
+  getRunRecruiterReview,
   importRun,
   invokeRun,
   listResumeVersions,
 } from "../api";
-import type { ClaudeRun, Job, ResumeVersion } from "../api";
+import type {
+  ClaudeRun,
+  Job,
+  RecruiterReview,
+  ResumeVersion,
+} from "../api";
 import { extractApiDetail } from "../lib/api-errors";
 import {
   parseTimestamp,
@@ -426,6 +432,8 @@ export function RunDetailPage() {
   const [importError, setImportError] = useState<string | null>(null);
   const [isInvoking, setIsInvoking] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [recruiterReview, setRecruiterReview] =
+    useState<RecruiterReview | null>(null);
 
   useEffect(() => {
     if (!runId) return;
@@ -447,6 +455,28 @@ export function RunDetailPage() {
       cancelled = true;
     };
   }, [runId]);
+
+  // Fetch the recruiter review whenever the run reaches a state where
+  // output/recruiter_review.md may exist. The endpoint reports
+  // available=false when the file has not been written, so we can
+  // safely poll it on every status change without surfacing errors.
+  useEffect(() => {
+    if (!runId || !run) return;
+    if (run.status !== "completed" && run.status !== "imported") return;
+    let cancelled = false;
+    getRunRecruiterReview(runId)
+      .then((review) => {
+        if (cancelled) return;
+        setRecruiterReview(review);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRecruiterReview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, run]);
 
   const resumeVersion =
     resumeVersions?.find((v) => v.claude_run_id === runId) ?? null;
@@ -647,6 +677,17 @@ export function RunDetailPage() {
           <Link to={`/resume-versions/${resumeVersion.id}`}>
             {resumeVersion.id}
           </Link>
+        </p>
+      ) : null}
+
+      {recruiterReview && recruiterReview.available ? (
+        <details className="recruiter-review">
+          <summary>Open recruiter review</summary>
+          <pre className="job-description">{recruiterReview.content}</pre>
+        </details>
+      ) : recruiterReview && !recruiterReview.available ? (
+        <p className="recruiter-review-missing">
+          Recruiter review not produced for this run yet.
         </p>
       ) : null}
 

@@ -44,6 +44,14 @@ vi.mock("../api", () => ({
   submitRevisionFeedback: submitRevisionFeedbackMock,
   getJob: getJobMock,
   getRun: getRunMock,
+  getRunRecruiterReview: vi.fn(() =>
+    Promise.resolve({
+      run_id: "stub",
+      available: false,
+      content: null,
+      path: null,
+    }),
+  ),
   listMasterResumes: listMasterResumesMock,
   listEvidenceSources: listEvidenceSourcesMock,
   ApiError: ApiErrorMock,

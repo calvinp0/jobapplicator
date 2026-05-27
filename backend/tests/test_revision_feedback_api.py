@@ -749,3 +749,21 @@ def test_runtime_prompt_includes_revision_context():
     assert "input/current_tailored_resume.md" in prompt
     assert "input/evidence_sources_index.md" in prompt
     assert "input/revision_feedback.md" in prompt
+
+
+def test_revision_prompt_requests_updated_recruiter_review():
+    """Task 108: revision runs must refresh output/recruiter_review.md
+    after applying the user's feedback."""
+    prompt = (
+        Path(__file__).resolve().parents[2]
+        / "runtime_prompts"
+        / "resume_revision.md"
+    ).read_text(encoding="utf-8")
+    assert "output/recruiter_review.md" in prompt
+    # The instruction wording must explicitly tell Claude to re-review
+    # the result after applying the revision request.
+    normalized = " ".join(prompt.split()).lower()
+    assert (
+        "re-review the result as a recruiter/hiring manager and update"
+        in normalized
+    )

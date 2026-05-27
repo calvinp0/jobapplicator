@@ -382,6 +382,7 @@ _TAILORING_REQUIRED_ELEMENTS: tuple[str, ...] = (
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+    "recruiter_review.md",
     "ATS",
     "evidence",
 )
@@ -397,6 +398,7 @@ _REVISION_REQUIRED_ELEMENTS: tuple[str, ...] = (
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+    "recruiter_review.md",
 )
 
 
