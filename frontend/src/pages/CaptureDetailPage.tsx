@@ -59,11 +59,18 @@ function fallbackTitleForForm(capture: JobCapture): string {
 }
 
 function toFormState(capture: JobCapture): FormState {
+  // Prefer the canonical URL in the editable URL field so confirming the
+  // capture promotes the clean form into the Job. ``external_url`` is the
+  // canonical form post-task-110 too, but ``canonical_url`` is the
+  // explicit name and is what the user sees alongside the original
+  // captured URL.
+  const cleanUrl =
+    capture.canonical_url ?? capture.external_url ?? "";
   return {
     company: capture.company ?? "",
     title: fallbackTitleForForm(capture),
     location: capture.location ?? "",
-    external_url: capture.external_url ?? "",
+    external_url: cleanUrl,
     description_text: bestFallbackDescription(capture),
     application_method: capture.application_method ?? "",
   };
@@ -249,6 +256,25 @@ export function CaptureDetailPage() {
             onChange={(e) => updateField("external_url", e.target.value)}
           />
         </label>
+        {capture.source_url &&
+        capture.canonical_url &&
+        capture.source_url !== capture.canonical_url ? (
+          <details
+            className="capture-source-url"
+            data-testid="capture-source-url"
+          >
+            <summary>Original captured URL</summary>
+            <p className="capture-source-url-value">
+              <a
+                href={capture.source_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {capture.source_url}
+              </a>
+            </p>
+          </details>
+        ) : null}
         <label className="field">
           <span>Application method</span>
           <input

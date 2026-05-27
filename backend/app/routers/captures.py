@@ -15,6 +15,7 @@ from ..schemas import (
     JobCaptureRead,
     JobRead,
 )
+from ..url_canonicalizer import canonicalize_job_url
 
 router = APIRouter(prefix="/captures", tags=["captures"])
 
@@ -35,6 +36,14 @@ def _is_complete(capture: JobCapture) -> bool:
 def _find_job_by_url(db: Session, external_url: Optional[str]) -> Optional[Job]:
     if not external_url:
         return None
+    # Dedup on canonical_url first — that is the stable identity post-task
+    # 110 — then fall back to external_url for historical rows that
+    # pre-date the split.
+    by_canonical = (
+        db.query(Job).filter(Job.canonical_url == external_url).first()
+    )
+    if by_canonical is not None:
+        return by_canonical
     return db.query(Job).filter(Job.external_url == external_url).first()
 
 
@@ -43,6 +52,8 @@ def _job_from_capture(capture: JobCapture) -> Job:
     return Job(
         source_platform=capture.source_platform,
         external_url=capture.external_url,
+        source_url=capture.source_url,
+        canonical_url=capture.canonical_url,
         external_job_id=capture.external_job_id,
         company=capture.company.strip(),
         title=capture.title.strip(),
@@ -71,11 +82,26 @@ def create_capture(
         else None
     )
 
+    # Task 110: canonicalize the captured URL deterministically. The raw
+    # URL the extension shipped is preserved as ``source_url``;
+    # ``external_url`` switches to the canonical form so dedup and display
+    # both operate on the clean identity. ``external_job_id`` and
+    # ``source_platform`` are taken from the extension when supplied (it
+    # already extracts them for LinkedIn) and otherwise filled from the
+    # canonicalizer so non-LinkedIn captures still get a sensible value.
+    canonical = canonicalize_job_url(payload.external_url)
+    canonical_url = canonical.canonical_url
+    source_url = canonical.source_url
+    external_job_id = payload.external_job_id or canonical.external_job_id
+    source_platform = payload.source_platform or canonical.source_platform
+
     capture = JobCapture(
-        source_platform=payload.source_platform,
+        source_platform=source_platform,
         capture_method=payload.capture_method,
-        external_url=payload.external_url,
-        external_job_id=payload.external_job_id,
+        external_url=canonical_url,
+        source_url=source_url,
+        canonical_url=canonical_url,
+        external_job_id=external_job_id,
         company=payload.company,
         title=payload.title,
         location=payload.location,

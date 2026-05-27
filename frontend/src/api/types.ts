@@ -47,6 +47,11 @@ export interface JobCapture {
   source_platform: string;
   capture_method: string;
   external_url: string | null;
+  // Task 110: ``source_url`` is the raw URL the extension captured;
+  // ``canonical_url`` is the deterministically cleaned form. Both are
+  // optional so captures from before the canonicalizer landed still load.
+  source_url?: string | null;
+  canonical_url?: string | null;
   external_job_id: string | null;
   company: string | null;
   title: string | null;
@@ -71,6 +76,9 @@ export interface Job {
   id: string;
   source_platform: string;
   external_url: string | null;
+  // Task 110: same canonical/source URL pair as JobCapture.
+  source_url?: string | null;
+  canonical_url?: string | null;
   external_job_id: string | null;
   company: string;
   title: string;

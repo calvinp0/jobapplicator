@@ -47,6 +47,11 @@ class JobCaptureRead(_ORMModel):
     source_platform: str
     capture_method: str
     external_url: str
+    # Task 110: ``source_url`` is the raw URL the extension captured;
+    # ``canonical_url`` is the deterministically cleaned form. Both are
+    # nullable so historical captures (pre-canonicalizer) still serialize.
+    source_url: Optional[str] = None
+    canonical_url: Optional[str] = None
     external_job_id: Optional[str]
     company: Optional[str]
     title: Optional[str]
@@ -97,6 +102,9 @@ class JobRead(_ORMModel):
     id: str
     source_platform: str
     external_url: Optional[str]
+    # Task 110: same canonical/source URL pair surfaced by JobCaptureRead.
+    source_url: Optional[str] = None
+    canonical_url: Optional[str] = None
     external_job_id: Optional[str]
     company: str
     title: str

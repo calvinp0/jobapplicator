@@ -69,6 +69,14 @@ class JobCapture(Base):
     source_platform: Mapped[str] = mapped_column(String(64), nullable=False)
     capture_method: Mapped[str] = mapped_column(String(64), nullable=False)
     external_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    # Task 110: ``source_url`` preserves the raw URL the extension shipped
+    # so messy collections/search URLs remain recoverable for debugging.
+    # ``canonical_url`` is the cleaned form (e.g. LinkedIn
+    # ``/jobs/view/<id>``) computed deterministically by
+    # ``backend/app/url_canonicalizer.py``. Both are nullable so historical
+    # rows load unchanged; new rows always populate them.
+    source_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     external_job_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     company: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
@@ -124,6 +132,12 @@ class Job(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     source_platform: Mapped[str] = mapped_column(String(64), nullable=False)
     external_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    # Task 110: ``source_url`` / ``canonical_url`` mirror the equivalent
+    # columns on JobCapture so a Job carries both the original captured URL
+    # (for debugging) and the clean canonical form (for display and dedup).
+    # Both are nullable so historical rows load unchanged.
+    source_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     external_job_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     company: Mapped[str] = mapped_column(String(512), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
