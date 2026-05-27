@@ -188,6 +188,35 @@ the parser from finding the description container. The popup will say
 expanded so LinkedIn fully hydrates the description; click Capture
 again.
 
+### Firefox capture only fills the URL
+
+The popup shows the URL but title / company / description are blank,
+and the Review Capture page in the cockpit looks empty:
+
+1. Reload the LinkedIn job page so the right pane has time to hydrate.
+2. Wait for the job details (title, company, description) to render.
+3. Click the extension button and **Capture this job page** again. The
+   content script retries the parse with a small backoff, so giving the
+   page a moment before clicking gives it a better chance.
+4. If a field is still missing, the extension now ships a bounded page
+   text fallback alongside the URL. Open Captures in JobApplicator —
+   the Review Capture page prefills the description from that fallback
+   and shows a "Structured LinkedIn fields were not detected" warning,
+   with a **Raw captured text preview** section you can copy from.
+5. You can also select the relevant text on the LinkedIn page before
+   clicking Capture; the selection is sent as `selected_text` and is
+   used as the description if no structured description was found.
+6. If you regularly see empty captures on a layout that other pages
+   parse fine, LinkedIn likely changed the DOM. The selector lists in
+   `extension/src/parser.js` (`TITLE_SELECTORS`, `COMPANY_SELECTORS`,
+   `LOCATION_SELECTORS`, `DESCRIPTION_SELECTORS`) are the right place
+   to add a new variant.
+
+The capture payload includes a `diagnostics` object that records which
+selectors matched and which fallbacks fired. The Capture detail row in
+the cockpit surfaces that information so you can tell at a glance
+whether the parser failed or the page genuinely had no description.
+
 ### Wrong backend URL stored
 
 Open the extension's **Options** page and click **Reset to default**.

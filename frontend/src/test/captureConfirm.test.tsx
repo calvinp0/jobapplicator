@@ -151,6 +151,73 @@ describe("CaptureDetailPage confirm flow", () => {
     expect(confirmCaptureMock).not.toHaveBeenCalled();
   });
 
+  it("fills description from page_text fallback when structured description is empty", async () => {
+    getCaptureMock.mockResolvedValue({
+      ...baseCapture,
+      title: null,
+      company: null,
+      description_text: "",
+      raw_text: null,
+      page_title: "Senior ML Engineer at Example Co | LinkedIn",
+      page_text: "Senior ML Engineer at Example Co — Build large-scale ranking systems.",
+      diagnostics: {
+        extractor: "linkedin",
+        selectors_matched: {
+          title: false,
+          company: false,
+          location: false,
+          description: false,
+        },
+      },
+    });
+
+    renderDetail("cap-1");
+
+    const descBox = (await screen.findByRole("textbox", {
+      name: /description/i,
+    })) as HTMLTextAreaElement;
+    expect(descBox.value).toContain("Build large-scale ranking systems");
+  });
+
+  it("shows a warning when structured extraction failed", async () => {
+    getCaptureMock.mockResolvedValue({
+      ...baseCapture,
+      title: null,
+      company: null,
+      description_text: "",
+      diagnostics: {
+        extractor: "linkedin",
+        selectors_matched: {
+          title: false,
+          company: false,
+          location: false,
+          description: false,
+        },
+      },
+    });
+
+    renderDetail("cap-1");
+
+    expect(
+      await screen.findByTestId("extraction-warning"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a raw captured text preview when page_text is present", async () => {
+    getCaptureMock.mockResolvedValue({
+      ...baseCapture,
+      description_text: "",
+      page_text: "Bounded body text excerpt from LinkedIn.",
+    });
+
+    renderDetail("cap-1");
+
+    const preview = await screen.findByTestId("raw-text-preview");
+    expect(preview.textContent).toContain(
+      "Bounded body text excerpt from LinkedIn.",
+    );
+  });
+
   it("surfaces server-side 422 validation errors from the confirm endpoint", async () => {
     const user = userEvent.setup();
     getCaptureMock.mockResolvedValue(baseCapture);

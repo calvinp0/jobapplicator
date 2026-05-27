@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -75,6 +76,19 @@ class JobCapture(Base):
     description_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     application_method: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Fallback fields populated by the browser extension when LinkedIn's
+    # structured selectors do not resolve (task 109). ``page_title`` is the
+    # raw <title> tag, ``page_text`` is a bounded visible-text excerpt of
+    # <body>, ``selected_text`` is whatever the user had selected on the
+    # page at capture time, and ``diagnostics_json`` is a JSON blob the
+    # extension fills in with which selectors matched and which fallbacks
+    # were used. All four are nullable so existing rows and the chrome
+    # capture path that already populates the structured fields keep
+    # working unchanged.
+    page_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    page_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    selected_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    diagnostics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     user_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
@@ -86,6 +100,22 @@ class JobCapture(Base):
     @property
     def job_id(self) -> Optional[str]:
         return self.created_job.id if self.created_job is not None else None
+
+    @property
+    def diagnostics(self) -> Optional[Dict[str, Any]]:
+        """Decode ``diagnostics_json`` for serialization through Pydantic.
+
+        Stored as a JSON string (SQLite has no native JSON type and we
+        don't want to pull in a separate column type). Returns ``None``
+        when the column is null or contains invalid JSON.
+        """
+        if not self.diagnostics_json:
+            return None
+        try:
+            decoded = json.loads(self.diagnostics_json)
+        except (TypeError, ValueError):
+            return None
+        return decoded if isinstance(decoded, dict) else None
 
 
 class Job(Base):

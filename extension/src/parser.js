@@ -21,6 +21,7 @@ const COMPANY_SELECTORS = [
   ".jobs-unified-top-card__company-name a",
   ".jobs-unified-top-card__company-name",
   ".topcard__org-name-link",
+  "[data-test-job-details-company-name]",
 ];
 
 const LOCATION_SELECTORS = [
@@ -28,6 +29,7 @@ const LOCATION_SELECTORS = [
   ".job-details-jobs-unified-top-card__bullet",
   ".jobs-unified-top-card__bullet",
   ".topcard__flavor--bullet",
+  "[data-test-job-location]",
 ];
 
 // Ranked list of selectors used to locate the job description on LinkedIn.
@@ -49,9 +51,14 @@ const DESCRIPTION_SELECTORS = [
 // returns a "real" description.
 const DESCRIPTION_MIN_CHARS = 100;
 
-// Whitespace class includes non-breaking space ( ) because LinkedIn
+// Whitespace class includes non-breaking space ( ) because LinkedIn
 // frequently injects NBSPs around bullets and inline icons.
 const INLINE_WS_RE = /[ \t ]+/g;
+
+// Upper bound on the body-text fallback we send to the backend. Captures
+// enough to recover title/description from a stale-selector page without
+// blowing up the request body when LinkedIn injects huge SSR payloads.
+const PAGE_TEXT_MAX_CHARS = 20000;
 
 /**
  * Determine whether a URL looks like a LinkedIn job page.
@@ -104,6 +111,21 @@ function firstMatchingNode(document, selectors) {
     if (node) return node;
   }
   return null;
+}
+
+function metaContent(document, selector) {
+  const node = document.querySelector(selector);
+  if (!node) return null;
+  const value = node.getAttribute ? node.getAttribute("content") : null;
+  if (!value) return null;
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed || null;
+}
+
+function documentTitle(document) {
+  const raw = typeof document.title === "string" ? document.title : "";
+  const trimmed = raw.replace(/\s+/g, " ").trim();
+  return trimmed || null;
 }
 
 function detectApplicationMethod(document) {
@@ -182,9 +204,32 @@ function extractRawText(document) {
 }
 
 /**
+ * Capture a bounded plain-text excerpt of the page body. Used as a last-
+ * resort fallback so the backend/Review Capture page still has something
+ * to surface when every structured selector misses.
+ *
+ * @param {Document} document
+ * @returns {string | null}
+ */
+export function extractPageText(document) {
+  const body = document.body;
+  if (!body) return null;
+  const raw = readVisibleText(body) || body.textContent || "";
+  if (!raw) return null;
+  const normalized = raw
+    .replace(INLINE_WS_RE, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!normalized) return null;
+  return normalized.length > PAGE_TEXT_MAX_CHARS
+    ? normalized.slice(0, PAGE_TEXT_MAX_CHARS)
+    : normalized;
+}
+
+/**
  * Parse a LinkedIn job page.
  *
- * @param {{ document: Document, url: string }} input
+ * @param {{ document: Document, url: string, selectedText?: string }} input
  * @returns {{
  *   source_platform: string,
  *   capture_method: string,
@@ -195,11 +240,15 @@ function extractRawText(document) {
  *   location: string | null,
  *   description_text: string,
  *   application_method: string | null,
- *   raw_text: string | null
+ *   raw_text: string | null,
+ *   page_title: string | null,
+ *   page_text: string | null,
+ *   selected_text: string | null,
+ *   diagnostics: object
  * }}
  * @throws {Error} if `url` is not a LinkedIn job page URL.
  */
-export function parseLinkedInJob({ document, url }) {
+export function parseLinkedInJob({ document, url, selectedText } = {}) {
   if (!isLinkedInJobUrl(url)) {
     throw new Error("Not a LinkedIn job page");
   }
@@ -207,13 +256,56 @@ export function parseLinkedInJob({ document, url }) {
     throw new Error("parseLinkedInJob requires a Document with querySelector");
   }
 
-  const title = firstMatchingText(document, TITLE_SELECTORS);
+  const structuredTitle = firstMatchingText(document, TITLE_SELECTORS);
   const company = firstMatchingText(document, COMPANY_SELECTORS);
   const location = firstMatchingText(document, LOCATION_SELECTORS);
-  const description_text = extractDescriptionText(document) || "";
+  const description = extractDescriptionText(document);
   const application_method = detectApplicationMethod(document);
   const raw_text = extractRawText(document);
   const external_job_id = extractExternalJobId(url);
+
+  const og_title = metaContent(document, 'meta[property="og:title"]');
+  const meta_description = metaContent(document, 'meta[name="description"]');
+  const page_title = documentTitle(document);
+  const page_text = extractPageText(document);
+  const selected_text =
+    typeof selectedText === "string" && selectedText.trim().length > 0
+      ? selectedText.trim().slice(0, PAGE_TEXT_MAX_CHARS)
+      : null;
+
+  // Pick the best title we have. Structured first, then OG, then the
+  // <title> tag (which on LinkedIn typically reads "<job> at <co> | LinkedIn"
+  // — strip the trailing " | LinkedIn" so we don't store that suffix in the
+  // job title field).
+  let title = structuredTitle;
+  if (!title && og_title) title = og_title;
+  if (!title && page_title) title = stripLinkedInTitleSuffix(page_title);
+
+  // If structured description missed, fall back to the meta description
+  // tag (LinkedIn sets it to a useful summary on /jobs/view/<id> pages).
+  let description_text = description || "";
+  if (!description_text && meta_description) {
+    description_text = meta_description;
+  }
+
+  const diagnostics = {
+    extractor: "linkedin",
+    selectors_matched: {
+      title: Boolean(structuredTitle),
+      company: Boolean(company),
+      location: Boolean(location),
+      description: Boolean(description),
+    },
+    fallbacks_used: {
+      og_title: Boolean(!structuredTitle && og_title),
+      document_title: Boolean(!structuredTitle && !og_title && page_title),
+      meta_description: Boolean(!description && meta_description),
+    },
+    document_title: page_title,
+    body_text_length: page_text ? page_text.length : 0,
+    url_has_current_job_id: /[?&]currentJobId=\d+/.test(url),
+    has_selected_text: Boolean(selected_text),
+  };
 
   return {
     source_platform: "linkedin",
@@ -226,5 +318,15 @@ export function parseLinkedInJob({ document, url }) {
     description_text,
     application_method,
     raw_text,
+    page_title,
+    page_text,
+    selected_text,
+    diagnostics,
   };
+}
+
+// LinkedIn's <title> on job pages typically ends with " | LinkedIn". When we
+// fall back to that, peel the suffix so the title field reads naturally.
+function stripLinkedInTitleSuffix(title) {
+  return title.replace(/\s*[|·]\s*LinkedIn\s*$/i, "").trim() || title;
 }

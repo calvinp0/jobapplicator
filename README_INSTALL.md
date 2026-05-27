@@ -69,6 +69,16 @@ Firefox manifest at `extension/dist/firefox/manifest.json` (not
 `extension/manifest.json`, which is Chrome's). Rebuild first with
 `cd extension && npm run build` if the `dist/` folder is missing.
 
+#### Firefox capture only fills the URL
+
+Reload the LinkedIn job page, wait for the right pane to render, and
+capture again — the content script retries with a small backoff. If a
+field is still missing, the Review Capture page in the cockpit
+prefills the description from the page-text fallback, shows a warning,
+and exposes a "Raw captured text preview" section. You can also
+highlight text on the LinkedIn page before clicking Capture; the
+selection is sent through and used as the description fallback.
+
 See [`docs/browser_extension.md`](docs/browser_extension.md) for the
 full troubleshooting list (backend health, CORS, content-script
 access).

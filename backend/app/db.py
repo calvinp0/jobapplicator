@@ -106,6 +106,29 @@ def ensure_runtime_columns() -> None:
                         "ADD COLUMN email_search_state VARCHAR(32)"
                     )
                 )
+    if "job_captures" in table_names:
+        existing_capture_cols = {
+            col["name"] for col in inspector.get_columns("job_captures")
+        }
+        # Backfill for task 109 (Firefox LinkedIn capture extraction).
+        # All columns are nullable so existing rows load without further
+        # migration steps. ``diagnostics_json`` is plain TEXT — the router
+        # serializes/deserializes the dict.
+        for col_name, ddl in (
+            ("page_title", "ALTER TABLE job_captures ADD COLUMN page_title TEXT"),
+            ("page_text", "ALTER TABLE job_captures ADD COLUMN page_text TEXT"),
+            (
+                "selected_text",
+                "ALTER TABLE job_captures ADD COLUMN selected_text TEXT",
+            ),
+            (
+                "diagnostics_json",
+                "ALTER TABLE job_captures ADD COLUMN diagnostics_json TEXT",
+            ),
+        ):
+            if col_name not in existing_capture_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
     if "email_links" in table_names:
         existing_link_cols = {
             col["name"] for col in inspector.get_columns("email_links")

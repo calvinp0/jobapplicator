@@ -14,13 +14,57 @@ type FormState = {
   application_method: string;
 };
 
+function structuredExtractionFailed(capture: JobCapture): boolean {
+  const matched = capture.diagnostics?.selectors_matched;
+  if (!matched) {
+    // No diagnostics — fall back to a structural check on the fields
+    // themselves so older captures still surface a warning if they came
+    // through empty.
+    return (
+      !capture.title?.trim() ||
+      !capture.company?.trim() ||
+      !capture.description_text?.trim()
+    );
+  }
+  return (
+    matched.title === false ||
+    matched.company === false ||
+    matched.description === false
+  );
+}
+
+function bestFallbackDescription(capture: JobCapture): string {
+  // Order: structured description → user selection → raw_text from the
+  // job container → bounded page_text excerpt. The earlier wins are
+  // tighter and don't include navigation chrome, so we prefer them when
+  // present.
+  const existing = capture.description_text?.trim();
+  if (existing) return capture.description_text;
+  if (capture.selected_text?.trim()) return capture.selected_text;
+  if (capture.raw_text?.trim()) return capture.raw_text;
+  if (capture.page_text?.trim()) return capture.page_text;
+  return "";
+}
+
+function fallbackTitleForForm(capture: JobCapture): string {
+  if (capture.title?.trim()) return capture.title;
+  const docTitle = capture.page_title?.trim();
+  if (docTitle) {
+    // The extension already strips the "| LinkedIn" suffix when it falls
+    // back, but older captures may have stored the raw <title>. Keep
+    // whatever we got — the user can edit before confirming.
+    return capture.page_title ?? "";
+  }
+  return "";
+}
+
 function toFormState(capture: JobCapture): FormState {
   return {
     company: capture.company ?? "",
-    title: capture.title ?? "",
+    title: fallbackTitleForForm(capture),
     location: capture.location ?? "",
     external_url: capture.external_url ?? "",
-    description_text: capture.description_text ?? "",
+    description_text: bestFallbackDescription(capture),
     application_method: capture.application_method ?? "",
   };
 }
@@ -151,6 +195,10 @@ export function CaptureDetailPage() {
     );
   }
 
+  const extractionFailed = structuredExtractionFailed(capture);
+  const rawPreview =
+    capture.page_text?.trim() || capture.raw_text?.trim() || "";
+
   return (
     <section className="capture-detail">
       <h2>Review Capture</h2>
@@ -158,6 +206,12 @@ export function CaptureDetailPage() {
         From {capture.source_platform} ({capture.capture_method}) ·{" "}
         {new Date(capture.captured_at).toLocaleString()}
       </p>
+      {extractionFailed ? (
+        <p role="status" className="warning" data-testid="extraction-warning">
+          Structured LinkedIn fields were not detected. We filled what we
+          could from page text. Please review before confirming.
+        </p>
+      ) : null}
       <form onSubmit={handleConfirm} noValidate>
         <label className="field">
           <span>Company</span>
@@ -226,6 +280,19 @@ export function CaptureDetailPage() {
           {isSubmitting ? "Confirming…" : "Confirm"}
         </button>
       </form>
+      {rawPreview ? (
+        <details
+          className="capture-raw-preview"
+          data-testid="raw-text-preview"
+        >
+          <summary>Raw captured text preview</summary>
+          <pre>
+            {rawPreview.length > 4000
+              ? `${rawPreview.slice(0, 4000)}…`
+              : rawPreview}
+          </pre>
+        </details>
+      ) : null}
     </section>
   );
 }

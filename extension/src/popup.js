@@ -72,6 +72,23 @@ function showPreview(payload) {
     descPreview.hidden = true;
     descPreview.textContent = "";
   }
+
+  const summaryEl = $("f-summary");
+  if (summaryEl) {
+    const matched = payload.diagnostics?.selectors_matched ?? {};
+    const yn = (v) => (v ? "yes" : "no");
+    const pageTextLen = payload.page_text ? payload.page_text.length : 0;
+    summaryEl.textContent =
+      `Title detected: ${yn(matched.title || Boolean(payload.title))} · ` +
+      `Company detected: ${yn(matched.company || Boolean(payload.company))} · ` +
+      `Description detected: ${yn(matched.description || desc.length > 0)}` +
+      (pageTextLen > 0 ? ` · Page text fallback: ${formatChars(pageTextLen)} chars` : "");
+    summaryEl.hidden = false;
+
+    const missingAny =
+      !payload.title || !payload.company || desc.length === 0;
+    summaryEl.className = missingAny ? "summary err" : "summary ok";
+  }
 }
 
 async function getActiveTab() {

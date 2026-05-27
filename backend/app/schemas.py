@@ -30,6 +30,15 @@ class JobCaptureCreate(BaseModel):
     description_text: str = ""
     application_method: Optional[str] = None
     raw_text: Optional[str] = None
+    # Task 109 fallback fields populated by the browser extension when
+    # LinkedIn's structured selectors fail to resolve. ``diagnostics`` is a
+    # free-form dict the extension fills with which selectors matched and
+    # which fallbacks were exercised; the router serializes it to JSON
+    # before storing.
+    page_title: Optional[str] = None
+    page_text: Optional[str] = None
+    selected_text: Optional[str] = None
+    diagnostics: Optional[Dict[str, Any]] = None
     captured_at: Optional[datetime] = None
 
 
@@ -45,6 +54,10 @@ class JobCaptureRead(_ORMModel):
     description_text: str
     application_method: Optional[str]
     raw_text: Optional[str]
+    page_title: Optional[str] = None
+    page_text: Optional[str] = None
+    selected_text: Optional[str] = None
+    diagnostics: Optional[Dict[str, Any]] = Field(default=None)
     captured_at: datetime
     user_confirmed: bool
     created_at: datetime

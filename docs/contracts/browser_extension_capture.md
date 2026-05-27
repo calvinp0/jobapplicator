@@ -96,6 +96,27 @@ The payload posted to the backend mirrors `JobCaptureCreate` in
   "description_text": "About the role: ...",
   "application_method": "easy_apply",
   "raw_text": "...visible text of the job container...",
+  "page_title": "Senior Machine Learning Engineer at Example Corp | LinkedIn",
+  "page_text": "...bounded body-text excerpt, up to 20000 chars...",
+  "selected_text": null,
+  "diagnostics": {
+    "extractor": "linkedin",
+    "selectors_matched": {
+      "title": true,
+      "company": true,
+      "location": true,
+      "description": true
+    },
+    "fallbacks_used": {
+      "og_title": false,
+      "document_title": false,
+      "meta_description": false
+    },
+    "document_title": "Senior Machine Learning Engineer at Example Corp | LinkedIn",
+    "body_text_length": 12345,
+    "url_has_current_job_id": false,
+    "has_selected_text": false
+  },
   "captured_at": "2026-05-22T12:00:00.000Z"
 }
 ```
@@ -117,6 +138,19 @@ Field rules:
   button is detected, otherwise `null`.
 - `raw_text` is the visible text of the job container (top card +
   description), scoped to avoid LinkedIn-wide navigation chrome.
+- `page_title` is the raw `document.title`. Always sent so the Review
+  Capture page can prefill the title when the structured selectors miss
+  and the OG fallback is also absent.
+- `page_text` is a bounded (≤ 20000 chars) visible-text excerpt of the
+  whole `<body>`. Used as a description fallback when no description
+  container resolves.
+- `selected_text` is whatever the user had selected on the page at
+  capture time, or `null`. The Review Capture page prefers this over
+  `page_text` when both are present because it represents an explicit
+  user intent about which text matters.
+- `diagnostics` is a free-form object the extension fills with which
+  selectors matched and which fallbacks fired. It must not contain
+  cookies, tokens, or any other sensitive page state.
 - `captured_at` is set by the popup (the sender), not by the parser.
 
 The backend treats this payload as untrusted input (ADR-005). The user
