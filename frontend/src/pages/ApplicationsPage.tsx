@@ -22,19 +22,23 @@ import {
   lastEmailSummary,
   parseTimestamp,
   submissionStatusLabel,
-  timelineStageLabel,
-  timelineStageVariant,
 } from "../lib/workflow";
+import {
+  buildApplicationRowActions,
+  pipelineStatusLabel,
+  pipelineStatusVariant,
+} from "../lib/applicationActions";
+import type { ApplicationMutationKey } from "../lib/applicationActions";
+import { ApplicationPipelineStatus } from "../components/applications/ApplicationPipelineStatus";
+import { ApplicationsRowActions } from "../components/applications/ApplicationsRowActions";
 import {
   Button,
   EmptyState,
   FilterChips,
   PageHeader,
-  StatusBadge,
   Toolbar,
   ToolbarGroup,
 } from "../components/ui";
-import type { StatusBadgeVariant } from "../components/ui";
 
 function formatChecked(value: string | null | undefined): string | null {
   const then = parseTimestamp(value ?? null);
@@ -427,8 +431,8 @@ export function ApplicationsPage() {
                 const company = job ? job.company : null;
                 const sourceLabel = formatSourceLabel(job?.source_platform);
                 const label = company ? `${title} — ${company}` : title;
-                const stageLabel = timelineStageLabel(app.timeline_stage);
-                const stageVariant = timelineStageVariant(app.timeline_stage);
+                const stageLabel = pipelineStatusLabel(app.timeline_stage);
+                const stageVariant = pipelineStatusVariant(app.timeline_stage);
                 const submissionLabel = submissionStatusLabel(
                   app.submission_status,
                 );
@@ -456,17 +460,16 @@ export function ApplicationsPage() {
                   ? app.latest_run_status.replace(/_/g, " ")
                   : null;
                 const isPending = pendingActionId === app.id;
-                const showSubmit =
-                  app.submission_status === "not_submitted";
-                const showReject = !["rejected", "withdrawn"].includes(
-                  app.status,
-                );
-                const showInterview = ![
-                  "interview",
-                  "rejected",
-                  "withdrawn",
-                  "offer",
-                ].includes(app.status);
+                const rowActions = buildApplicationRowActions(app);
+                const onMutate = (key: ApplicationMutationKey) => {
+                  const action =
+                    key === "submit"
+                      ? submitApplication
+                      : key === "interview"
+                        ? markApplicationInterview
+                        : markApplicationRejected;
+                  runAction(app.id, action);
+                };
                 return (
                   <tr
                     key={app.id}
@@ -501,12 +504,11 @@ export function ApplicationsPage() {
                       className="applications-cell-pipeline"
                     >
                       <div className="applications-cell-stack applications-cell-status">
-                        <StatusBadge
-                          variant={stageVariant as StatusBadgeVariant}
-                          data-testid={`status-badge-${app.id}`}
-                        >
-                          {stageLabel}
-                        </StatusBadge>
+                        <ApplicationPipelineStatus
+                          variant={stageVariant}
+                          label={stageLabel}
+                          data-testid={`pipeline-status-${app.id}`}
+                        />
                         {submissionCell ? (
                           <span
                             className="applications-cell-subtle"
@@ -560,56 +562,19 @@ export function ApplicationsPage() {
                       data-label="Next action"
                       className="applications-cell-next"
                     >
-                      <span
-                        className="applications-cell-next-action"
-                        data-testid={`next-action-${app.id}`}
-                      >
-                        {app.next_action}
-                      </span>
-                      <div className="applications-row-actions">
-                        <Link
-                          className="ui-button ui-button-secondary ui-button-sm"
-                          to={`/applications/${app.id}`}
-                          aria-label={`Open ${label}`}
+                      <div className="applications-next-action">
+                        <span
+                          className="applications-cell-next-action"
+                          data-testid={`next-action-${app.id}`}
                         >
-                          Open
-                        </Link>
-                        {showSubmit ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={isPending}
-                            onClick={() =>
-                              runAction(app.id, submitApplication)
-                            }
-                          >
-                            Mark submitted
-                          </Button>
-                        ) : null}
-                        {showInterview ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={isPending}
-                            onClick={() =>
-                              runAction(app.id, markApplicationInterview)
-                            }
-                          >
-                            Mark interview
-                          </Button>
-                        ) : null}
-                        {showReject ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={isPending}
-                            onClick={() =>
-                              runAction(app.id, markApplicationRejected)
-                            }
-                          >
-                            Mark rejected
-                          </Button>
-                        ) : null}
+                          {app.next_action}
+                        </span>
+                        <ApplicationsRowActions
+                          actions={rowActions}
+                          label={label}
+                          pending={isPending}
+                          onMutate={onMutate}
+                        />
                       </div>
                     </td>
                   </tr>
