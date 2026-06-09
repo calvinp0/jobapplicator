@@ -391,6 +391,16 @@ p {
   margin: 0 auto;
 }
 
+/* The resume review route must not trap `position: sticky` descendants. The
+   default `.content` declares `overflow-y: auto`, which designates it as the
+   scroll container for the sticky AI-review column — but `.content` never
+   actually scrolls (the layout is `min-height: 100vh`, so the window scrolls),
+   so the column has nothing to pin against. Letting overflow be visible hands
+   the scroll back to the window and lets the column stick against the viewport. */
+.content-review {
+  overflow: visible;
+}
+
 .content-inner-wide {
   max-width: 1440px;
 }
@@ -3709,8 +3719,12 @@ button[type="submit"]:disabled,
    not on a clipped/overflowing element — is what makes the pinning reliable. */
 .review-panel-column {
   position: sticky;
-  top: var(--space-3);
+  top: var(--space-4);
   align-self: start;
+  /* A definite height (viewport minus the 16px top + 16px bottom gap) gives the
+     pinned column a fixed frame, so the panel body inside can scroll internally
+     while the header and column stay put as the document scrolls. */
+  height: calc(100vh - var(--space-7));
   min-width: 0;
 }
 
@@ -3718,7 +3732,7 @@ button[type="submit"]:disabled,
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  max-height: calc(100vh - var(--space-6));
+  height: 100%;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -3787,8 +3801,10 @@ button[type="submit"]:disabled,
   .review-panel-column {
     grid-column: 1 / -1;
     position: static;
+    height: auto;
   }
   .review-panel {
+    height: auto;
     max-height: none;
   }
 }

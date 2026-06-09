@@ -59,6 +59,18 @@ function isWidePath(pathname: string): boolean {
  * have room and the document sheet reads at full width instead of floating in
  * empty gutters; other wide routes use the standard wide shell.
  */
+/**
+ * The content shell class for a route. The resume review workspace needs the
+ * content area to NOT establish its own scroll container: its right-hand AI
+ * review panel is `position: sticky` and must pin against the window scroll.
+ * An `overflow: auto/hidden/scroll` ancestor would capture the sticky context
+ * and silently break pinning, so the review route opts into `overflow: visible`
+ * via `.content-review`.
+ */
+function contentClass(pathname: string): string {
+  return pathname.endsWith("/review") ? "content content-review" : "content";
+}
+
 function contentInnerClass(pathname: string): string {
   if (pathname.endsWith("/review")) {
     return "content-inner content-inner-wide content-inner-review";
@@ -167,7 +179,7 @@ export function Layout() {
           </div>
         </div>
       </aside>
-      <main className="content">
+      <main className={contentClass(location.pathname)}>
         <div className={contentInnerClass(location.pathname)}>
           <Outlet />
         </div>
