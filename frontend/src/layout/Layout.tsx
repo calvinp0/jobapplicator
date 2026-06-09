@@ -53,6 +53,21 @@ function isWidePath(pathname: string): boolean {
   );
 }
 
+/**
+ * The content shell width class for a route. The resume review workspace gets
+ * an extra-wide shell so its three columns (rail · document · review panel)
+ * have room and the document sheet reads at full width instead of floating in
+ * empty gutters; other wide routes use the standard wide shell.
+ */
+function contentInnerClass(pathname: string): string {
+  if (pathname.endsWith("/review")) {
+    return "content-inner content-inner-wide content-inner-review";
+  }
+  return isWidePath(pathname)
+    ? "content-inner content-inner-wide"
+    : "content-inner";
+}
+
 export function Layout() {
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const location = useLocation();
@@ -153,13 +168,7 @@ export function Layout() {
         </div>
       </aside>
       <main className="content">
-        <div
-          className={
-            isWidePath(location.pathname)
-              ? "content-inner content-inner-wide"
-              : "content-inner"
-          }
-        >
+        <div className={contentInnerClass(location.pathname)}>
           <Outlet />
         </div>
       </main>

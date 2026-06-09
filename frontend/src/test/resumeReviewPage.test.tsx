@@ -371,15 +371,81 @@ describe("ResumeReviewPage workspace (task 114)", () => {
     expect(badge).toHaveTextContent("2");
   });
 
-  it("keeps the AI review panel sticky and internally scrollable", async () => {
+  it("renders three columns: rail, document and the sticky review column", async () => {
     getResumeSuggestionsMock.mockResolvedValue(payload());
     renderReview();
 
-    const panel = await screen.findByTestId("review-panel");
-    // The sticky frame carries the .review-panel class (position: sticky in CSS)
-    // and holds an internally-scrolling body for long evidence lists.
+    const workspace = await screen.findByTestId("review-workspace");
+    // Left rail, center document, and the right review column wrapper.
+    expect(within(workspace).getByLabelText("Tailoring workflow")).toBeInTheDocument();
+    expect(within(workspace).getByTestId("resume-document-preview")).toBeInTheDocument();
+    const column = within(workspace).getByTestId("review-panel-column");
+    expect(column).toBeInTheDocument();
+    // The sticky wrapper holds the panel (sticky lives on the column in CSS).
+    expect(within(column).getByTestId("review-panel")).toBeInTheDocument();
+  });
+
+  it("keeps the AI review panel sticky (on the column) and internally scrollable", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    renderReview();
+
+    // Sticky is applied to the column wrapper; the panel body scrolls internally.
+    const column = await screen.findByTestId("review-panel-column");
+    expect(column.className).toContain("review-panel-column");
+    const panel = within(column).getByTestId("review-panel");
     expect(panel.className).toContain("review-panel");
     expect(panel.querySelector(".review-panel-body")).not.toBeNull();
+  });
+
+  it("flows a long section across pages with a single continuation heading", async () => {
+    const flowResume: StructuredResume = {
+      header: { name: "Jane Candidate", contact_items: ["jane@example.com"] },
+      sections: [
+        {
+          type: "skills",
+          heading: "SKILLS",
+          groups: [{ label: "Languages", items: ["Python", "Go"] }],
+        },
+        {
+          type: "experience",
+          heading: "WORK EXPERIENCE",
+          entries: Array.from({ length: 8 }, (_, i) => ({
+            title: `Engineer ${i + 1}`,
+            organization: "Acme",
+            dates: "2020",
+            bullets: ["alpha", "beta", "gamma", "delta"],
+          })),
+        },
+      ],
+    };
+    getResumeSuggestionsMock.mockResolvedValue(
+      payload({ base_resume: flowResume, suggestions: [] }),
+    );
+    renderReview();
+
+    const preview = await screen.findByTestId("resume-document-preview");
+    // The section spilled onto a second page.
+    expect(screen.getByTestId("doc-page-block-2")).toBeInTheDocument();
+    // The real WORK EXPERIENCE heading renders exactly once; the continuation
+    // is a "(continued)" label, not a duplicated section.
+    const headings = within(preview).getAllByText("WORK EXPERIENCE", {
+      exact: true,
+    });
+    expect(headings).toHaveLength(1);
+    expect(within(preview).getByText(/\(continued\)/)).toBeInTheDocument();
+    // The continuation slice is a distinct element, not a duplicate testid.
+    expect(
+      screen.getByTestId("doc-section-work_experience"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("doc-section-work_experience-cont"),
+    ).toBeInTheDocument();
+    // No work entry is duplicated: 8 distinct engineer titles total.
+    const titles = within(preview)
+      .getAllByText(/^Engineer \d+$/)
+      .map((el) => el.textContent);
+    expect(new Set(titles).size).toBe(8);
+    expect(titles).toHaveLength(8);
   });
 
   it("keeps long status/risk text inside overflow-guarded badge containers", async () => {

@@ -1,10 +1,9 @@
-import type { PreviewSection } from "../../lib/reviewModel";
-import { sectionDisplayParagraphs } from "../../lib/reviewModel";
+import type { SectionSlice } from "../../lib/reviewModel";
 import { ResumeExperienceEntryPreview } from "./ResumeExperienceEntryPreview";
 import { ResumeBulletList } from "./ResumeBulletList";
 
-interface ResumeSectionPreviewProps {
-  section: PreviewSection;
+interface ResumeSectionSliceProps {
+  slice: SectionSlice;
   selected: boolean;
   onSelect: (key: string) => void;
 }
@@ -17,46 +16,57 @@ const CHANGE_LABEL: Record<string, string> = {
 };
 
 /**
- * One resume section rendered as part of the document page. The whole section
- * is a click target that opens its suggestions in the right panel; sections
- * carrying suggestions get a subtle change marker (the track-changes signal).
+ * One page slice of a resume section. With flow pagination a section may span
+ * several pages, so each page renders the portion of the section that landed on
+ * it. The first slice carries the real heading and the AI change marker; any
+ * continuation slice shows a subtle "(continued)" heading so the section reads
+ * naturally across the page break without duplicating its content.
+ *
+ * The whole slice remains a click target that opens the section's suggestions
+ * in the right panel, exactly like the previous single-block section preview.
  */
-export function ResumeSectionPreview({
-  section,
+export function ResumeSectionSlice({
+  slice,
   selected,
   onSelect,
-}: ResumeSectionPreviewProps) {
-  const { structured } = section;
+}: ResumeSectionSliceProps) {
+  const { section, continued } = slice;
   const hasChanges = section.changeState !== "none";
 
   return (
     <section
       className={[
         "doc-section",
+        continued ? "doc-section-continued" : "",
         selected ? "doc-section-selected" : "",
         hasChanges ? `doc-section-change doc-section-${section.changeState}` : "",
       ]
         .filter(Boolean)
         .join(" ")}
-      data-testid={`doc-section-${section.key}`}
+      data-testid={
+        continued ? `doc-section-${slice.key}-cont` : `doc-section-${slice.key}`
+      }
+      data-section-key={slice.key}
       data-selected={selected ? "true" : "false"}
-      onClick={() => onSelect(section.key)}
+      onClick={() => onSelect(slice.key)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onSelect(section.key);
+          onSelect(slice.key);
         }
       }}
       aria-pressed={selected}
     >
       <div className="doc-section-heading-row">
-        <h2 className="doc-section-heading">{section.heading}</h2>
-        {hasChanges ? (
+        <h2 className="doc-section-heading">
+          {continued ? `${slice.heading} (continued)` : slice.heading}
+        </h2>
+        {hasChanges && !continued ? (
           <span
             className={`doc-change-flag doc-change-flag-${section.changeState}`}
-            data-testid={`doc-change-${section.key}`}
+            data-testid={`doc-change-${slice.key}`}
           >
             {CHANGE_LABEL[section.changeState] ?? "Edit"}
             {section.suggestions.length > 1
@@ -66,23 +76,17 @@ export function ResumeSectionPreview({
         ) : null}
       </div>
 
-      <SectionBody section={section} structured={structured} />
+      <SliceBody slice={slice} />
     </section>
   );
 }
 
-function SectionBody({
-  section,
-  structured,
-}: {
-  section: PreviewSection;
-  structured: PreviewSection["structured"];
-}) {
+function SliceBody({ slice }: { slice: SectionSlice }) {
   // Skills: label/items groups laid out as a compact definition list.
-  if (structured?.groups?.length) {
+  if (slice.groups.length > 0) {
     return (
       <dl className="doc-skills">
-        {structured.groups.map((group, idx) => (
+        {slice.groups.map((group, idx) => (
           <div className="doc-skill-row" key={idx}>
             {group.label ? <dt>{group.label}</dt> : null}
             <dd>{group.items.join(", ")}</dd>
@@ -93,10 +97,10 @@ function SectionBody({
   }
 
   // Experience / education entries.
-  if (structured?.entries?.length) {
+  if (slice.entries.length > 0) {
     return (
       <div className="doc-entries">
-        {structured.entries.map((entry, idx) => (
+        {slice.entries.map((entry, idx) => (
           <ResumeExperienceEntryPreview key={idx} entry={entry} />
         ))}
       </div>
@@ -104,18 +108,17 @@ function SectionBody({
   }
 
   // Publications / projects / awards: plain item lists.
-  if (structured?.items?.length && !structured.paragraphs?.length) {
-    return <ResumeBulletList bullets={structured.items} />;
+  if (slice.items.length > 0) {
+    return <ResumeBulletList bullets={slice.items} />;
   }
 
   // Summary / derived sections: paragraphs reflecting accepted text edits.
-  const paragraphs = sectionDisplayParagraphs(section);
-  if (paragraphs.length === 0) {
+  if (slice.paragraphs.length === 0) {
     return <p className="doc-paragraph doc-paragraph-empty">—</p>;
   }
   return (
     <>
-      {paragraphs.map((para, idx) => (
+      {slice.paragraphs.map((para, idx) => (
         <p className="doc-paragraph" key={idx}>
           {para}
         </p>

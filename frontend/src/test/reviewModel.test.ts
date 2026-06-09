@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildPreviewDocument,
   estimateSectionLines,
+  flattenDocumentBlocks,
+  paginateBlocks,
+  paginateDocument,
   paginateSections,
 } from "../lib/reviewModel";
 import type {
@@ -188,5 +191,106 @@ describe("paginateSections", () => {
     expect(estimateSectionLines(work)).toBeGreaterThan(
       estimateSectionLines(summary),
     );
+  });
+});
+
+// A skills section then a long work-experience section: enough work content
+// that it cannot all fit on page 1 alongside skills, forcing the work section
+// to begin on page 1 and continue onto page 2 (true flow pagination).
+const FLOW_RESUME: StructuredResume = {
+  header: { name: "Jane Candidate", contact_items: ["jane@example.com"] },
+  sections: [
+    {
+      type: "skills",
+      heading: "SKILLS",
+      groups: [
+        { label: "Languages", items: ["Python", "Go"] },
+        { label: "Cloud", items: ["AWS", "GCP"] },
+      ],
+    },
+    {
+      type: "experience",
+      heading: "WORK EXPERIENCE",
+      entries: Array.from({ length: 8 }, (_, i) => ({
+        title: `Engineer ${i + 1}`,
+        organization: "Acme",
+        dates: "2020",
+        bullets: ["alpha", "beta", "gamma", "delta"],
+      })),
+    },
+  ],
+};
+
+describe("paginateDocument — block-level flow pagination", () => {
+  it("lets a long section begin on page 1 and continue onto page 2", () => {
+    const doc = buildPreviewDocument(payload({ base_resume: FLOW_RESUME }));
+    const pages = paginateDocument(doc);
+    expect(pages.length).toBeGreaterThanOrEqual(2);
+
+    // WORK EXPERIENCE appears on page 1 (does NOT have to start on page 2)...
+    const page1Headings = pages[0].slices.map((s) => s.heading);
+    expect(page1Headings).toContain("WORK EXPERIENCE");
+    // ...and continues onto page 2 as a continuation slice.
+    const page2Work = pages[1].slices.find((s) => s.heading === "WORK EXPERIENCE");
+    expect(page2Work).toBeDefined();
+    expect(page2Work!.continued).toBe(true);
+  });
+
+  it("keeps content after SKILLS on page 1 when there is room", () => {
+    const doc = buildPreviewDocument(payload({ base_resume: FLOW_RESUME }));
+    const pages = paginateDocument(doc);
+    const page1Headings = pages[0].slices.map((s) => s.heading);
+    // SKILLS is fully on page 1 and is followed by more content on the page.
+    expect(page1Headings[0]).toBe("SKILLS");
+    expect(page1Headings.length).toBeGreaterThan(1);
+  });
+
+  it("owns the heading on the first slice only; continuations are flagged", () => {
+    const doc = buildPreviewDocument(payload({ base_resume: FLOW_RESUME }));
+    const pages = paginateDocument(doc);
+    const workSlices = pages
+      .flatMap((p) => p.slices)
+      .filter((s) => s.heading === "WORK EXPERIENCE");
+    expect(workSlices.length).toBeGreaterThanOrEqual(2);
+    expect(workSlices[0].continued).toBe(false);
+    expect(workSlices.slice(1).every((s) => s.continued)).toBe(true);
+  });
+
+  it("partitions content across pages without duplicating it", () => {
+    const doc = buildPreviewDocument(payload({ base_resume: FLOW_RESUME }));
+    const pages = paginateDocument(doc);
+    // Every work entry appears exactly once across all pages/slices.
+    const titles = pages
+      .flatMap((p) => p.slices)
+      .flatMap((s) => s.entries.map((e) => e.title));
+    expect(titles).toHaveLength(8);
+    expect(new Set(titles).size).toBe(8);
+  });
+
+  it("always yields at least one page, even for an empty document", () => {
+    const doc = buildPreviewDocument(payload());
+    const pages = paginateDocument(doc);
+    expect(pages).toHaveLength(1);
+    expect(pages[0].slices).toEqual([]);
+  });
+
+  it("flattens a section into ordered heading + content blocks", () => {
+    const doc = buildPreviewDocument(payload({ base_resume: RESUME }));
+    const blocks = flattenDocumentBlocks(doc);
+    // Heading-first per section; the stream covers every section.
+    expect(blocks[0]).toMatchObject({ sectionIndex: 0, kind: "heading" });
+    const headings = blocks.filter((b) => b.kind === "heading");
+    expect(headings).toHaveLength(doc.sections.length);
+  });
+
+  it("keeps a section heading with its first content block (no orphan heading)", () => {
+    const doc = buildPreviewDocument(payload({ base_resume: FLOW_RESUME }));
+    const blocks = flattenDocumentBlocks(doc);
+    const pages = paginateBlocks(blocks, 6);
+    for (const page of pages) {
+      const last = page[page.length - 1];
+      // A heading is never stranded as the final block of a page.
+      expect(last.kind).not.toBe("heading");
+    }
   });
 });
