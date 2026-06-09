@@ -2354,3 +2354,21 @@ tasks:
       - "docs/**"
       - "agent_tasks/116-tighten-review-layout-and-add-flow-pagination.md"
       - "agent_tasks/queue.yaml"
+  - id: "117-replace-captures-nav-with-activity-center"
+    title: "Replace captures nav with activity center"
+    file: "agent_tasks/117-replace-captures-nav-with-activity-center.md"
+    branch: "agent/117-replace-captures-nav-with-activity-center"
+    worktree: "agent-117-replace-captures-nav-with-activity-center"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "pytest"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/**"
+      - "agent_tasks/117-replace-captures-nav-with-activity-center.md"
+      - "agent_tasks/queue.yaml"
