@@ -3280,19 +3280,31 @@ button[type="submit"]:disabled,
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  /* The workspace flows naturally and the app content area (.content) owns the
-     scroll. This is what lets the right AI-review panel stay sticky for the
-     full height of the document instead of a viewport-capped grid. */
+  /* The workspace flows naturally and the window owns the scroll (the review
+     route sets `.content` to overflow: visible). This is what lets the top bar
+     and the right AI-review panel stay sticky for the full height of the
+     document instead of a viewport-capped grid.
+     `--review-sticky-top` is the offset the column/rail pin to: it must clear
+     the sticky top bar so their headers don't slide behind it. */
+  --review-sticky-top: 84px;
 }
 
-/* ---- Top bar ---- */
+/* ---- Top bar (sticky) ----
+   Pins to the top of the window scroll so Draft / Apply stay reachable while
+   the document scrolls. Needs an opaque background + z-index to sit cleanly
+   above the scrolling document, and stays flush at top: 0. */
 .review-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   flex-wrap: wrap;
+  padding-top: var(--space-2);
   padding-bottom: var(--space-3);
+  background: var(--content-bg);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -3303,9 +3315,9 @@ button[type="submit"]:disabled,
   min-width: 0;
 }
 
+/* The back-to-draft control is a real (secondary) button, not a text link, so
+   it only needs the layout guard here — visuals come from `.ui-button`. */
 .review-back-link {
-  font-size: var(--font-sm);
-  color: var(--text-muted);
   white-space: nowrap;
 }
 
@@ -3374,7 +3386,7 @@ button[type="submit"]:disabled,
 /* ---- Left: workflow rail (compact) ---- */
 .workflow-rail {
   position: sticky;
-  top: var(--space-3);
+  top: var(--review-sticky-top);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3719,12 +3731,12 @@ button[type="submit"]:disabled,
    not on a clipped/overflowing element — is what makes the pinning reliable. */
 .review-panel-column {
   position: sticky;
-  top: var(--space-4);
+  top: var(--review-sticky-top);
   align-self: start;
-  /* A definite height (viewport minus the 16px top + 16px bottom gap) gives the
-     pinned column a fixed frame, so the panel body inside can scroll internally
-     while the header and column stay put as the document scrolls. */
-  height: calc(100vh - var(--space-7));
+  /* A definite height (viewport minus the sticky top offset and a bottom gap)
+     gives the pinned column a fixed frame, so the panel body inside can scroll
+     internally while the header and column stay put as the document scrolls. */
+  height: calc(100vh - var(--review-sticky-top) - var(--space-4));
   min-width: 0;
 }
 

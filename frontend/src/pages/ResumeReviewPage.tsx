@@ -178,7 +178,10 @@ export function ResumeReviewPage() {
       targetLine={targetLine}
       backLink={
         versionId ? (
-          <Link className="review-back-link" to={`/resume-versions/${versionId}`}>
+          <Link
+            className="review-back-link ui-button ui-button-secondary ui-button-sm"
+            to={`/resume-versions/${versionId}`}
+          >
             ← Draft
           </Link>
         ) : null
