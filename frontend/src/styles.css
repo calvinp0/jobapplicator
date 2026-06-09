@@ -2703,48 +2703,100 @@ button[type="submit"]:disabled,
   color: var(--content-fg);
 }
 
-.applications-cell-actions {
-  white-space: nowrap;
-}
-
-.applications-table-actions-col {
-  text-align: right;
+/* Next-action cell: the muted "what's next" phrase stacked above a single
+   primary button + overflow menu. Grid keeps the action block aligned to the
+   top of every row so buttons line up across the table. */
+.applications-next-action {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
 }
 
 .applications-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+/* Consistent primary-button width so the column aligns row to row. */
+.applications-primary-action {
+  min-width: 116px;
+  justify-content: center;
+  text-align: center;
+}
+
+/* Mutation items in the overflow menu render as buttons but must match the
+   look of the link items beside them. */
+.app-actions-item-button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.app-actions-item-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ----- Compact pipeline status (dot + label, no pill) ----- */
+.applications-status {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.applications-action-link {
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.applications-action-button {
-  background: var(--card-bg);
+  font-weight: 600;
   color: var(--content-fg);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  white-space: nowrap;
 }
 
-.applications-action-button:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-strong);
+.applications-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-subtle);
 }
 
-.applications-action-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.applications-status-draft .applications-status-dot {
+  background: var(--text-subtle);
+}
+
+.applications-status-submitted .applications-status-dot {
+  background: var(--info);
+}
+
+.applications-status-confirmation .applications-status-dot {
+  background: var(--success);
+}
+
+.applications-status-response .applications-status-dot {
+  background: var(--info);
+}
+
+.applications-status-interview .applications-status-dot {
+  background: #7c3aed;
+}
+
+.applications-status-offer .applications-status-dot {
+  background: var(--success);
+}
+
+.applications-status-rejected .applications-status-dot {
+  background: var(--danger);
+}
+
+.applications-status-withdrawn .applications-status-dot {
+  background: var(--text-subtle);
+}
+
+/* In the table the overflow menu opens downward (the shared default opens
+   upward, which would clip against the wrapper's scroll edge on top rows). */
+.applications-row-actions .app-actions-list {
+  top: calc(100% + var(--space-1));
+  bottom: auto;
 }
 
 /* Small-screen responsive fallback: collapse the table into stacked

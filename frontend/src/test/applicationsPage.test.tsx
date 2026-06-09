@@ -347,7 +347,7 @@ describe("ApplicationsPage", () => {
     }
   });
 
-  it("renders applications as table rows with badge labels and variant classes", async () => {
+  it("renders applications as table rows with compact pipeline status indicators", async () => {
     renderPage();
 
     await waitFor(() =>
@@ -380,43 +380,56 @@ describe("ApplicationsPage", () => {
     const draftRow = rowFor("Senior Engineer");
     expect(within(draftRow).getByText("Acme Corp")).toBeInTheDocument();
 
-    // Timeline-stage badges: visible label and color-coded variant class.
-    expect(screen.getByTestId("status-badge-app-draft")).toHaveTextContent(
-      /^Draft$/,
+    // Compact pipeline status: a short single-line label + colour-coded
+    // variant class. The label is deliberately shorter than the full
+    // timeline-stage wording so it never wraps in the narrow column.
+    const draftStatus = screen.getByTestId("pipeline-status-app-draft");
+    expect(draftStatus).toHaveTextContent(/^Draft$/);
+    expect(draftStatus).toHaveClass("applications-status-draft");
+    expect(screen.getByTestId("pipeline-status-app-sent")).toHaveTextContent(
+      /^Submitted$/,
     );
-    expect(screen.getByTestId("status-badge-app-draft")).toHaveClass(
-      "status-badge-draft",
-    );
-    expect(screen.getByTestId("status-badge-app-sent")).toHaveTextContent(
-      /^Sent$/,
-    );
-    expect(screen.getByTestId("status-badge-app-sent")).toHaveClass(
-      "status-badge-submitted",
+    expect(screen.getByTestId("pipeline-status-app-sent")).toHaveClass(
+      "applications-status-submitted",
     );
     expect(
-      screen.getByTestId("status-badge-app-confirmation"),
-    ).toHaveTextContent(/^Confirmation received$/);
+      screen.getByTestId("pipeline-status-app-confirmation"),
+    ).toHaveTextContent(/^Confirmation$/);
     expect(
-      screen.getByTestId("status-badge-app-confirmation"),
-    ).toHaveClass("status-badge-completed");
-    expect(screen.getByTestId("status-badge-app-rejected")).toHaveTextContent(
-      /^Rejected$/,
+      screen.getByTestId("pipeline-status-app-confirmation"),
+    ).toHaveClass("applications-status-confirmation");
+    expect(
+      screen.getByTestId("pipeline-status-app-rejected"),
+    ).toHaveTextContent(/^Rejected$/);
+    expect(screen.getByTestId("pipeline-status-app-rejected")).toHaveClass(
+      "applications-status-rejected",
     );
-    expect(screen.getByTestId("status-badge-app-rejected")).toHaveClass(
-      "status-badge-rejected",
+    expect(
+      screen.getByTestId("pipeline-status-app-interview"),
+    ).toHaveTextContent(/^Interview$/);
+    expect(screen.getByTestId("pipeline-status-app-interview")).toHaveClass(
+      "applications-status-interview",
     );
-    expect(screen.getByTestId("status-badge-app-interview")).toHaveTextContent(
-      /^Interview$/,
-    );
-    expect(screen.getByTestId("status-badge-app-interview")).toHaveClass(
-      "status-badge-interview",
-    );
-    expect(screen.getByTestId("status-badge-app-offer")).toHaveTextContent(
+    expect(screen.getByTestId("pipeline-status-app-offer")).toHaveTextContent(
       /^Offer$/,
     );
-    expect(screen.getByTestId("status-badge-app-offer")).toHaveClass(
-      "status-badge-offer",
+    expect(screen.getByTestId("pipeline-status-app-offer")).toHaveClass(
+      "applications-status-offer",
     );
+
+    // The redesign drops the large rounded pill: no pipeline status carries
+    // the old `status-badge` pill classes.
+    for (const id of [
+      "app-draft",
+      "app-sent",
+      "app-confirmation",
+      "app-rejected",
+      "app-interview",
+      "app-offer",
+    ]) {
+      const status = screen.getByTestId(`pipeline-status-${id}`);
+      expect(status.className).not.toMatch(/(^|\s)status-badge(\s|-|$)/);
+    }
 
     // Raw backend status enum strings must not appear inside the table body.
     const table = screen.getByTestId("applications-table");
@@ -532,7 +545,7 @@ describe("ApplicationsPage", () => {
     ).toHaveTextContent(/^Rejected$/);
   });
 
-  it("renders submission text inside the Status cell, beneath the stage badge", async () => {
+  it("renders submission text inside the Status cell, beneath the stage status", async () => {
     renderPage();
     await waitFor(() =>
       expect(
@@ -547,8 +560,8 @@ describe("ApplicationsPage", () => {
       "submission-app-draft",
     );
     expect(draftSubmission).toHaveTextContent(/^Not submitted yet$/);
-    const draftBadge = within(draftRow).getByTestId("status-badge-app-draft");
-    expect(draftBadge.closest("td")).toBe(draftSubmission.closest("td"));
+    const draftStatus = within(draftRow).getByTestId("pipeline-status-app-draft");
+    expect(draftStatus.closest("td")).toBe(draftSubmission.closest("td"));
 
     // A submitted row shows "Submitted <date>" in the same Status cell.
     const sentRow = rowFor("Platform Lead");
@@ -602,26 +615,111 @@ describe("ApplicationsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("invokes markApplicationRejected when 'Mark rejected' is clicked", async () => {
-    submitApplicationMock.mockResolvedValue({
-      ...applications[0],
-      status: "submitted",
-      submission_status: "submitted",
-      submitted_at: "2026-05-22T13:00:00Z",
-      timeline_stage: "sent",
+  it("renders exactly one primary action button per row", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
+    );
+
+    for (const app of applications) {
+      const row = screen.getByTestId(`next-action-${app.id}`).closest("tr");
+      expect(row).not.toBeNull();
+      // The action cluster renders one primary <a> button plus a single
+      // "More actions" overflow trigger — never a stack of competing buttons.
+      const actionLinks = within(row as HTMLElement)
+        .getAllByRole("link")
+        .filter((el) => el.className.includes("applications-primary-action"));
+      expect(actionLinks).toHaveLength(1);
+    }
+  });
+
+  it("maps each pipeline state to the expected single primary action", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
+    );
+
+    const primaryFor = (title: string) => {
+      const row = rowFor(title);
+      const [link] = within(row)
+        .getAllByRole("link")
+        .filter((el) => el.className.includes("applications-primary-action"));
+      return link;
+    };
+
+    // approved + not submitted (next_action "Ready to submit") → Continue.
+    expect(primaryFor("Senior Engineer")).toHaveTextContent(/^Continue$/);
+    expect(primaryFor("Senior Engineer")).toHaveAttribute(
+      "href",
+      "/applications/app-draft",
+    );
+    // submitted, waiting → Open.
+    expect(primaryFor("Platform Lead")).toHaveTextContent(/^Open$/);
+    // confirmation received → Open.
+    expect(primaryFor("Backend Eng")).toHaveTextContent(/^Open$/);
+  });
+
+  it("shows Review draft as the primary action for an un-approved draft", async () => {
+    listApplicationsMock.mockResolvedValue([
+      {
+        ...applications[0],
+        id: "app-review",
+        job_id: "job-draft",
+        status: "generated",
+        resume_version_id: "version-review",
+        latest_run_status: "imported",
+        next_action: "Review draft",
+      },
+    ]);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("applications-table")).toBeInTheDocument(),
+    );
+    const row = rowFor("Senior Engineer");
+    const [primary] = within(row)
+      .getAllByRole("link")
+      .filter((el) => el.className.includes("applications-primary-action"));
+    expect(primary).toHaveTextContent(/^Review draft$/);
+    expect(primary).toHaveAttribute("href", "/resume-versions/version-review");
+  });
+
+  it("keeps Mark submitted/interview/rejected in the secondary overflow menu", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /applications/i }),
+      ).toBeInTheDocument(),
+    );
+
+    const draftRow = rowFor("Senior Engineer");
+    // The mutation actions are not rendered as inline row buttons...
+    expect(
+      within(draftRow).queryByRole("button", { name: /mark submitted/i }),
+    ).toBeNull();
+    // ...they live behind the "More actions" overflow trigger.
+    const trigger = within(draftRow).getByRole("button", {
+      name: /more actions/i,
     });
+    await userEvent.click(trigger);
+    const menu = within(draftRow).getByRole("menu");
+    expect(
+      within(menu).getByRole("menuitem", { name: /mark submitted/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: /mark interview/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: /mark rejected/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("invokes markApplicationRejected from the overflow menu", async () => {
     markApplicationRejectedMock.mockResolvedValue({
       ...applications[0],
       status: "rejected",
       submission_status: "submitted",
       timeline_stage: "rejected",
       next_action: "Rejected",
-    });
-    markApplicationInterviewMock.mockResolvedValue({
-      ...applications[0],
-      status: "interview",
-      timeline_stage: "interview",
-      next_action: "Interview response needed",
     });
 
     renderPage();
@@ -632,23 +730,16 @@ describe("ApplicationsPage", () => {
     );
 
     const draftRow = rowFor("Senior Engineer");
-    const rejectButton = within(draftRow).getByRole("button", {
-      name: /mark rejected/i,
-    });
-    const submitButton = within(draftRow).getByRole("button", {
-      name: /mark submitted/i,
-    });
-    const interviewButton = within(draftRow).getByRole("button", {
-      name: /mark interview/i,
-    });
-    expect(submitButton).toBeInTheDocument();
-    expect(interviewButton).toBeInTheDocument();
-
-    await userEvent.click(rejectButton);
+    await userEvent.click(
+      within(draftRow).getByRole("button", { name: /more actions/i }),
+    );
+    await userEvent.click(
+      within(draftRow).getByRole("menuitem", { name: /mark rejected/i }),
+    );
     expect(markApplicationRejectedMock).toHaveBeenCalledWith("app-draft");
   });
 
-  it("hides Mark rejected/interview on already-rejected rows", async () => {
+  it("omits Mark rejected/interview/submitted from the menu on a rejected row", async () => {
     renderPage();
     await waitFor(() =>
       expect(
@@ -656,14 +747,18 @@ describe("ApplicationsPage", () => {
       ).toBeInTheDocument(),
     );
     const rejRow = rowFor("Frontend Eng");
+    await userEvent.click(
+      within(rejRow).getByRole("button", { name: /more actions/i }),
+    );
+    const menu = within(rejRow).getByRole("menu");
     expect(
-      within(rejRow).queryByRole("button", { name: /mark rejected/i }),
+      within(menu).queryByRole("menuitem", { name: /mark rejected/i }),
     ).toBeNull();
     expect(
-      within(rejRow).queryByRole("button", { name: /mark interview/i }),
+      within(menu).queryByRole("menuitem", { name: /mark interview/i }),
     ).toBeNull();
     expect(
-      within(rejRow).queryByRole("button", { name: /mark submitted/i }),
+      within(menu).queryByRole("menuitem", { name: /mark submitted/i }),
     ).toBeNull();
   });
 
