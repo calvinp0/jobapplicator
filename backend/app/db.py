@@ -154,6 +154,27 @@ def ensure_runtime_columns() -> None:
             if col_name not in existing_job_cols:
                 with engine.begin() as conn:
                     conn.execute(text(ddl))
+    if "resume_versions" in table_names:
+        existing_version_cols = {
+            col["name"] for col in inspector.get_columns("resume_versions")
+        }
+        # Backfill for task 113 (interactive resume suggestion review). Both
+        # columns are JSON-as-TEXT and nullable so drafts created before
+        # suggestions landed load without further migration steps.
+        for col_name, ddl in (
+            (
+                "suggestions_json",
+                "ALTER TABLE resume_versions ADD COLUMN suggestions_json TEXT",
+            ),
+            (
+                "suggestion_review_state",
+                "ALTER TABLE resume_versions "
+                "ADD COLUMN suggestion_review_state TEXT",
+            ),
+        ):
+            if col_name not in existing_version_cols:
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
     if "email_links" in table_names:
         existing_link_cols = {
             col["name"] for col in inspector.get_columns("email_links")

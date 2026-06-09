@@ -91,3 +91,36 @@ different UI rather than a thin wrapper around the previous layout.
 - The Applications table's row actions still use the small
   secondary/ghost button set; a single overflow menu (`ActionMenu`)
   would be tidier on very narrow screens.
+
+## Resume Review page (task 113)
+
+The interactive resume suggestion review surface lives at
+`pages/ResumeReviewPage.tsx`, routed at
+`/resume-versions/:versionId/review` and reachable from the draft detail
+page via the "Review AI suggestions" link.
+
+- **Layout**: a `PageHeader` (target role + company, an "Apply accepted
+  suggestions" primary action, and an accepted/total summary) over a
+  stack of `SectionCard`s — one per resume section. Suggestions are
+  grouped by `section_id`/`section_heading`, so the page reads as a
+  section-by-section resume preview with the AI suggestions for each
+  section inline beneath it.
+- **Suggestion cards** (`components/SuggestionCard.tsx`): each card shows
+  the section, operation, current vs. suggested text, the reason,
+  compact evidence references, the ATS keywords addressed, and
+  confidence/risk badges. Actions are `Accept`, `Reject`, and
+  `Ask to revise` (which reveals an inline textarea that stores a
+  revision instruction). Accepted cards are visually marked (green
+  surface) so the preview reflects the working state; rejected cards
+  dim.
+- **Data flow**: the page calls `getResumeSuggestions`, then
+  `acceptSuggestion` / `rejectSuggestion` / `reviseSuggestion` per card,
+  and `applyResumeSuggestions` to rebuild the working structured resume
+  from the accepted set. Statuses come back from the API and update the
+  card in place. See `docs/contracts/claude_run_directory.md`
+  ("Structured Resume Suggestions") for the schema, statuses, and the
+  relationship to the deterministic DOCX renderer.
+
+The preview is intentionally structural, not a pixel-faithful DOCX
+render — the deterministic renderer (task 111) owns the final document;
+this page owns the accept/reject/revise decisions that feed it.

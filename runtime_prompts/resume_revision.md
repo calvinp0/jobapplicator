@@ -79,6 +79,7 @@ Write all required output files:
 
 ```text
 output/tailored_resume.json
+output/resume_suggestions.json
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
@@ -92,6 +93,15 @@ the JSON to reflect the requested changes. Use the schema documented in
 `runtime_prompts/resume_tailoring.md` (see "Structured Resume JSON") and
 in `docs/contracts/claude_run_directory.md`. Bullets stay as separate
 strings; do not encode layout instructions in prose.
+
+`output/resume_suggestions.json` is **required** on revision runs too.
+Regenerate the section-level suggestions to reflect the revised resume,
+using the schema documented in `runtime_prompts/resume_tailoring.md`
+(see "Structured Resume Suggestions"). The backend validates this file
+and fails the run if it is missing or malformed. An empty
+`"suggestions": []` list is acceptable when the revision leaves no
+further reviewable edits, but prefer surfacing remaining improvements as
+concise, evidence-backed suggestions.
 
 The backend will render `output/tailored_resume.docx` from
 `output/tailored_resume.json` after the revision run finishes. You do
@@ -222,6 +232,7 @@ work (one line per phase, <=120 chars, no secrets or paths). Examples:
 Reading revision feedback
 Applying revision changes to tailored resume markdown
 Updating structured tailored resume JSON
+Refreshing resume suggestions
 Refreshing ATS keyword coverage
 Refreshing recruiter review
 Validating required outputs

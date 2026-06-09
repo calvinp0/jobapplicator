@@ -422,6 +422,68 @@ class ResumeVersionRead(_ORMModel):
     created_at: datetime
 
 
+# ---- Resume Suggestions (task 113) ----
+
+
+class EvidenceRefRead(BaseModel):
+    """A single piece of evidence backing a suggestion."""
+
+    source: str = ""
+    quote: str = ""
+
+
+class ResumeSuggestionRead(BaseModel):
+    """One section-level suggestion in the interactive review surface.
+
+    Shapes the normalized suggestion stored in
+    ``ResumeVersion.suggestions_json``. ``status`` walks the
+    ``pending -> accepted | rejected | revised`` lifecycle;
+    ``revision_instruction`` is the free-text captured by "Ask to revise"
+    (empty until the user requests one).
+    """
+
+    id: str
+    section_id: str
+    section_heading: str = ""
+    operation: str
+    current_text: str = ""
+    suggested_text: str = ""
+    reason: str
+    evidence_refs: list[EvidenceRefRead] = []
+    ats_keywords: list[str] = []
+    confidence: Optional[float] = None
+    risk: str = "medium"
+    status: str = "pending"
+    revision_instruction: str = ""
+
+
+class ResumeSuggestionsRead(BaseModel):
+    """The full suggestions surface for a resume version."""
+
+    resume_version_id: str
+    target_company: str = ""
+    target_job_title: str = ""
+    suggestions: list[ResumeSuggestionRead] = []
+    # Review working state. ``applied_at`` is set once the user applies the
+    # accepted suggestions; ``has_working_resume`` tells the UI whether an
+    # applied structured resume exists to preview/download.
+    applied_at: Optional[datetime] = None
+    has_working_resume: bool = False
+
+
+class SuggestionReviseRequest(BaseModel):
+    instruction: str = Field(min_length=1)
+
+
+class ApplySuggestionsRead(BaseModel):
+    """Result of rebuilding the working resume from accepted suggestions."""
+
+    resume_version_id: str
+    applied_at: datetime
+    accepted_count: int
+    working_resume: Optional[Dict[str, Any]] = None
+
+
 # ---- RevisionFeedback ----
 
 # Request body shape for the (future, task 045) endpoint at

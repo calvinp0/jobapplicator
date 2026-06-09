@@ -3062,3 +3062,195 @@ button[type="submit"]:disabled,
   box-shadow: var(--card-shadow-hover);
 }
 
+
+/* ---- Interactive resume suggestion review (task 113) ---- */
+
+.resume-review-page .resume-review-summary {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.resume-review-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.suggestion-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.suggestion-card-accepted {
+  border-color: var(--success);
+  background: var(--success-soft);
+}
+
+.suggestion-card-rejected {
+  opacity: 0.6;
+}
+
+.suggestion-card-revised {
+  border-color: var(--info);
+  background: var(--info-soft);
+}
+
+.suggestion-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.suggestion-card-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.suggestion-section {
+  font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.suggestion-operation {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.suggestion-card-flags {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.suggestion-confidence,
+.suggestion-risk {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.suggestion-risk-low {
+  background: var(--success-soft);
+  color: var(--success-fg);
+}
+
+.suggestion-risk-medium {
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}
+
+.suggestion-risk-high {
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+
+.suggestion-text,
+.suggestion-reason,
+.suggestion-evidence,
+.suggestion-keywords,
+.suggestion-revision-note {
+  font-size: 0.88rem;
+}
+
+.suggestion-text p,
+.suggestion-reason {
+  margin: 0.15rem 0 0;
+}
+
+.suggestion-text-label {
+  display: inline-block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+  margin-right: 0.4rem;
+}
+
+.suggestion-text-current p {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-strong);
+}
+
+.suggestion-text-suggested p {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.suggestion-evidence ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.suggestion-evidence-source {
+  font-weight: 600;
+}
+
+.suggestion-keyword-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.suggestion-keyword-chip {
+  font-size: 0.74rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.suggestion-card-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.suggestion-revise-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.suggestion-revise-textarea {
+  width: 100%;
+  min-height: 4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  font: inherit;
+  resize: vertical;
+}
+
+.resume-version-review-link {
+  align-self: center;
+}
+
+.resume-review-page .form-error {
+  color: var(--danger-fg);
+}
+
+.resume-review-page .form-success {
+  color: var(--success-fg);
+}

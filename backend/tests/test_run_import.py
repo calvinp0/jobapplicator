@@ -18,9 +18,31 @@ EXPECTED_OUTPUTS = (
     "tailored_resume.docx",
     "tailored_resume.md",
     "tailored_resume.json",
+    "resume_suggestions.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+)
+
+# Valid structured resume + suggestions so the import-time schema validation
+# (task 111 renderer + task 113 suggestions) accepts the fixtures.
+TAILORED_RESUME_JSON = (
+    '{"header": {"name": "Test Candidate", "contact_items": []},'
+    ' "sections": [{"type": "summary", "heading": "PROFESSIONAL SUMMARY",'
+    ' "paragraphs": ["Base summary."]},'
+    ' {"type": "skills", "heading": "SKILLS",'
+    ' "groups": [{"label": "Languages", "items": ["Python"]}]}],'
+    ' "metadata": {"target_company": "Acme", "target_job_title": "ML Engineer"}}'
+)
+RESUME_SUGGESTIONS_JSON = (
+    '{"target_company": "Acme", "target_job_title": "ML Engineer",'
+    ' "suggestions": [{"id": "sug_001", "section_id": "professional_summary",'
+    ' "section_heading": "PROFESSIONAL SUMMARY", "operation": "replace_section_text",'
+    ' "current_text": "Base summary.", "suggested_text": "Sharper summary.",'
+    ' "reason": "Aligns with the role.",'
+    ' "evidence_refs": [{"source": "master resume", "quote": "Built systems."}],'
+    ' "ats_keywords": ["distributed systems"], "confidence": 0.8, "risk": "low",'
+    ' "status": "pending"}]}'
 )
 
 
@@ -69,8 +91,13 @@ def _write_outputs(run_dir: Path, *, skip: tuple[str, ...] = ()) -> None:
     for name in EXPECTED_OUTPUTS:
         if name in skip:
             continue
-        # Use distinct content per file so hashes differ.
-        (out / name).write_bytes(f"content for {name}\n".encode("utf-8"))
+        if name == "tailored_resume.json":
+            (out / name).write_text(TAILORED_RESUME_JSON, encoding="utf-8")
+        elif name == "resume_suggestions.json":
+            (out / name).write_text(RESUME_SUGGESTIONS_JSON, encoding="utf-8")
+        else:
+            # Use distinct content per file so hashes differ.
+            (out / name).write_bytes(f"content for {name}\n".encode("utf-8"))
 
 
 def _mark_completed(run_id: str) -> None:
@@ -149,6 +176,28 @@ def test_import_fails_on_missing_output(client, tmp_path, monkeypatch):
     assert client.get("/resume-versions").json() == []
     # Run status unchanged.
     assert client.get(f"/runs/{run['id']}").json()["status"] == "completed"
+
+
+def test_import_rejects_invalid_suggestions(client, tmp_path, monkeypatch):
+    run = _seed_run(client, tmp_path, monkeypatch)
+    run_dir = Path(run["run_dir"])
+    _write_outputs(run_dir)
+    # Overwrite with a suggestion missing the required ``reason`` field.
+    (run_dir / "output" / "resume_suggestions.json").write_text(
+        '{"suggestions": [{"id": "x", "section_id": "summary",'
+        ' "operation": "replace_section_text"}]}',
+        encoding="utf-8",
+    )
+    _mark_completed(run["id"])
+
+    resp = client.post(f"/runs/{run['id']}/import")
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"].lower()
+    assert "suggestion" in detail
+    assert "reason" in detail
+
+    # No version row created.
+    assert client.get("/resume-versions").json() == []
 
 
 def test_import_rejects_output_outside_run_dir(client, tmp_path, monkeypatch):

@@ -19,6 +19,22 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _decode_json_object(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Decode a JSON-as-TEXT column into a dict, tolerating null/invalid data.
+
+    Returns ``None`` when ``raw`` is falsy or does not parse to a JSON object.
+    Shared by the model properties that surface JSON-text columns (SQLite has
+    no native JSON type).
+    """
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
 # Status string constants. Kept as module-level tuples (not Enum) because SQLite
 # stores them as TEXT and we want to keep migrations simple.
 CLAUDE_RUN_STATUSES = ("created", "running", "completed", "failed", "imported")
@@ -243,11 +259,38 @@ class ResumeVersion(Base):
     prompt_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="claude_run")
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Task 113: interactive resume suggestion review. ``suggestions_json``
+    # holds the normalized suggestions document
+    # (``{target_company, target_job_title, suggestions: [...]}``) imported
+    # from ``output/resume_suggestions.json``; per-suggestion ``status`` is
+    # mutated in place by the accept/reject/revise endpoints.
+    # ``suggestion_review_state`` holds the review working state
+    # (``{base_resume_json, working_resume_json, applied_at}``) so the apply
+    # step can rebuild a renderable resume from the accepted suggestions.
+    # Both are JSON-as-TEXT (SQLite has no native JSON type) and nullable so
+    # older rows and one-shot drafts without suggestions load unchanged.
+    suggestions_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    suggestion_review_state: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
     job: Mapped[Job] = relationship(back_populates="resume_versions")
     claude_run: Mapped[Optional[ClaudeRun]] = relationship(back_populates="resume_versions")
     applications: Mapped[list["Application"]] = relationship(back_populates="resume_version")
+
+    @property
+    def suggestions(self) -> Optional[Dict[str, Any]]:
+        """Decode ``suggestions_json`` into a dict, or ``None`` when absent.
+
+        Stored as a JSON string for the same reason as
+        ``JobCapture.diagnostics``: SQLite has no native JSON type. Returns
+        ``None`` when the column is null or holds invalid JSON.
+        """
+        return _decode_json_object(self.suggestions_json)
+
+    @property
+    def review_state(self) -> Optional[Dict[str, Any]]:
+        """Decode ``suggestion_review_state`` into a dict, or ``None``."""
+        return _decode_json_object(self.suggestion_review_state)
 
 
 class Application(Base):

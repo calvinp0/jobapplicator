@@ -37,6 +37,9 @@ import type {
   PromptHarnessDetail,
   PromptHarnessSummary,
   PromptValidationResult,
+  ApplySuggestionsResult,
+  ResumeSuggestion,
+  ResumeSuggestions,
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
@@ -88,6 +91,9 @@ export type {
   PromptHarnessDetail,
   PromptHarnessSummary,
   PromptValidationResult,
+  ApplySuggestionsResult,
+  ResumeSuggestion,
+  ResumeSuggestions,
   ResumeVersion,
   RevisionFeedback,
   RevisionFeedbackCreate,
@@ -223,6 +229,53 @@ export function submitRevisionFeedback(
 
 export function listRevisionFeedbacks(): Promise<RevisionFeedback[]> {
   return apiRequest("/revision-feedbacks");
+}
+
+// ---- Resume suggestion review (task 113) ----
+
+export function getResumeSuggestions(
+  versionId: string,
+): Promise<ResumeSuggestions> {
+  return apiRequest(`/resume-versions/${versionId}/suggestions`);
+}
+
+export function acceptSuggestion(
+  versionId: string,
+  suggestionId: string,
+): Promise<ResumeSuggestion> {
+  return apiRequest(
+    `/resume-versions/${versionId}/suggestions/${suggestionId}/accept`,
+    { method: "POST" },
+  );
+}
+
+export function rejectSuggestion(
+  versionId: string,
+  suggestionId: string,
+): Promise<ResumeSuggestion> {
+  return apiRequest(
+    `/resume-versions/${versionId}/suggestions/${suggestionId}/reject`,
+    { method: "POST" },
+  );
+}
+
+export function reviseSuggestion(
+  versionId: string,
+  suggestionId: string,
+  instruction: string,
+): Promise<ResumeSuggestion> {
+  return apiRequest(
+    `/resume-versions/${versionId}/suggestions/${suggestionId}/revise`,
+    { method: "POST", body: { instruction } },
+  );
+}
+
+export function applyResumeSuggestions(
+  versionId: string,
+): Promise<ApplySuggestionsResult> {
+  return apiRequest(`/resume-versions/${versionId}/apply-suggestions`, {
+    method: "POST",
+  });
 }
 
 export function createWordHandoff(runId: string): Promise<WordHandoffMetadata> {
