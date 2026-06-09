@@ -23,6 +23,40 @@ CANDIDATE_FILES = (
 )
 
 
+# Task 113: a tailoring run now imports a validated resume_suggestions.json,
+# so the fake completed-run outputs must include a valid suggestions document
+# (and a valid structured resume) for ``/runs/{id}/import`` to succeed.
+_MIN_RESUME_JSON = (
+    '{"header": {"name": "Test Candidate", "contact_items": []},'
+    ' "sections": [{"type": "summary", "heading": "PROFESSIONAL SUMMARY",'
+    ' "paragraphs": ["Base summary."]}],'
+    ' "metadata": {"target_company": "Acme", "target_job_title": "ML Engineer"}}'
+)
+_MIN_SUGGESTIONS_JSON = (
+    '{"target_company": "Acme", "target_job_title": "ML Engineer",'
+    ' "suggestions": []}'
+)
+
+
+def _write_min_outputs(output_dir: Path) -> None:
+    """Write the required run outputs, with valid JSON for the JSON artifacts."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "tailored_resume.docx",
+        "tailored_resume.md",
+        "change_log.md",
+        "claim_audit.md",
+        "ats_audit.md",
+    ):
+        (output_dir / name).write_bytes(f"content for {name}\n".encode("utf-8"))
+    (output_dir / "tailored_resume.json").write_text(
+        _MIN_RESUME_JSON, encoding="utf-8"
+    )
+    (output_dir / "resume_suggestions.json").write_text(
+        _MIN_SUGGESTIONS_JSON, encoding="utf-8"
+    )
+
+
 def _prime_fs(tmp_path: Path, monkeypatch) -> Path:
     candidate_root = tmp_path / "candidate_context"
     candidate_root.mkdir()
@@ -78,17 +112,7 @@ def _seed_draft(client, tmp_path: Path, monkeypatch) -> dict:
     ).json()
 
     run_dir = Path(run["run_dir"])
-    out = run_dir / "output"
-    out.mkdir(parents=True, exist_ok=True)
-    for name in (
-        "tailored_resume.docx",
-        "tailored_resume.md",
-        "tailored_resume.json",
-        "change_log.md",
-        "claim_audit.md",
-        "ats_audit.md",
-    ):
-        (out / name).write_bytes(f"content for {name}\n".encode("utf-8"))
+    _write_min_outputs(run_dir / "output")
 
     from app.db import SessionLocal
     from app.models import ClaudeRun
@@ -297,16 +321,7 @@ def test_revision_feedback_stages_master_resume_markdown(
         json={"job_id": job["id"], "master_resume_id": resume["id"]},
     ).json()
     run_dir = Path(run["run_dir"])
-    (run_dir / "output").mkdir(exist_ok=True)
-    for name in (
-        "tailored_resume.docx",
-        "tailored_resume.md",
-        "tailored_resume.json",
-        "change_log.md",
-        "claim_audit.md",
-        "ats_audit.md",
-    ):
-        (run_dir / "output" / name).write_bytes(f"content {name}\n".encode("utf-8"))
+    _write_min_outputs(run_dir / "output")
 
     from app.db import SessionLocal
     from app.models import ClaudeRun
@@ -389,16 +404,7 @@ def test_revision_feedback_stages_filesystem_master_resume_docx(
         json={"job_id": job["id"], "master_resume_id": fs_entry["id"]},
     ).json()
     run_dir = Path(run["run_dir"])
-    (run_dir / "output").mkdir(exist_ok=True)
-    for name in (
-        "tailored_resume.docx",
-        "tailored_resume.md",
-        "tailored_resume.json",
-        "change_log.md",
-        "claim_audit.md",
-        "ats_audit.md",
-    ):
-        (run_dir / "output" / name).write_bytes(f"content {name}\n".encode("utf-8"))
+    _write_min_outputs(run_dir / "output")
 
     from app.db import SessionLocal
     from app.models import ClaudeRun
@@ -504,16 +510,7 @@ def test_revision_feedback_stages_original_evidence_sources(
         },
     ).json()
     run_dir = Path(run["run_dir"])
-    (run_dir / "output").mkdir(exist_ok=True)
-    for name in (
-        "tailored_resume.docx",
-        "tailored_resume.md",
-        "tailored_resume.json",
-        "change_log.md",
-        "claim_audit.md",
-        "ats_audit.md",
-    ):
-        (run_dir / "output" / name).write_bytes(f"content {name}\n".encode("utf-8"))
+    _write_min_outputs(run_dir / "output")
 
     from app.db import SessionLocal
     from app.models import ClaudeRun
@@ -604,18 +601,7 @@ def test_revision_feedback_creates_new_resume_version_not_overwriting_source(
     assert resp.status_code == 201, resp.text
     followup_run_id = resp.json()["followup_claude_run_id"]
     follow_dir = Path(client.get(f"/runs/{followup_run_id}").json()["run_dir"])
-    (follow_dir / "output").mkdir(exist_ok=True)
-    for name in (
-        "tailored_resume.docx",
-        "tailored_resume.md",
-        "tailored_resume.json",
-        "change_log.md",
-        "claim_audit.md",
-        "ats_audit.md",
-    ):
-        (follow_dir / "output" / name).write_bytes(
-            f"revised {name}\n".encode("utf-8")
-        )
+    _write_min_outputs(follow_dir / "output")
 
     from app.db import SessionLocal
     from app.models import ClaudeRun

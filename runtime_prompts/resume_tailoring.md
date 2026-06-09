@@ -176,6 +176,7 @@ ensure each file exists on disk and is non-empty before you finish.
 
 ```text
 output/tailored_resume.json
+output/resume_suggestions.json
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
@@ -188,6 +189,13 @@ the run if `output/tailored_resume.json` is missing or invalid — a
 response that describes the JSON but does not write the file counts as
 a missing file. See the "Structured Resume JSON" section below for the
 required schema.
+
+`output/resume_suggestions.json` is **required**. Generate section-level
+suggestions before finalizing the resume so the user can review each
+proposed edit (accept / reject / ask to revise) in the interactive
+review surface. The backend validates this file and will fail the run
+if it is missing or malformed. See the "Structured Resume Suggestions"
+section below for the required schema.
 
 `output/tailored_resume.json` is the structured tailored resume content
 and is the **source of truth** for the final DOCX. The backend deterministic
@@ -309,6 +317,70 @@ Rules:
 - All content must be truthful and supported by the master resume or
   evidence sources, exactly as the rest of this prompt requires.
 
+## Structured Resume Suggestions
+
+`output/resume_suggestions.json` is the section-level review surface. It
+lists concise, reviewable edits the user can accept, reject, or ask to
+revise before the final resume state is rebuilt. Generate section-level
+suggestions before finalizing the resume.
+
+Each suggestion must include:
+
+- section heading
+- current text or target text
+- suggested text
+- operation
+- reason
+- evidence references
+- ATS keywords addressed
+- confidence
+- risk
+
+Use this exact shape:
+
+```json
+{
+  "target_company": "Amazon",
+  "target_job_title": "Software Development Engineer, AWS Agentic AI",
+  "suggestions": [
+    {
+      "id": "sug_001",
+      "section_id": "professional_summary",
+      "section_heading": "PROFESSIONAL SUMMARY",
+      "operation": "replace_section_text",
+      "current_text": "...",
+      "suggested_text": "...",
+      "reason": "Emphasizes agentic AI developer tooling and distributed systems experience required by the job.",
+      "evidence_refs": [
+        {
+          "source": "vtrace evidence",
+          "quote": "Built a local-first code intelligence engine for AI coding agents..."
+        }
+      ],
+      "ats_keywords": ["agentic AI", "developer tooling", "distributed systems"],
+      "confidence": 0.86,
+      "risk": "low",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+`operation` must be one of: `replace_section_text`, `rewrite_bullet`,
+`insert_bullet`, `delete_bullet`, `reorder_bullets`, `add_skill`,
+`remove_skill`, `rewrite_entry`.
+
+Rules:
+
+- `id`, `section_id`, `operation`, and `reason` are required on every
+  suggestion. `confidence` is a number between 0 and 1; `risk` is one of
+  `low`, `medium`, `high`; `status` starts as `pending`.
+- Do not suggest unsupported claims.
+- If a suggestion relies on weak or user-provided evidence, mark risk
+  accordingly.
+- Use concise, reviewable suggestions.
+- Avoid rewriting the whole resume as one giant suggestion.
+
 `output/recruiter_review.md` records a simulated recruiter/hiring
 manager review of the tailored resume against the target company and
 role. See the "Recruiter Review" section below for the required
@@ -331,6 +403,7 @@ Extracting ATS keywords from job description
 Planning tailored resume changes
 Drafting tailored resume markdown
 Writing structured tailored resume JSON
+Writing resume suggestions
 Writing change log
 Writing claim audit
 Writing ATS audit
@@ -913,6 +986,7 @@ memory of what you intended to write.
 
 ```text
 output/tailored_resume.json
+output/resume_suggestions.json
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md

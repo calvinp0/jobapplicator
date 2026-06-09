@@ -22,9 +22,26 @@ ALL_OUTPUTS = (
     "tailored_resume.md",
     "tailored_resume.docx",
     "tailored_resume.json",
+    "resume_suggestions.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+)
+
+
+MINIMAL_VALID_SUGGESTIONS_JSON = (
+    '{\n'
+    '  "target_company": "Acme",\n'
+    '  "target_job_title": "ML Engineer",\n'
+    '  "suggestions": [\n'
+    '    {"id": "sug_001", "section_id": "professional_summary",\n'
+    '     "section_heading": "PROFESSIONAL SUMMARY",\n'
+    '     "operation": "replace_section_text",\n'
+    '     "current_text": "old", "suggested_text": "new",\n'
+    '     "reason": "Aligns with the role.", "risk": "low",\n'
+    '     "confidence": 0.8, "status": "pending"}\n'
+    '  ]\n'
+    '}\n'
 )
 
 
@@ -60,6 +77,7 @@ def _write_fake_binary(
     binary = tmp_path / f"fake_claude_{exit_code}_{'_'.join(write_outputs) or 'none'}"
     outputs_repr = repr(list(write_outputs))
     json_payload_repr = repr(MINIMAL_VALID_RESUME_JSON)
+    suggestions_payload_repr = repr(MINIMAL_VALID_SUGGESTIONS_JSON)
     body = textwrap.dedent(
         f"""\
         #!{sys.executable}
@@ -79,9 +97,12 @@ def _write_fake_binary(
         out = cwd / "output"
         out.mkdir(parents=True, exist_ok=True)
         _json_payload = {json_payload_repr}
+        _suggestions_payload = {suggestions_payload_repr}
         for name in {outputs_repr}:
             if name == "tailored_resume.json":
                 (out / name).write_text(_json_payload, encoding="utf-8")
+            elif name == "resume_suggestions.json":
+                (out / name).write_text(_suggestions_payload, encoding="utf-8")
             else:
                 (out / name).write_bytes(f"content for {{name}}\\n".encode("utf-8"))
         {extra_body}

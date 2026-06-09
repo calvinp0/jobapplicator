@@ -38,12 +38,22 @@ from ..run_directory import (
     default_runs_root,
     default_runtime_prompts_root,
 )
+from ..resume_docx_renderer import RendererError, render_resume, validate_resume_payload
+from ..resume_suggestions import (
+    apply_accepted,
+    find_suggestion,
+)
 from ..run_import import RunImportError, approve_resume_version
 from ..schemas import (
+    ApplySuggestionsRead,
+    ResumeSuggestionRead,
+    ResumeSuggestionsRead,
     RevisionFeedbackCreate,
     RevisionFeedbackRead,
     ResumeVersionRead,
+    SuggestionReviseRequest,
 )
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/resume-versions", tags=["resume-versions"])
 
@@ -69,6 +79,194 @@ def approve_version(version_id: str, db: Session = Depends(get_db)) -> ResumeVer
         return approve_resume_version(version_id, db)
     except RunImportError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ---- Interactive resume suggestion review (task 113) ----
+
+
+def _load_version_or_404(version_id: str, db: Session) -> ResumeVersion:
+    version = db.get(ResumeVersion, version_id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="resume version not found")
+    return version
+
+
+def _load_suggestions_doc_or_404(version: ResumeVersion) -> dict:
+    """Decode the suggestions document or 404 when the draft has none.
+
+    Drafts produced before task 113 (or one-shot imports without a
+    suggestions artifact) carry a null ``suggestions_json`` — the review
+    surface is simply unavailable for them.
+    """
+    doc = version.suggestions
+    if not doc or not isinstance(doc.get("suggestions"), list):
+        raise HTTPException(
+            status_code=404,
+            detail="no resume suggestions available for this version",
+        )
+    return doc
+
+
+def _suggestions_read(version: ResumeVersion, doc: dict) -> ResumeSuggestionsRead:
+    review_state = version.review_state or {}
+    return ResumeSuggestionsRead(
+        resume_version_id=version.id,
+        target_company=doc.get("target_company", "") or "",
+        target_job_title=doc.get("target_job_title", "") or "",
+        suggestions=[ResumeSuggestionRead(**s) for s in doc.get("suggestions", [])],
+        applied_at=review_state.get("applied_at"),
+        has_working_resume=bool(review_state.get("working_resume_json")),
+    )
+
+
+def _set_suggestion_status(
+    version_id: str,
+    suggestion_id: str,
+    status_value: str,
+    db: Session,
+    *,
+    revision_instruction: Optional[str] = None,
+) -> ResumeSuggestionRead:
+    version = _load_version_or_404(version_id, db)
+    doc = _load_suggestions_doc_or_404(version)
+    suggestion = find_suggestion(doc, suggestion_id)
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="suggestion not found")
+    suggestion["status"] = status_value
+    if revision_instruction is not None:
+        suggestion["revision_instruction"] = revision_instruction
+    # Re-serialize the whole document; status lives inline on each suggestion.
+    version.suggestions_json = json.dumps(doc)
+    db.commit()
+    db.refresh(version)
+    return ResumeSuggestionRead(**suggestion)
+
+
+@router.get("/{version_id}/suggestions", response_model=ResumeSuggestionsRead)
+def list_suggestions(
+    version_id: str, db: Session = Depends(get_db)
+) -> ResumeSuggestionsRead:
+    version = _load_version_or_404(version_id, db)
+    doc = _load_suggestions_doc_or_404(version)
+    return _suggestions_read(version, doc)
+
+
+@router.post(
+    "/{version_id}/suggestions/{suggestion_id}/accept",
+    response_model=ResumeSuggestionRead,
+)
+def accept_suggestion(
+    version_id: str, suggestion_id: str, db: Session = Depends(get_db)
+) -> ResumeSuggestionRead:
+    """Mark a suggestion accepted.
+
+    Accepting records intent; the working resume is rebuilt from all accepted
+    suggestions atomically by ``POST .../apply-suggestions`` so a sequence of
+    accept/reject clicks stays cheap and the rebuild is a single explicit step.
+    """
+    return _set_suggestion_status(version_id, suggestion_id, "accepted", db)
+
+
+@router.post(
+    "/{version_id}/suggestions/{suggestion_id}/reject",
+    response_model=ResumeSuggestionRead,
+)
+def reject_suggestion(
+    version_id: str, suggestion_id: str, db: Session = Depends(get_db)
+) -> ResumeSuggestionRead:
+    return _set_suggestion_status(version_id, suggestion_id, "rejected", db)
+
+
+@router.post(
+    "/{version_id}/suggestions/{suggestion_id}/revise",
+    response_model=ResumeSuggestionRead,
+)
+def revise_suggestion(
+    version_id: str,
+    suggestion_id: str,
+    payload: SuggestionReviseRequest,
+    db: Session = Depends(get_db),
+) -> ResumeSuggestionRead:
+    """Store a revision instruction and mark the suggestion ``revised``.
+
+    First implementation per task 113: the instruction is captured for a
+    later revision run (the existing ``/revision-feedback`` endpoint), not
+    regenerated live here.
+    """
+    return _set_suggestion_status(
+        version_id,
+        suggestion_id,
+        "revised",
+        db,
+        revision_instruction=payload.instruction,
+    )
+
+
+@router.post("/{version_id}/apply-suggestions", response_model=ApplySuggestionsRead)
+def apply_suggestions(
+    version_id: str, db: Session = Depends(get_db)
+) -> ApplySuggestionsRead:
+    """Rebuild the working structured resume from the accepted suggestions.
+
+    Applies every ``accepted`` suggestion onto the imported base
+    ``tailored_resume.json`` and persists the result as the working resume
+    state. When the deterministic renderer can consume the result and the
+    source run directory still exists, a fresh ``output/applied_resume.docx``
+    is rendered best-effort so the operator can download the applied draft;
+    a render failure never fails the apply call.
+    """
+    version = _load_version_or_404(version_id, db)
+    doc = _load_suggestions_doc_or_404(version)
+    review_state = version.review_state or {}
+    base_resume = review_state.get("base_resume_json")
+    if not isinstance(base_resume, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="no base structured resume available to apply suggestions onto",
+        )
+
+    suggestions = doc.get("suggestions", [])
+    accepted_count = sum(1 for s in suggestions if s.get("status") == "accepted")
+    working_resume = apply_accepted(base_resume, suggestions)
+    applied_at = datetime.now(timezone.utc)
+
+    review_state["working_resume_json"] = working_resume
+    review_state["applied_at"] = applied_at.isoformat()
+    review_state.setdefault("base_resume_json", base_resume)
+    _render_applied_docx(version, working_resume, review_state)
+    version.suggestion_review_state = json.dumps(review_state)
+    db.commit()
+    db.refresh(version)
+
+    return ApplySuggestionsRead(
+        resume_version_id=version.id,
+        applied_at=applied_at,
+        accepted_count=accepted_count,
+        working_resume=working_resume,
+    )
+
+
+def _render_applied_docx(
+    version: ResumeVersion, working_resume: dict, review_state: dict
+) -> None:
+    """Best-effort render of the applied working resume to a DOCX.
+
+    Records the rendered path on ``review_state`` when successful. Any
+    validation/render/IO failure is swallowed — the JSON working state is the
+    source of truth and the DOCX is a convenience artifact.
+    """
+    if not version.docx_path:
+        return
+    try:
+        output_dir = Path(version.docx_path).parent
+        if not output_dir.is_dir():
+            return
+        payload = validate_resume_payload(working_resume)
+        applied_path = output_dir / "applied_resume.docx"
+        render_resume(payload, applied_path)
+        review_state["working_resume_docx_path"] = str(applied_path)
+    except (RendererError, OSError, ValueError):
+        review_state.pop("working_resume_docx_path", None)
 
 
 def _resolve_master_resume(

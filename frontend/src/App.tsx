@@ -8,6 +8,7 @@ import { JobDetailPage } from "./pages/JobDetailPage";
 import { RunsPage } from "./pages/RunsPage";
 import { RunDetailPage } from "./pages/RunDetailPage";
 import { ResumeVersionDetailPage } from "./pages/ResumeVersionDetailPage";
+import { ResumeReviewPage } from "./pages/ResumeReviewPage";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { ApplicationDetailPage } from "./pages/ApplicationDetailPage";
 import { PromptsPage } from "./pages/PromptsPage";
@@ -27,6 +28,10 @@ export function App() {
         <Route
           path="/resume-versions/:versionId"
           element={<ResumeVersionDetailPage />}
+        />
+        <Route
+          path="/resume-versions/:versionId/review"
+          element={<ResumeReviewPage />}
         />
         <Route path="/applications" element={<ApplicationsPage />} />
         <Route

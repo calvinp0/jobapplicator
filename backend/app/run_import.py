@@ -1,21 +1,30 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import ClaudeRun, ResumeVersion
+from .resume_suggestions import (
+    SuggestionError,
+    load_suggestions_json,
+    validate_suggestions_payload,
+)
 
 
 EXPECTED_OUTPUT_FILES = (
     "tailored_resume.docx",
     "tailored_resume.md",
     "tailored_resume.json",
+    # Task 113: imported into ``ResumeVersion.suggestions_json`` for the
+    # interactive review surface.
+    "resume_suggestions.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
@@ -39,6 +48,21 @@ def _now() -> datetime:
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _load_json_object(path: Path) -> Optional[dict[str, Any]]:
+    """Parse ``path`` as a JSON object, tolerating malformed/non-object data.
+
+    The structured resume JSON is already validated by the deterministic
+    renderer during the worker run, so import treats it as best-effort
+    provenance: a parse failure here returns ``None`` rather than failing the
+    import (which would block a run whose DOCX already rendered cleanly).
+    """
+    try:
+        decoded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
 
 
 def _resolve_inside(run_dir: Path, relative: str) -> Path:
@@ -124,6 +148,22 @@ def import_run_outputs(run_id: str, db: Session) -> RunImportResult:
 
     content_markdown = md_bytes.decode("utf-8") if md_bytes is not None else None
 
+    # Task 113: import the section-level suggestions and the base structured
+    # resume so the interactive review surface has something to render and
+    # the apply step can rebuild a working resume from accepted suggestions.
+    try:
+        suggestions_doc = validate_suggestions_payload(
+            load_suggestions_json(output_paths["resume_suggestions.json"])
+        )
+    except SuggestionError as exc:
+        raise RunImportError(f"invalid resume suggestions: {exc}") from exc
+    base_resume = _load_json_object(output_paths["tailored_resume.json"])
+    review_state = {
+        "base_resume_json": base_resume,
+        "working_resume_json": None,
+        "applied_at": None,
+    }
+
     version = ResumeVersion(
         job_id=run.job_id,
         master_resume_id=run.master_resume_id,
@@ -135,6 +175,8 @@ def import_run_outputs(run_id: str, db: Session) -> RunImportResult:
         prompt_hash=run.prompt_hash,
         source="claude_run",
         approved_at=None,
+        suggestions_json=json.dumps(suggestions_doc),
+        suggestion_review_state=json.dumps(review_state),
     )
 
     run.status = "imported"

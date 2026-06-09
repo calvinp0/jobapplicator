@@ -39,6 +39,9 @@ EXPECTED_OUTPUTS = (
     "tailored_resume.docx",
     "tailored_resume.md",
     "tailored_resume.json",
+    # Task 113: section-level reviewable suggestions are a required output of
+    # the tailoring run so the interactive review surface always has material.
+    "resume_suggestions.json",
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",

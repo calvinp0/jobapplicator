@@ -278,6 +278,12 @@ export function ResumeVersionDetailPage() {
         >
           {isOpening ? "Opening…" : "Open draft file"}
         </button>
+        <Link
+          className="resume-version-review-link"
+          to={`/resume-versions/${version.id}/review`}
+        >
+          Review AI suggestions
+        </Link>
         {approved ? (
           <span className="approved-indicator" aria-label="Draft approved">
             Approved ✓

@@ -21,6 +21,7 @@ runs/<run_id>/
 │   └── master_resume_extraction_error.md    # written instead if extraction fails
 ├── output/
 │   ├── tailored_resume.json         # structured resume content; source of truth for the renderer
+│   ├── resume_suggestions.json      # section-level reviewable suggestions (required)
 │   ├── tailored_resume.docx         # rendered deterministically by the backend from the JSON
 │   ├── tailored_resume.md
 │   ├── change_log.md
@@ -316,6 +317,7 @@ Claude Code may write:
 
 ```text
 output/tailored_resume.json
+output/resume_suggestions.json
 output/tailored_resume.md
 output/change_log.md
 output/claim_audit.md
@@ -365,6 +367,17 @@ bullet lists, margins, font family/size, section spacing), and known
 limitations. The audit is no longer produced by Claude and no longer
 falls under the "optional output" warning behavior; if the renderer
 runs successfully, the audit exists.
+
+`output/resume_suggestions.json` is the section-level, reviewable
+suggestions artifact (task 113). It is the main user-facing review
+surface: the frontend Resume Review page renders each suggestion and
+lets the user accept, reject, or ask to revise it before the resume
+state is rebuilt. The file is **required** — the worker validates its
+schema after Claude exits and marks the run failed with
+`invalid resume suggestions JSON: <reason>` when it is missing or
+malformed (the same gate that protects `tailored_resume.json`). See
+"Structured Resume Suggestions" below for the schema and review
+lifecycle.
 
 `output/recruiter_review.md` is the simulated recruiter/hiring-manager
 review of the tailored resume against the target company and role
@@ -444,6 +457,83 @@ Word bullet lists, consistent margins and spacing) regardless of
 whether a master DOCX was provided. Word MCP / Claude for Word
 remains available as a manual fallback for human-in-the-loop edits
 when the deterministic renderer is insufficient.
+
+### Structured Resume Suggestions
+
+`output/resume_suggestions.json` is the section-level review surface
+introduced in task 113. Where `tailored_resume.json` is the *finalized*
+structured resume, the suggestions file lists concise, evidence-backed
+edits the user can accept, reject, or ask to revise before the resume
+state is rebuilt. The backend validates it
+(`backend/app/resume_suggestions.py`) and fails the run on a missing or
+malformed file.
+
+Schema:
+
+```json
+{
+  "target_company": "Amazon",
+  "target_job_title": "Software Development Engineer, AWS Agentic AI",
+  "suggestions": [
+    {
+      "id": "sug_001",
+      "section_id": "professional_summary",
+      "section_heading": "PROFESSIONAL SUMMARY",
+      "operation": "replace_section_text",
+      "current_text": "...",
+      "suggested_text": "...",
+      "reason": "Why this improves the resume for the target role.",
+      "evidence_refs": [{"source": "vtrace evidence", "quote": "..."}],
+      "ats_keywords": ["agentic AI", "distributed systems"],
+      "confidence": 0.86,
+      "risk": "low",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+Rules:
+
+- `id`, `section_id`, `operation`, and `reason` are required on every
+  suggestion; `id` must be unique within the document.
+- `operation` must be one of `replace_section_text`, `rewrite_bullet`,
+  `insert_bullet`, `delete_bullet`, `reorder_bullets`, `add_skill`,
+  `remove_skill`, `rewrite_entry`. The first implementation rebuilds the
+  working resume from `replace_section_text`, `rewrite_bullet`,
+  `insert_bullet`, and `add_skill`; the others round-trip through review
+  but do not yet mutate the resume on apply.
+- `confidence` is a number in `[0, 1]`; `risk` is one of `low`,
+  `medium`, `high`; `status` is one of `pending`, `accepted`,
+  `rejected`, `revised` and starts as `pending`.
+- `evidence_refs` are compact `{source, quote}` pairs backing the
+  suggestion. Suggestions must not introduce unsupported claims; weak or
+  user-provided evidence must be reflected in `risk`.
+
+**Review lifecycle and storage.** On import the suggestions document is
+stored on `ResumeVersion.suggestions_json`, and the base
+`tailored_resume.json` is captured in
+`ResumeVersion.suggestion_review_state` as `base_resume_json`. The
+review endpoints under `/resume-versions/{id}` mutate per-suggestion
+`status` in place:
+
+- `GET  /resume-versions/{id}/suggestions` — list suggestions + review state.
+- `POST /resume-versions/{id}/suggestions/{sid}/accept` — mark `accepted`.
+- `POST /resume-versions/{id}/suggestions/{sid}/reject` — mark `rejected`.
+- `POST /resume-versions/{id}/suggestions/{sid}/revise` — store a free-text
+  `instruction` and mark `revised` (captured for a later revision run, not
+  regenerated live).
+- `POST /resume-versions/{id}/apply-suggestions` — rebuild a working
+  structured resume by applying every `accepted` suggestion onto
+  `base_resume_json`, persisting the result as `working_resume_json` in
+  `suggestion_review_state`. Because the applied state keeps the
+  `tailored_resume.json` schema, it stays renderable: when the source run
+  directory exists, a best-effort `output/applied_resume.docx` is rendered
+  via `resume_docx_renderer.py`.
+
+This builds on the deterministic DOCX renderer (task 111): the renderer's
+schema is the shared structured-resume shape that both the base resume and
+the applied working resume conform to.
 
 `progress/progress.log` is an append-only stream of short user-facing phase
 events (e.g., `Reading job description`, `Drafting tailored resume markdown`).

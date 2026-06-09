@@ -455,6 +455,47 @@ export interface RevisionFeedback {
   created_at: string;
 }
 
+// ---- Resume suggestions (task 113) ----
+
+export interface EvidenceRef {
+  source: string;
+  quote: string;
+}
+
+export type SuggestionStatus = "pending" | "accepted" | "rejected" | "revised";
+
+export interface ResumeSuggestion {
+  id: string;
+  section_id: string;
+  section_heading: string;
+  operation: string;
+  current_text: string;
+  suggested_text: string;
+  reason: string;
+  evidence_refs: EvidenceRef[];
+  ats_keywords: string[];
+  confidence: number | null;
+  risk: string;
+  status: SuggestionStatus;
+  revision_instruction: string;
+}
+
+export interface ResumeSuggestions {
+  resume_version_id: string;
+  target_company: string;
+  target_job_title: string;
+  suggestions: ResumeSuggestion[];
+  applied_at: string | null;
+  has_working_resume: boolean;
+}
+
+export interface ApplySuggestionsResult {
+  resume_version_id: string;
+  applied_at: string;
+  accepted_count: number;
+  working_resume: Record<string, unknown> | null;
+}
+
 export interface WordHandoffMetadata {
   run_id: string;
   status: string;
