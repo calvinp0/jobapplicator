@@ -2419,3 +2419,22 @@ tasks:
       - "docs/**"
       - "agent_tasks/120-redesign-applications-table-actions-and-status.md"
       - "agent_tasks/queue.yaml"
+  - id: "121-clean-settings-capture-inbox-reset-and-file-imports"
+    title: "Clean settings, capture inbox, reset button, and file imports"
+    file: "agent_tasks/121-clean-settings-capture-inbox-reset-and-file-imports.md"
+    branch: "agent/121-clean-settings-capture-inbox-reset-and-file-imports"
+    worktree: "agent-121-clean-settings-capture-inbox-reset-and-file-imports"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "python -m pytest"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "extension/**"
+      - "docs/**"
+      - "agent_tasks/121-clean-settings-capture-inbox-reset-and-file-imports.md"
+      - "agent_tasks/queue.yaml"
