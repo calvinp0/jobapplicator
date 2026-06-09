@@ -2389,3 +2389,18 @@ tasks:
       - "agent_tasks/118-use-project-python-env-for-backend-tests.md"
       - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/queue.yaml"
+  - id: "119-redesign-dashboard-active-jobs"
+    title: "Redesign dashboard active jobs"
+    file: "agent_tasks/119-redesign-dashboard-active-jobs.md"
+    branch: "agent/119-redesign-dashboard-active-jobs"
+    worktree: "agent-119-redesign-dashboard-active-jobs"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "frontend/**"
+      - "docs/**"
+      - "agent_tasks/119-redesign-dashboard-active-jobs.md"
+      - "agent_tasks/queue.yaml"
