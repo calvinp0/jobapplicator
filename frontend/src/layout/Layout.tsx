@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { listCaptures } from "../api";
+import { SidebarActivityCenter } from "../components/activity/SidebarActivityCenter";
 
 interface NavItem {
   to: string;
@@ -26,10 +27,18 @@ const TRACK_GROUP: NavGroup = {
 
 const CREATE_GROUP: NavGroup = {
   label: "Create",
-  items: [
-    { to: "/captures", label: "Captures", hint: "Pending intake" },
-    { to: "/runs", label: "Runs", hint: "Tailoring runs" },
-  ],
+  items: [{ to: "/runs", label: "Runs", hint: "Tailoring runs" }],
+};
+
+// Captures are no longer a primary workflow surface (task 117). The browser
+// extension still ingests them and the route stays live, but the nav link
+// only appears — demoted under its own "Inbox" section — when there is
+// something pending to review. Otherwise pending captures surface through
+// the bottom-left activity center.
+const CAPTURES_ITEM: NavItem = {
+  to: "/captures",
+  label: "Capture inbox",
+  hint: "Needs review",
 };
 
 const CONFIGURE_GROUP: NavGroup = {
@@ -157,6 +166,9 @@ export function Layout() {
         <nav aria-label="Primary" className="sidebar-nav">
           {renderGroup(TRACK_GROUP)}
           {renderGroup(CREATE_GROUP)}
+          {pendingCount !== null && pendingCount > 0
+            ? renderGroup({ label: "Inbox", items: [CAPTURES_ITEM] })
+            : null}
         </nav>
 
         <div className="sidebar-divider" role="presentation" />
@@ -165,19 +177,7 @@ export function Layout() {
           {renderGroup(CONFIGURE_GROUP)}
         </nav>
 
-        <div className="sidebar-footer">
-          <span className="sidebar-status-dot" aria-hidden="true" />
-          <div>
-            <p className="sidebar-status-label">Local backend</p>
-            <p className="sidebar-status-detail">
-              {pendingCount === null
-                ? "Status unknown"
-                : `${pendingCount} pending capture${
-                    pendingCount === 1 ? "" : "s"
-                  }`}
-            </p>
-          </div>
-        </div>
+        <SidebarActivityCenter />
       </aside>
       <main className={contentClass(location.pathname)}>
         <div className={contentInnerClass(location.pathname)}>

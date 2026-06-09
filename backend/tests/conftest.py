@@ -35,6 +35,7 @@ def client() -> Iterator:
     # Reload modules so the engine picks up the new env var.
     for mod_name in [
         "app.main",
+        "app.routers.activity",
         "app.routers.applications",
         "app.routers.captures",
         "app.routers.evidence_banks",

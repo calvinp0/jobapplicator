@@ -9,11 +9,23 @@ different UI rather than a thin wrapper around the previous layout.
 
 - **Sidebar**: darker (`#0b0d18`) navigation rail with a soft accent
   gradient overlay, a square gradient brand mark, larger title, and a
-  local-backend status footer. Active routes are highlighted with an
-  accent left-bar and a tinted background instead of a flat solid fill.
+  bottom-left activity center (task 117 — see below). Active routes are
+  highlighted with an accent left-bar and a tinted background instead of
+  a flat solid fill.
 - **Grouped nav**: the rail is split into `Track` (Dashboard, Jobs,
-  Applications), `Create` (Captures, Runs), and `Configure` (Prompts,
-  Settings). Only routes that actually exist in `App.tsx` are linked.
+  Applications), `Create` (Runs), and `Configure` (Prompts, Settings).
+  Only routes that actually exist in `App.tsx` are linked. Captures are
+  no longer a primary surface (task 117): the route stays live for the
+  browser-extension intake, but the nav link is demoted to an `Inbox`
+  group that only appears when there are pending captures to review.
+- **Activity center** (task 117): the old "Local backend / N pending
+  captures" footer is replaced by a compact, clickable activity center.
+  Collapsed it shows a status dot plus `All clear` / `N running` /
+  `N need attention`; clicking opens a grouped popover (Running / Needs
+  attention / Recent) whose items link straight to the relevant run or
+  capture. It polls `GET /activity` every 15s. The endpoint is a
+  domain-agnostic projection so the component never imports run/capture
+  models.
 - **Page headers**: heavier 26 px display-style headings with a thin
   bottom border, so each page reads as a real surface and not a stack
   of cards floating on the body.
@@ -65,7 +77,10 @@ different UI rather than a thin wrapper around the previous layout.
   `SectionCard.tsx`, `EmptyState.tsx`, `SettingsGroup.tsx`,
   `StatusBadge.tsx` — carried over from task 103, now restyled.
 - `frontend/src/layout/Layout.tsx` — sticky sidebar with grouped nav,
-  active-route highlight, and a status footer.
+  active-route highlight, and the bottom-left activity center.
+- `frontend/src/components/activity/` — `SidebarActivityCenter`,
+  `ActivityPopover`, and `ActivityItem` (task 117), backed by
+  `GET /activity`.
 
 ## Pages redesigned
 

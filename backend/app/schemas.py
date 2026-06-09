@@ -404,6 +404,54 @@ class ClaudeRunRecruiterReviewRead(BaseModel):
     path: Optional[str] = None
 
 
+# ---- Activity center (task 117) ----
+
+
+class ActivityItemRead(BaseModel):
+    """A single row in the sidebar activity center.
+
+    The bottom-left activity component is intentionally domain-agnostic: it
+    renders whatever items this endpoint emits without knowing about runs,
+    captures, or applications. ``group`` ("running" / "attention" /
+    "recent") drives which section the item lands in; ``href`` is a ready
+    frontend route so the component can link straight to the relevant
+    detail page. ``status`` is the normalized lifecycle label
+    ("running" / "failed" / "attention" / "completed") used only for the
+    coloured status dot.
+    """
+
+    id: str
+    type: str
+    status: str
+    group: str
+    title: str
+    subtitle: Optional[str] = None
+    detail: Optional[str] = None
+    started_at: Optional[datetime] = None
+    href: str
+
+
+class ActivitySummaryRead(BaseModel):
+    """Compact counts the collapsed activity center renders without opening.
+
+    ``running_count`` powers the "N running" label, ``attention_count`` the
+    "N need attention" label (failed runs plus pending captures), and
+    ``pending_capture_count`` is surfaced separately so the nav can decide
+    whether to show the demoted Captures inbox link.
+    """
+
+    running_count: int = 0
+    attention_count: int = 0
+    pending_capture_count: int = 0
+
+
+class ActivityRead(BaseModel):
+    """Unified activity feed for the sidebar activity center."""
+
+    summary: ActivitySummaryRead
+    items: list[ActivityItemRead] = []
+
+
 # ---- ResumeVersion ----
 
 class ResumeVersionRead(_ORMModel):

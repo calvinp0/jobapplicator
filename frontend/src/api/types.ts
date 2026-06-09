@@ -175,6 +175,34 @@ export interface RunLog {
   truncated: boolean;
 }
 
+// ---- Activity center (task 117) ----
+// The bottom-left activity center renders this domain-agnostic feed without
+// knowing about runs/captures/applications. ``group`` decides the section,
+// ``status`` drives the coloured dot, and ``href`` is a ready frontend route.
+
+export interface ActivityItem {
+  id: string;
+  type: string;
+  status: string;
+  group: "running" | "attention" | "recent" | string;
+  title: string;
+  subtitle?: string | null;
+  detail?: string | null;
+  started_at?: string | null;
+  href: string;
+}
+
+export interface ActivitySummary {
+  running_count: number;
+  attention_count: number;
+  pending_capture_count: number;
+}
+
+export interface ActivityResponse {
+  summary: ActivitySummary;
+  items: ActivityItem[];
+}
+
 export interface RunProgress {
   run_id: string;
   lines: string[];
