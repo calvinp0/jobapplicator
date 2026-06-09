@@ -286,6 +286,102 @@ describe("ResumeReviewPage workspace (task 114)", () => {
     );
   });
 
+  it("renders the document as labeled pages (Page 1)", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    renderReview();
+
+    await screen.findByTestId("resume-document-preview");
+    expect(screen.getByTestId("page-label-1")).toHaveTextContent("Page 1");
+    expect(screen.getByTestId("doc-page-block-1")).toBeInTheDocument();
+  });
+
+  it("paginates a long resume into a second page", async () => {
+    const longResume: StructuredResume = {
+      header: { name: "Jane Candidate", contact_items: ["jane@example.com"] },
+      sections: Array.from({ length: 6 }, (_, i) => ({
+        type: "experience",
+        heading: `ROLE ${i + 1}`,
+        entries: [
+          {
+            title: `Engineer ${i}`,
+            organization: "Acme",
+            dates: "2020",
+            bullets: ["alpha", "beta", "gamma", "delta", "epsilon"],
+          },
+        ],
+      })),
+    };
+    getResumeSuggestionsMock.mockResolvedValue(
+      payload({ base_resume: longResume, suggestions: [] }),
+    );
+    renderReview();
+
+    await screen.findByTestId("resume-document-preview");
+    expect(screen.getByTestId("doc-page-block-2")).toBeInTheDocument();
+    expect(screen.getByTestId("page-label-2")).toHaveTextContent("Page 2");
+  });
+
+  it("renders one WORK EXPERIENCE heading even when many suggestions target it", async () => {
+    const resume: StructuredResume = {
+      header: { name: "Jane Candidate" },
+      sections: [
+        {
+          type: "experience",
+          heading: "WORK EXPERIENCE",
+          entries: [
+            { title: "Engineer", organization: "Acme", dates: "2020", bullets: ["Did things."] },
+          ],
+        },
+        { type: "publications", heading: "PUBLICATIONS", items: ["A paper."] },
+      ],
+    };
+    getResumeSuggestionsMock.mockResolvedValue(
+      payload({
+        base_resume: resume,
+        suggestions: [
+          suggestion({
+            id: "w1",
+            section_id: "experience_0",
+            section_heading: "WORK EXPERIENCE",
+            operation: "rewrite_bullet",
+          }),
+          suggestion({
+            id: "w2",
+            section_id: "experience_0_bullet_1",
+            section_heading: "WORK EXPERIENCE",
+            operation: "rewrite_bullet",
+          }),
+        ],
+      }),
+    );
+    renderReview();
+
+    const preview = await screen.findByTestId("resume-document-preview");
+    // The canonical heading appears exactly once in the document — suggestions
+    // did not leak out as appended duplicate sections after Publications.
+    // (Scoped to the document; the heading also names the selected section in
+    // the right-hand review panel, which is expected.)
+    const headings = within(preview).getAllByText("WORK EXPERIENCE");
+    expect(headings).toHaveLength(1);
+    // Exactly one work-experience section element exists in the document.
+    expect(screen.getByTestId("doc-section-work_experience")).toBeInTheDocument();
+    // Its suggestion badge reflects both edits.
+    const badge = screen.getByTestId("doc-change-work_experience");
+    expect(badge).toHaveTextContent("Suggested edit");
+    expect(badge).toHaveTextContent("2");
+  });
+
+  it("keeps the AI review panel sticky and internally scrollable", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    renderReview();
+
+    const panel = await screen.findByTestId("review-panel");
+    // The sticky frame carries the .review-panel class (position: sticky in CSS)
+    // and holds an internally-scrolling body for long evidence lists.
+    expect(panel.className).toContain("review-panel");
+    expect(panel.querySelector(".review-panel-body")).not.toBeNull();
+  });
+
   it("keeps long status/risk text inside overflow-guarded badge containers", async () => {
     getResumeSuggestionsMock.mockResolvedValue(
       payload({

@@ -3263,8 +3263,9 @@ button[type="submit"]:disabled,
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  /* Fill the content area height so the panels can scroll independently. */
-  min-height: calc(100vh - (var(--space-7) + var(--space-8)));
+  /* The workspace flows naturally and the app content area (.content) owns the
+     scroll. This is what lets the right AI-review panel stay sticky for the
+     full height of the document instead of a viewport-capped grid. */
 }
 
 /* ---- Top bar ---- */
@@ -3338,29 +3339,30 @@ button[type="submit"]:disabled,
   background: var(--success-soft);
 }
 
-/* ---- Three-panel grid ---- */
+/* ---- Three-panel grid ----
+   Compact rail · wide document (takes the slack) · sticky review panel.
+   The document column is the flexible one so horizontal whitespace goes to the
+   page, not to empty gutters. */
 .review-grid {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr) 350px;
+  grid-template-columns: minmax(150px, 180px) minmax(0, 1fr) minmax(340px, 380px);
   gap: var(--space-4);
   align-items: start;
-  flex: 1;
-  min-height: 0;
 }
 
-/* ---- Left: workflow rail ---- */
+/* ---- Left: workflow rail (compact) ---- */
 .workflow-rail {
   position: sticky;
-  top: 0;
+  top: var(--space-3);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-4) var(--space-3);
+  padding: var(--space-3) var(--space-2);
 }
 
 .workflow-rail-title {
-  margin: 0 0 var(--space-3);
-  font-size: var(--font-xs);
+  margin: 0 0 var(--space-2);
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-subtle);
@@ -3379,16 +3381,16 @@ button[type="submit"]:disabled,
 .workflow-step {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-2);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   border-left: 2px solid transparent;
 }
 
 .workflow-step-marker {
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3407,13 +3409,13 @@ button[type="submit"]:disabled,
 }
 
 .workflow-step-label {
-  font-size: var(--font-md);
+  font-size: var(--font-sm);
   font-weight: 500;
   color: var(--text);
 }
 
 .workflow-step-status {
-  font-size: var(--font-xs);
+  font-size: 10px;
   color: var(--text-subtle);
   text-transform: capitalize;
 }
@@ -3459,25 +3461,46 @@ button[type="submit"]:disabled,
 
 .doc-page-shell {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
   background: #eceef4;
   border-radius: var(--radius-md);
-  padding: var(--space-6) var(--space-4);
+  padding: var(--space-5) var(--space-4);
+}
+
+/* One labeled page: the small "Page N" caption above the white sheet. */
+.doc-page-block {
+  width: 100%;
+  max-width: 850px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.doc-page-label {
+  margin: 0 0 var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-subtle);
+  text-align: center;
 }
 
 .doc-page {
   background: #fff;
   width: 100%;
-  max-width: 720px;
-  /* Letter-ish proportion; min-height keeps a page feel for short resumes. */
-  min-height: 920px;
+  /* A realistic Letter-ish sheet; the column above keeps it from getting too
+     wide. min-height preserves the page feel for short resumes. */
+  min-height: 1100px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08),
     0 12px 32px rgba(15, 23, 42, 0.12);
   border: 1px solid #e3e5ec;
   border-radius: 2px;
-  padding: 56px 64px;
+  padding: 64px 72px;
   /* Document typography: smaller and serif-neutral, not dashboard-sized. */
-  font-size: var(--font-xs);
+  font-size: 13px;
   line-height: 1.5;
   color: #1d1f2b;
 }
@@ -3651,15 +3674,18 @@ button[type="submit"]:disabled,
   margin: 0 0 2px;
 }
 
-/* ---- Right: AI review panel ---- */
+/* ---- Right: AI review panel ----
+   Sticky within the .content scroll so it stays in view while the document
+   scrolls; its body scrolls internally for long evidence lists while the
+   header (section name) and the panel frame stay put. */
 .review-panel {
   position: sticky;
-  top: 0;
+  top: var(--space-3);
   align-self: start;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  max-height: calc(100vh - var(--space-8));
+  max-height: calc(100vh - var(--space-6));
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -3686,6 +3712,10 @@ button[type="submit"]:disabled,
 
 .review-panel-body {
   padding: var(--space-3) var(--space-4) var(--space-4);
+  /* Fill the remaining panel height and scroll internally so long evidence
+     lists stay inside the panel instead of pushing the layout around. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
