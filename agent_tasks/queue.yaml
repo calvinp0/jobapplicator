@@ -2394,7 +2394,7 @@ tasks:
     file: "agent_tasks/119-redesign-dashboard-active-jobs.md"
     branch: "agent/119-redesign-dashboard-active-jobs"
     worktree: "agent-119-redesign-dashboard-active-jobs"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "cd frontend && npm run build"
