@@ -158,7 +158,8 @@ describe("DashboardPage", () => {
     expect(jobLink).toBeDefined();
     expect(screen.getAllByText(/platform lead/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/beta inc/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/awaiting tailoring/i)).toBeInTheDocument();
+    // Captured job renders the compact status, not the old long pill label.
+    expect(screen.getByText("Captured")).toBeInTheDocument();
 
     const runLink = links.find(
       (l) => l.getAttribute("href") === "/runs/run-1",
@@ -175,7 +176,7 @@ describe("DashboardPage", () => {
     expect(screen.getAllByText(/tailoring in progress/i).length).toBeGreaterThan(0);
   });
 
-  it("renders the Approved — ready to send stage label for jobs with an approved draft", async () => {
+  it("renders an Approved status with a Continue application primary action for jobs with an approved draft", async () => {
     listJobsMock.mockResolvedValue([
       {
         id: "job-3",
@@ -220,7 +221,11 @@ describe("DashboardPage", () => {
       ).toBeInTheDocument(),
     );
 
-    expect(screen.getByText(/approved — ready to send/i)).toBeInTheDocument();
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    const continueLinks = screen
+      .getAllByRole("link")
+      .filter((l) => /continue application/i.test(l.textContent ?? ""));
+    expect(continueLinks.length).toBe(1);
   });
 
   it("renders empty-state messages for every section when there is no data", async () => {
@@ -238,7 +243,7 @@ describe("DashboardPage", () => {
     );
 
     expect(
-      screen.getByText(/no active jobs yet — capture a job from the extension/i),
+      screen.getByText(/no active applications yet/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/no runs in progress/i)).toBeInTheDocument();
     expect(screen.getByText(/no applications yet/i)).toBeInTheDocument();

@@ -1067,6 +1067,211 @@ button[type="submit"]:disabled,
   padding: 6px 12px;
 }
 
+/* ----- Active job application cards (task 119) ----- */
+
+.application-card-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.application-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--card-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.application-card:hover {
+  box-shadow: var(--card-shadow-hover);
+  border-color: var(--border-strong);
+}
+
+.application-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.application-card-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--content-fg);
+  line-height: 1.3;
+}
+
+.application-card-title:hover {
+  text-decoration: none;
+  color: var(--accent-strong);
+}
+
+.application-card-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.application-card-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Compact status: small coloured dot + single-line label. No pill. */
+.app-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--content-fg);
+  white-space: nowrap;
+}
+
+.app-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-subtle);
+}
+
+.app-status-running .app-status-dot {
+  background: var(--info);
+}
+
+.app-status-failed .app-status-dot {
+  background: var(--danger);
+}
+
+.app-status-draft_ready .app-status-dot {
+  background: var(--warning);
+}
+
+.app-status-approved .app-status-dot {
+  background: var(--success);
+}
+
+.app-status-captured .app-status-dot {
+  background: var(--text-subtle);
+}
+
+.application-card-next {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.application-card-next-label {
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
+.application-card-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.4;
+}
+
+.application-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.application-card-primary {
+  flex: 1;
+  justify-content: center;
+  text-align: center;
+}
+
+/* Overflow ("⋯") secondary-actions menu */
+.app-actions-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.app-actions-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted-fg);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.app-actions-trigger:hover {
+  background: var(--surface-muted);
+  border-color: var(--border-strong);
+  color: var(--content-fg);
+}
+
+.app-actions-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.app-actions-list {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-1));
+  z-index: 20;
+  min-width: 180px;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-1);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--card-shadow-hover);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-actions-item {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--content-fg);
+}
+
+.app-actions-item:hover {
+  text-decoration: none;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.application-card-activity {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-subtle);
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-2);
+}
+
 /* ----- Timeline ----- */
 
 .timeline {
