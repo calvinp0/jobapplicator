@@ -2341,7 +2341,7 @@ tasks:
     file: "agent_tasks/116-tighten-review-layout-and-add-flow-pagination.md"
     branch: "agent/116-tighten-review-layout-and-add-flow-pagination"
     worktree: "agent-116-tighten-review-layout-and-add-flow-pagination"
-    status: "ready"
+    status: "done"
     depends_on:
       - "115-polish-resume-review-workspace-layout-and-pagination"
     verification:
