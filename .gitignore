@@ -252,7 +252,7 @@ backups/
 # Claude Code local settings
 .claude/settings.local.json
 .claude/worktrees/
-
+.claude/
 # Agent planner drafts
 # scripts/agentctl.sh plan --ultraplan writes Ultraplan-ready prompt files
 # under .agent_plans/. They are local working drafts and should not be
