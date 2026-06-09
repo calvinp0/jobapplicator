@@ -2359,7 +2359,7 @@ tasks:
     file: "agent_tasks/117-replace-captures-nav-with-activity-center.md"
     branch: "agent/117-replace-captures-nav-with-activity-center"
     worktree: "agent-117-replace-captures-nav-with-activity-center"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "pytest"
