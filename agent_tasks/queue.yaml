@@ -2372,3 +2372,19 @@ tasks:
       - "docs/**"
       - "agent_tasks/117-replace-captures-nav-with-activity-center.md"
       - "agent_tasks/queue.yaml"
+  - id: "118-use-project-python-env-for-backend-tests"
+    title: "Use project Python environment for backend tests"
+    file: "agent_tasks/118-use-project-python-env-for-backend-tests.md"
+    branch: "main"
+    worktree: "main"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "python -m pytest"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "backend/**"
+      - "scripts/**"
+      - "docs/**"
+      - "agent_tasks/118-use-project-python-env-for-backend-tests.md"
+      - "agent_tasks/queue.yaml"

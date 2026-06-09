@@ -1,0 +1,27 @@
+# Backend runtime + test dependencies for the JobApplicator backend.
+#
+# This mirrors the dependencies declared in backend/pyproject.toml so the
+# environment can be provisioned with a single, env-pinned command:
+#
+#     conda activate job_env
+#     python -m pip install -r backend/requirements.txt
+#
+# Editable install (`pip install -e .`) remains the source of truth for
+# packaging; this file exists so backend tests always resolve fastapi,
+# pydantic, and python-docx in the JobApplicator environment rather than
+# whatever conda env happens to be active.
+
+# --- Runtime ---
+fastapi>=0.110
+sqlalchemy>=2.0
+pydantic>=2
+uvicorn[standard]
+python-docx>=1.0          # provides the `docx` module the deterministic
+                          # resume DOCX renderer imports
+
+# --- Tests ---
+pytest>=8
+httpx>=0.27
+
+# Optional Gmail integration is intentionally excluded here; install it
+# separately with:  pip install -e .[gmail]

@@ -87,6 +87,17 @@ CLAUDE_FIX_PERMISSION_MODE="${CLAUDE_FIX_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PLAN_PERMISSION_MODE="${CLAUDE_PLAN_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PYTHON="${CLAUDE_PYTHON:-python3}"
 
+# Python interpreter used to run BACKEND verification commands (pytest,
+# python -m pytest, and any `python ...` step). Backend tests must run in
+# the JobApplicator backend environment, never in whatever conda env
+# happens to be active when the operator invokes this script. Leave unset
+# to auto-detect (see resolve_backend_python); set it explicitly to pin a
+# specific interpreter, e.g.
+#   JOBAPPLY_BACKEND_PYTHON=/home/you/miniforge3/envs/job_env/bin/python
+JOBAPPLY_BACKEND_PYTHON="${JOBAPPLY_BACKEND_PYTHON:-}"
+# Name of the conda/mamba environment that holds the backend dependencies.
+JOBAPPLY_BACKEND_CONDA_ENV="${JOBAPPLY_BACKEND_CONDA_ENV:-job_env}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 QUEUE_FILE="$REPO_ROOT/agent_tasks/queue.yaml"
@@ -1475,6 +1486,75 @@ prepare_node_workspaces() {
   return 0
 }
 
+# resolve_backend_python
+#
+# Print the absolute path of the Python interpreter that backend
+# verification commands must use. Resolution order (first hit wins):
+#
+#   1. $JOBAPPLY_BACKEND_PYTHON, if set and executable (explicit override).
+#   2. The project backend virtualenv: backend/.venv/bin/python.
+#   3. The configured conda/mamba env ($JOBAPPLY_BACKEND_CONDA_ENV, default
+#      job_env) under the active conda root.
+#   4. Fallback: python3 (or python) on PATH.
+#
+# This is what keeps `pytest` from silently running under an unrelated
+# conda env (e.g. rmg_env) that lacks fastapi/pydantic/python-docx.
+resolve_backend_python() {
+  if [[ -n "$JOBAPPLY_BACKEND_PYTHON" && -x "$JOBAPPLY_BACKEND_PYTHON" ]]; then
+    printf '%s\n' "$JOBAPPLY_BACKEND_PYTHON"
+    return 0
+  fi
+
+  if [[ -x "$REPO_ROOT/backend/.venv/bin/python" ]]; then
+    printf '%s\n' "$REPO_ROOT/backend/.venv/bin/python"
+    return 0
+  fi
+
+  local conda_root candidate
+  for conda_root in \
+      "${CONDA_ROOT:-}" \
+      "${MAMBA_ROOT_PREFIX:-}" \
+      "$HOME/miniforge3" \
+      "$HOME/mambaforge" \
+      "$HOME/miniconda3" \
+      "$HOME/anaconda3"; do
+    [[ -z "$conda_root" ]] && continue
+    candidate="$conda_root/envs/$JOBAPPLY_BACKEND_CONDA_ENV/bin/python"
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  command -v python3 2>/dev/null && return 0
+  command -v python 2>/dev/null && return 0
+  printf 'python3\n'
+}
+
+# backend_preflight <backend-python>
+#
+# Confirm the backend dependencies are importable with the resolved
+# interpreter BEFORE running backend verification. Surfaces a clear,
+# actionable error instead of a wall of pytest collection ImportErrors
+# when tests are about to run in the wrong environment.
+backend_preflight() {
+  local backend_python="$1"
+  if "$backend_python" - <<'PY'
+import fastapi, pydantic, docx  # noqa: F401
+print("backend dependencies ok")
+PY
+  then
+    return 0
+  fi
+  err "backend dependency preflight failed for: $backend_python
+   The backend environment is missing fastapi, pydantic, and/or docx
+   (python-docx). Install the backend deps into that environment:
+       conda activate $JOBAPPLY_BACKEND_CONDA_ENV
+       python -m pip install -r backend/requirements.txt
+   or pin a different interpreter via JOBAPPLY_BACKEND_PYTHON."
+  return 1
+}
+
 # run_verification_commands <dir> <task-id>
 #
 # Run every command in the task's `verification` list inside <dir>. Prints
@@ -1488,6 +1568,38 @@ prepare_node_workspaces() {
 # commands. On success the state file is overwritten with status=passed.
 run_verification_commands() {
   local dir="$1" task_id="$2" cmd ran=0 logfile rc
+  local backend_python backend_bin path_prefix="" needs_backend=0
+
+  # Decide up front whether this task has any backend verification step.
+  # Backend steps must run with the JobApplicator backend interpreter.
+  while IFS= read -r cmd; do
+    [[ -z "$cmd" ]] && continue
+    if [[ "$cmd" == *pytest* || "$cmd" =~ (^|[[:space:]])python3?([[:space:]]|$) ]]; then
+      needs_backend=1
+    fi
+  done < <(yaml_query field "$task_id" verification)
+
+  backend_python="$(resolve_backend_python)"
+  backend_bin="$(dirname "$backend_python")"
+  if [[ "$needs_backend" -eq 1 ]]; then
+    if [[ -x "$backend_python" ]]; then
+      # Prepend the backend interpreter's bin dir so bare `pytest`,
+      # `python`, and `python -m pytest` all resolve to the backend env
+      # rather than whatever conda env is currently active.
+      path_prefix="$backend_bin:"
+      printf '  using python: %s\n' "$backend_python" >&2
+    else
+      printf '  using python: %s (not executable; falling back to PATH)\n' "$backend_python" >&2
+    fi
+    if ! backend_preflight "$backend_python"; then
+      write_verification_state "$task_id" "failed" \
+        "backend dependency preflight (fastapi, pydantic, docx)" "1" \
+        "backend deps not importable with $backend_python" \
+        || err "warning: could not record verification failure state for $task_id"
+      return 1
+    fi
+  fi
+
   logfile="$(mktemp)"
   while IFS= read -r cmd; do
     [[ -z "$cmd" ]] && continue
@@ -1500,7 +1612,7 @@ run_verification_commands() {
     # `pipefail` is toggled off so a failing command does not propagate
     # through `tee` and trip `set -e` before we capture PIPESTATUS.
     set +o pipefail
-    ( cd "$dir" && bash -c "$cmd" ) 2>&1 | tee "$logfile" >&2
+    ( cd "$dir" && PATH="${path_prefix}$PATH" bash -c "$cmd" ) 2>&1 | tee "$logfile" >&2
     rc=${PIPESTATUS[0]}
     set -o pipefail
     if [[ "$rc" -ne 0 ]]; then
@@ -3211,6 +3323,26 @@ doctor_tool_checks() {
       doctor_warn "$tool not found in PATH"
     fi
   done
+
+  # Backend verification interpreter. This is the python that pytest /
+  # python -m pytest steps actually run under (NOT necessarily the one on
+  # PATH), so make it explicit here.
+  local backend_python
+  backend_python="$(resolve_backend_python)"
+  if [[ -x "$backend_python" ]]; then
+    doctor_pass "backend python: $backend_python"
+    if "$backend_python" - <<'PY' >/dev/null 2>&1
+import fastapi, pydantic, docx  # noqa: F401
+PY
+    then
+      doctor_pass "backend deps importable (fastapi, pydantic, docx)"
+    else
+      doctor_warn "backend deps NOT importable with $backend_python"
+      doctor_warn "run: conda activate $JOBAPPLY_BACKEND_CONDA_ENV && python -m pip install -r backend/requirements.txt"
+    fi
+  else
+    doctor_warn "backend python not found ($backend_python); backend tests may use the wrong env"
+  fi
   printf '\n'
 }
 

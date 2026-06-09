@@ -58,9 +58,28 @@ cd jobapply
 
 ### Backend (Linux / macOS)
 
-The backend is a PEP 621 package defined in `backend/pyproject.toml`
-(no `requirements.txt`). Install it in editable mode inside a
-virtualenv.
+The backend is a PEP 621 package defined in `backend/pyproject.toml`.
+Its runtime + test dependencies are also mirrored in
+`backend/requirements.txt` so you can provision the environment in one
+step. Install it inside a dedicated environment — **never** the conda
+`base` env or an unrelated project env, or backend tests will run
+against the wrong interpreter and fail to import `fastapi`, `pydantic`,
+or `docx`.
+
+> **Important:** all backend test commands must run with the
+> JobApplicator backend interpreter, and prefer `python -m pytest` over a
+> bare `pytest` so the invocation always resolves to the active
+> environment's pytest.
+
+#### Recommended: conda/mamba environment (`job_env`)
+
+```bash
+conda activate job_env
+python -m pip install -r backend/requirements.txt
+python -m pytest
+```
+
+#### Alternative: virtualenv
 
 ```bash
 cd backend
@@ -556,14 +575,28 @@ other environments, but they have not worked here.
 Automated:
 
 ```bash
-# Backend tests (from repo root, with backend venv active)
-cd backend
-pytest
+# Backend dependency preflight — confirms you are in the right env
+# BEFORE running tests. If this fails, you are not in job_env (or the
+# backend venv) and pytest would run against the wrong interpreter.
+python - <<'PY'
+import fastapi, pydantic, docx
+print("backend dependencies ok")
+PY
+
+# Backend tests — run in the JobApplicator backend environment, not
+# whatever conda env happens to be active. Prefer `python -m pytest`.
+conda activate job_env
+python -m pip install -r backend/requirements.txt
+python -m pytest
 
 # Frontend build
-cd frontend
-npm run build
+cd frontend && npm run build
 ```
+
+> If `python -m pytest` reports missing `fastapi`, `pydantic`, or
+> `docx`, you are almost certainly in the wrong conda env (e.g.
+> `rmg_env`). Run `conda activate job_env` first, or point agentctl at a
+> specific interpreter with `JOBAPPLY_BACKEND_PYTHON=/path/to/python`.
 
 Manual:
 

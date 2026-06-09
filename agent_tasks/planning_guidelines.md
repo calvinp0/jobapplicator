@@ -197,8 +197,19 @@ cd extension && npm run build
 For backend tasks, use:
 
 ```bash
-pytest
+python -m pytest
 ```
+
+Prefer `python -m pytest` over a bare `pytest` so the invocation always
+resolves to the active environment's pytest. The harness runs backend
+verification with the JobApplicator backend interpreter (see
+`resolve_backend_python` in `scripts/agentctl.sh`), prepends that
+interpreter's `bin/` to `PATH`, logs `using python: <path>`, and runs a
+dependency preflight (`import fastapi, pydantic, docx`) first — so
+backend tests never silently run under an unrelated conda env such as
+`rmg_env`. To pin a specific interpreter, set
+`JOBAPPLY_BACKEND_PYTHON=/path/to/python` (or
+`JOBAPPLY_BACKEND_CONDA_ENV=<env-name>`) before invoking agentctl.
 
 The harness inspects each task's verification list and, before running
 the commands, prepares the `frontend/` or `extension/` workspace if it
