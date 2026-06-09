@@ -2283,7 +2283,7 @@ tasks:
     file: "agent_tasks/113-add-interactive-resume-suggestion-review.md"
     branch: "agent/113-add-interactive-resume-suggestion-review"
     worktree: "agent-113-add-interactive-resume-suggestion-review"
-    status: "ready"
+    status: "done"
     depends_on:
       - "111-add-deterministic-resume-docx-template-renderer"
     verification:
