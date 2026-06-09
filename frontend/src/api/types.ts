@@ -480,6 +480,50 @@ export interface ResumeSuggestion {
   revision_instruction: string;
 }
 
+// ---- Structured resume (tailored_resume.json schema, task 111/114) ----
+// The deterministic resume document the DOCX renderer consumes. The review
+// workspace renders this as a Word-like page. Fields are intentionally loose
+// (most optional) so the preview degrades gracefully across section types.
+
+export interface StructuredResumeHeader {
+  name: string;
+  contact_items?: string[];
+  subtitle?: string;
+}
+
+export interface StructuredResumeEntry {
+  // experience entries
+  title?: string;
+  organization?: string;
+  location?: string;
+  dates?: string;
+  subtitle?: string;
+  bullets?: string[];
+  // education entries
+  institution?: string;
+  degree?: string;
+}
+
+export interface StructuredResumeSkillGroup {
+  label?: string;
+  items: string[];
+}
+
+export interface StructuredResumeSection {
+  type: string;
+  heading: string;
+  paragraphs?: string[];
+  groups?: StructuredResumeSkillGroup[];
+  entries?: StructuredResumeEntry[];
+  items?: string[];
+}
+
+export interface StructuredResume {
+  header: StructuredResumeHeader;
+  sections: StructuredResumeSection[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface ResumeSuggestions {
   resume_version_id: string;
   target_company: string;
@@ -487,6 +531,12 @@ export interface ResumeSuggestions {
   suggestions: ResumeSuggestion[];
   applied_at: string | null;
   has_working_resume: boolean;
+  // Task 114: structured resume documents backing the document preview.
+  // ``base_resume`` is the tailored resume captured at import; ``working_resume``
+  // is the rebuilt document after accepted suggestions were applied. Both are
+  // optional — pre-task-114 drafts return neither.
+  base_resume?: StructuredResume | null;
+  working_resume?: StructuredResume | null;
 }
 
 export interface ApplySuggestionsResult {

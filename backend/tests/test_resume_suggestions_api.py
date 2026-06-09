@@ -151,6 +151,31 @@ def test_import_stores_suggestions(client, tmp_path, monkeypatch):
     assert body["applied_at"] is None
 
 
+def test_suggestions_expose_base_structured_resume(client, tmp_path, monkeypatch):
+    """Task 114: the review workspace renders a document preview, so the
+    listing must return the structured ``base_resume`` captured at import."""
+    version = _seed_imported_version(client, tmp_path, monkeypatch)
+    body = client.get(f"/resume-versions/{version['id']}/suggestions").json()
+    base = body["base_resume"]
+    assert base is not None
+    assert base["header"]["name"] == "Test Candidate"
+    assert base["sections"][0]["heading"] == "PROFESSIONAL SUMMARY"
+    # No suggestions applied yet -> no working resume.
+    assert body["working_resume"] is None
+
+
+def test_suggestions_expose_working_resume_after_apply(client, tmp_path, monkeypatch):
+    version = _seed_imported_version(client, tmp_path, monkeypatch)
+    client.post(f"/resume-versions/{version['id']}/suggestions/sug_001/accept")
+    client.post(f"/resume-versions/{version['id']}/apply-suggestions")
+    body = client.get(f"/resume-versions/{version['id']}/suggestions").json()
+    working = body["working_resume"]
+    assert working is not None
+    assert working["sections"][0]["paragraphs"] == [
+        "Sharper summary emphasizing distributed systems."
+    ]
+
+
 def test_suggestion_evidence_and_ats_keywords_preserved(client, tmp_path, monkeypatch):
     version = _seed_imported_version(client, tmp_path, monkeypatch)
     body = client.get(f"/resume-versions/{version['id']}/suggestions").json()

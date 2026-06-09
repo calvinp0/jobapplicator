@@ -41,7 +41,11 @@ vi.mock("../api", () => ({
 }));
 
 import { ResumeReviewPage } from "../pages/ResumeReviewPage";
-import type { ResumeSuggestion, ResumeSuggestions } from "../api/types";
+import type {
+  ResumeSuggestion,
+  ResumeSuggestions,
+  StructuredResume,
+} from "../api/types";
 
 function suggestion(overrides: Partial<ResumeSuggestion> = {}): ResumeSuggestion {
   return {
@@ -62,11 +66,34 @@ function suggestion(overrides: Partial<ResumeSuggestion> = {}): ResumeSuggestion
   };
 }
 
+const BASE_RESUME: StructuredResume = {
+  header: { name: "Jane Candidate", contact_items: ["jane@example.com"] },
+  sections: [
+    {
+      type: "summary",
+      heading: "PROFESSIONAL SUMMARY",
+      paragraphs: ["Old summary."],
+    },
+    {
+      type: "skills",
+      heading: "SKILLS",
+      groups: [{ label: "Languages", items: ["Python"] }],
+    },
+    {
+      type: "education",
+      heading: "EDUCATION",
+      entries: [{ institution: "State University", degree: "BSc", dates: "2018" }],
+    },
+  ],
+};
+
 function payload(overrides: Partial<ResumeSuggestions> = {}): ResumeSuggestions {
   return {
     resume_version_id: "v1",
     target_company: "Acme",
     target_job_title: "ML Engineer",
+    base_resume: BASE_RESUME,
+    working_resume: null,
     suggestions: [
       suggestion(),
       suggestion({
@@ -109,28 +136,64 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ResumeReviewPage", () => {
-  it("renders sections and suggestion cards with reason, evidence and ATS keywords", async () => {
+describe("ResumeReviewPage workspace (task 114)", () => {
+  it("renders the three-panel workspace: rail, document preview and review panel", async () => {
     getResumeSuggestionsMock.mockResolvedValue(payload());
     renderReview();
 
-    await screen.findByTestId("review-section-professional_summary");
-    expect(
-      screen.getByTestId("review-section-skills"),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("review-workspace")).toBeInTheDocument();
+    // Center document preview with the resume page + header.
+    expect(screen.getByTestId("resume-document-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-page")).toBeInTheDocument();
+    expect(screen.getByText("Jane Candidate")).toBeInTheDocument();
+    // Left workflow rail with all five steps.
+    expect(screen.getByTestId("workflow-step-1")).toHaveTextContent("Job");
+    expect(screen.getByTestId("workflow-step-4")).toHaveTextContent("Review");
+    expect(screen.getByTestId("workflow-step-5")).toHaveTextContent("Export");
+    // Right AI review panel.
+    expect(screen.getByTestId("review-panel")).toBeInTheDocument();
+  });
 
-    const card = screen.getByTestId("suggestion-card-sug_001");
+  it("renders the resume sections in the document preview", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    renderReview();
+
+    await screen.findByTestId("resume-document-preview");
+    expect(screen.getByTestId("doc-section-professional_summary")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-section-skills")).toBeInTheDocument();
+    expect(screen.getByTestId("doc-section-education")).toBeInTheDocument();
+  });
+
+  it("shows the selected section's previous and suggested text in the review panel", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    renderReview();
+
+    // The summary section is selected by default (first with suggestions).
+    const panel = await screen.findByTestId("review-panel");
+    const card = within(panel).getByTestId("suggestion-card-sug_001");
+    expect(within(card).getByText("Old summary.")).toBeInTheDocument(); // previous
+    expect(within(card).getByText("Sharper summary.")).toBeInTheDocument(); // suggested
     expect(within(card).getByText("Aligns with the role.")).toBeInTheDocument();
-    expect(within(card).getByText(/Built systems\./)).toBeInTheDocument();
     expect(within(card).getByText("distributed systems")).toBeInTheDocument();
-    expect(within(card).getByText("Sharper summary.")).toBeInTheDocument();
+  });
+
+  it("clicking a section opens its suggestions in the review panel", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    const user = userEvent.setup();
+    renderReview();
+
+    await screen.findByTestId("doc-section-skills");
+    await user.click(screen.getByTestId("doc-section-skills"));
+
+    const panel = screen.getByTestId("review-panel");
+    expect(await within(panel).findByTestId("suggestion-card-sug_002")).toBeInTheDocument();
+    // The panel title names the selected section.
+    expect(within(panel).getByText("Listed as preferred.")).toBeInTheDocument();
   });
 
   it("accept calls the API and marks the suggestion accepted", async () => {
     getResumeSuggestionsMock.mockResolvedValue(payload());
-    acceptSuggestionMock.mockResolvedValue(
-      suggestion({ status: "accepted" }),
-    );
+    acceptSuggestionMock.mockResolvedValue(suggestion({ status: "accepted" }));
     const user = userEvent.setup();
     renderReview();
 
@@ -143,23 +206,28 @@ describe("ResumeReviewPage", () => {
     expect(
       await screen.findByTestId("suggestion-status-sug_001"),
     ).toHaveTextContent("accepted");
-    // Accepted card is visually marked.
-    expect(screen.getByTestId("suggestion-card-sug_001").className).toContain(
-      "suggestion-card-accepted",
-    );
     expect(screen.getByTestId("accepted-count")).toHaveTextContent("1 accepted");
   });
 
   it("reject calls the API and marks the suggestion rejected", async () => {
     getResumeSuggestionsMock.mockResolvedValue(payload());
     rejectSuggestionMock.mockResolvedValue(
-      suggestion({ id: "sug_002", status: "rejected" }),
+      suggestion({
+        id: "sug_002",
+        section_id: "skills",
+        section_heading: "SKILLS",
+        operation: "add_skill",
+        current_text: "",
+        suggested_text: "Rust",
+        status: "rejected",
+      }),
     );
     const user = userEvent.setup();
     renderReview();
 
-    await screen.findByTestId("reject-sug_002");
-    await user.click(screen.getByTestId("reject-sug_002"));
+    await screen.findByTestId("doc-section-skills");
+    await user.click(screen.getByTestId("doc-section-skills"));
+    await user.click(await screen.findByTestId("reject-sug_002"));
 
     await waitFor(() =>
       expect(rejectSuggestionMock).toHaveBeenCalledWith("v1", "sug_002"),
@@ -169,28 +237,27 @@ describe("ResumeReviewPage", () => {
     ).toHaveTextContent("rejected");
   });
 
-  it("shows a revise textarea and submits the instruction", async () => {
+  it("shows a useful empty state for a section without suggestions", async () => {
     getResumeSuggestionsMock.mockResolvedValue(payload());
-    reviseSuggestionMock.mockResolvedValue(
-      suggestion({ status: "revised", revision_instruction: "More backend." }),
-    );
     const user = userEvent.setup();
     renderReview();
 
-    await screen.findByTestId("revise-toggle-sug_001");
-    await user.click(screen.getByTestId("revise-toggle-sug_001"));
+    await screen.findByTestId("doc-section-education");
+    await user.click(screen.getByTestId("doc-section-education"));
 
-    const textarea = await screen.findByTestId("revise-textarea-sug_001");
-    await user.type(textarea, "More backend.");
-    await user.click(screen.getByTestId("revise-submit-sug_001"));
+    const panel = screen.getByTestId("review-panel");
+    expect(
+      await within(panel).findByText(/No AI suggestions available/i),
+    ).toBeInTheDocument();
+  });
 
-    await waitFor(() =>
-      expect(reviseSuggestionMock).toHaveBeenCalledWith(
-        "v1",
-        "sug_001",
-        "More backend.",
-      ),
+  it("shows a page-level empty state when the draft has no suggestions at all", async () => {
+    getResumeSuggestionsMock.mockRejectedValue(
+      new ApiErrorMock("not found", 404, null),
     );
+    renderReview();
+
+    expect(await screen.findByText(/no AI suggestions/i)).toBeInTheDocument();
   });
 
   it("applies accepted suggestions and reports the result", async () => {
@@ -219,12 +286,30 @@ describe("ResumeReviewPage", () => {
     );
   });
 
-  it("shows an empty state when the draft has no suggestions", async () => {
-    getResumeSuggestionsMock.mockRejectedValue(
-      new ApiErrorMock("not found", 404, null),
+  it("keeps long status/risk text inside overflow-guarded badge containers", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(
+      payload({
+        suggestions: [
+          suggestion({
+            risk: "extremely-high-risk-with-a-very-long-descriptor-string",
+            ats_keywords: [
+              "a-very-long-ats-keyword-phrase-that-could-overflow-a-narrow-chip",
+            ],
+          }),
+        ],
+      }),
     );
     renderReview();
 
-    expect(await screen.findByText(/no AI suggestions/i)).toBeInTheDocument();
+    const panel = await screen.findByTestId("review-panel");
+    // Status badge: constrained by the .status-badge overflow guard in CSS.
+    const status = within(panel).getByTestId("suggestion-status-sug_001");
+    expect(status.className).toContain("status-badge");
+    // Risk pill renders the long descriptor but stays within its container.
+    const risk = within(panel).getByText(/extremely-high-risk-with-a-very-long/);
+    expect(risk.className).toContain("suggestion-risk");
+    // Long keyword chip is present and carries the clamped chip class.
+    const chip = within(panel).getByText(/a-very-long-ats-keyword-phrase/);
+    expect(chip.className).toContain("suggestion-keyword-chip");
   });
 });

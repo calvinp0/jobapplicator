@@ -45,6 +45,9 @@ const WIDE_PATHS = ["/applications", "/runs", "/jobs", "/"];
 
 function isWidePath(pathname: string): boolean {
   if (pathname === "/") return true;
+  // The resume review workspace is a full three-panel surface that needs the
+  // wide shell even though its base route is not in WIDE_PATHS.
+  if (pathname.endsWith("/review")) return true;
   return WIDE_PATHS.some(
     (prefix) => prefix !== "/" && pathname.startsWith(prefix),
   );

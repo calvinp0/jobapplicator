@@ -469,6 +469,14 @@ class ResumeSuggestionsRead(BaseModel):
     # applied structured resume exists to preview/download.
     applied_at: Optional[datetime] = None
     has_working_resume: bool = False
+    # Task 114: the structured resume documents backing the review
+    # workspace. ``base_resume`` is the tailored resume captured at import
+    # (``tailored_resume.json`` schema); ``working_resume`` is the rebuilt
+    # document once accepted suggestions have been applied. Both let the
+    # frontend render a real document preview instead of a card list. They
+    # are optional so pre-task-114 drafts still load.
+    base_resume: Optional[Dict[str, Any]] = None
+    working_resume: Optional[Dict[str, Any]] = None
 
 
 class SuggestionReviseRequest(BaseModel):

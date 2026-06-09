@@ -677,6 +677,13 @@ export function RunDetailPage() {
           <Link to={`/resume-versions/${resumeVersion.id}`}>
             {resumeVersion.id}
           </Link>
+          {" · "}
+          <Link
+            className="review-workspace-link"
+            to={`/resume-versions/${resumeVersion.id}/review`}
+          >
+            Open review workspace
+          </Link>
         </p>
       ) : null}
 

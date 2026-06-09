@@ -318,13 +318,21 @@ export function ApplicationDetailPage() {
         <dt>Resume version</dt>
         <dd>
           {application.resume_version_id && version ? (
-            <Link
-              to={`/resume-versions/${application.resume_version_id}`}
-            >
-              {`${draftLabel(version.version_number - 1)} (${draftStatusLabel(
-                version.approved_at,
-              )})`}
-            </Link>
+            <span className="resume-version-cell">
+              <Link
+                to={`/resume-versions/${application.resume_version_id}`}
+              >
+                {`${draftLabel(version.version_number - 1)} (${draftStatusLabel(
+                  version.approved_at,
+                )})`}
+              </Link>
+              <Link
+                className="review-workspace-link"
+                to={`/resume-versions/${application.resume_version_id}/review`}
+              >
+                Open review workspace
+              </Link>
+            </span>
           ) : (
             "—"
           )}
