@@ -2300,3 +2300,21 @@ tasks:
       - "docs/frontend_redesign.md"
       - "agent_tasks/113-add-interactive-resume-suggestion-review.md"
       - "agent_tasks/queue.yaml" 
+  - id: "114-build-word-like-resume-review-workspace"
+    title: "Build Word-like resume review workspace"
+    file: "agent_tasks/114-build-word-like-resume-review-workspace.md"
+    branch: "agent/114-build-word-like-resume-review-workspace"
+    worktree: "agent-114-build-word-like-resume-review-workspace"
+    status: "ready"
+    depends_on:
+      - "113-add-interactive-resume-suggestion-review"
+    verification:
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "frontend/**"
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "docs/**"
+      - "agent_tasks/114-build-word-like-resume-review-workspace.md"
+      - "agent_tasks/queue.yaml"
