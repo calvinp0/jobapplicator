@@ -395,6 +395,13 @@ p {
   max-width: 1440px;
 }
 
+/* The review workspace breaks out wider so the three-panel surface (rail ·
+   document · AI review) uses the available width and the document sheet is not
+   stranded in empty side gutters. */
+.content-inner-review {
+  max-width: 1640px;
+}
+
 /* ----- Page header ----- */
 
 .page-header {
@@ -3342,11 +3349,15 @@ button[type="submit"]:disabled,
 /* ---- Three-panel grid ----
    Compact rail · wide document (takes the slack) · sticky review panel.
    The document column is the flexible one so horizontal whitespace goes to the
-   page, not to empty gutters. */
+   page, not to empty gutters. The center is bounded so it grows wide on large
+   screens but never starves the rail or the review panel. */
 .review-grid {
   display: grid;
-  grid-template-columns: minmax(150px, 180px) minmax(0, 1fr) minmax(340px, 380px);
-  gap: var(--space-4);
+  grid-template-columns:
+    minmax(150px, 190px)
+    minmax(640px, 1fr)
+    minmax(320px, 380px);
+  gap: var(--space-5);
   align-items: start;
 }
 
@@ -3357,7 +3368,7 @@ button[type="submit"]:disabled,
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-2);
 }
 
 .workflow-rail-title {
@@ -3389,8 +3400,8 @@ button[type="submit"]:disabled,
 
 .workflow-step-marker {
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3466,13 +3477,17 @@ button[type="submit"]:disabled,
   gap: var(--space-5);
   background: #eceef4;
   border-radius: var(--radius-md);
-  padding: var(--space-5) var(--space-4);
+  /* Tight horizontal padding so the document fills the column instead of
+     floating in a sea of grey whitespace. */
+  padding: var(--space-5) var(--space-2);
 }
 
-/* One labeled page: the small "Page N" caption above the white sheet. */
+/* One labeled page: the small "Page N" caption above the white sheet. The
+   sheet stretches to fill the document column (capped so the line length stays
+   readable) rather than sitting as a narrow centered card. */
 .doc-page-block {
   width: 100%;
-  max-width: 850px;
+  max-width: 980px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -3570,6 +3585,17 @@ button[type="submit"]:disabled,
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--accent-strong);
+}
+
+/* A section continuing from a previous page: the heading shows a subtle
+   "(continued)" label so the flow reads naturally without duplicating the
+   section's content. */
+.doc-section-continued .doc-section-heading {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.doc-section-continued .doc-section-heading-row {
+  border-bottom-style: dashed;
 }
 
 .doc-change-flag {
@@ -3675,13 +3701,20 @@ button[type="submit"]:disabled,
 }
 
 /* ---- Right: AI review panel ----
-   Sticky within the .content scroll so it stays in view while the document
-   scrolls; its body scrolls internally for long evidence lists while the
-   header (section name) and the panel frame stay put. */
-.review-panel {
+   The column wrapper is the sticky element (a grid item with no overflow of its
+   own), so it pins to the top of the .content scroll and stays visible while
+   the document scrolls. The panel inside is capped to the viewport height and
+   its body scrolls internally for long evidence lists, while the header
+   (section name) and the panel frame stay put. Keeping sticky on the wrapper —
+   not on a clipped/overflowing element — is what makes the pinning reliable. */
+.review-panel-column {
   position: sticky;
   top: var(--space-3);
   align-self: start;
+  min-width: 0;
+}
+
+.review-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3751,9 +3784,11 @@ button[type="submit"]:disabled,
   .review-grid {
     grid-template-columns: 170px minmax(0, 1fr);
   }
-  .review-panel {
+  .review-panel-column {
     grid-column: 1 / -1;
     position: static;
+  }
+  .review-panel {
     max-height: none;
   }
 }

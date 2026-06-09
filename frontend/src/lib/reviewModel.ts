@@ -2,7 +2,9 @@ import type {
   ResumeSuggestion,
   ResumeSuggestions,
   StructuredResume,
+  StructuredResumeEntry,
   StructuredResumeSection,
+  StructuredResumeSkillGroup,
 } from "../api/types";
 
 /**
@@ -229,8 +231,10 @@ function splitParagraphs(text: string): string[] {
 const LINES_PER_PAGE = 46;
 /** Lines the centered header consumes on page 1. */
 const HEADER_LINES = 6;
-/** Characters of body text that wrap onto one rendered line. */
-const CHARS_PER_LINE = 95;
+/** Characters of body text that wrap onto one rendered line. The page is now
+ *  wider (see the document column / .doc-page in styles.css), so more text
+ *  fits per line and pages pack more densely. */
+const CHARS_PER_LINE = 120;
 
 function paragraphLines(paragraphs: string[]): number {
   return paragraphs.reduce(
@@ -291,4 +295,220 @@ export function paginateSections(document: PreviewDocument): PreviewSection[][] 
 
   if (current.length > 0 || pages.length === 0) pages.push(current);
   return pages;
+}
+
+// ---- Flow (block-level) pagination -----------------------------------------
+// The section-level paginator above keeps a whole section on one page, which
+// leaves large blank areas (e.g. WORK EXPERIENCE bumped entirely to page 2).
+// The flow paginator instead breaks each section into granular render blocks —
+// heading, paragraph, skill row, experience/education entry, list item — and
+// fills each page block-by-block, letting a section start near the bottom of a
+// page and continue onto the next, the way a real Word/Docs resume flows.
+
+/** A single renderable unit of the document, tagged with its source section. */
+export interface FlowBlock {
+  sectionIndex: number;
+  kind: "heading" | "paragraph" | "skill-group" | "entry" | "item";
+  lines: number;
+  paragraph?: string;
+  group?: StructuredResumeSkillGroup;
+  entry?: StructuredResumeEntry;
+  item?: string;
+}
+
+/** A run of one section's content placed on a single page. A section that
+ *  spans pages yields one slice per page; ``continued`` marks the slices whose
+ *  heading already appeared on an earlier page so the renderer can show a
+ *  subtle continuation label instead of repeating the section unnaturally. */
+export interface SectionSlice {
+  key: string;
+  heading: string;
+  section: PreviewSection;
+  continued: boolean;
+  paragraphs: string[];
+  groups: StructuredResumeSkillGroup[];
+  entries: StructuredResumeEntry[];
+  items: string[];
+}
+
+/** One rendered page: an optional document header followed by section slices. */
+export interface DocumentPage {
+  hasHeader: boolean;
+  slices: SectionSlice[];
+}
+
+function lineCost(length: number): number {
+  return Math.max(1, Math.ceil((length || 1) / CHARS_PER_LINE));
+}
+
+function entryLines(entry: StructuredResumeEntry): number {
+  // Title row + optional org/place subrow, then one block of bullets.
+  return 2 + paragraphLines(entry.bullets ?? []);
+}
+
+/**
+ * Flatten a section into ordered render blocks, mirroring the body-type
+ * precedence the section renderer uses (skills → entries → items → paragraphs)
+ * so the paginated output matches what is drawn on the page.
+ */
+function flattenSection(
+  section: PreviewSection,
+  sectionIndex: number,
+): FlowBlock[] {
+  const blocks: FlowBlock[] = [
+    { sectionIndex, kind: "heading", lines: 3 },
+  ];
+  const s = section.structured;
+
+  if (s?.groups?.length) {
+    for (const group of s.groups) {
+      blocks.push({
+        sectionIndex,
+        kind: "skill-group",
+        lines: lineCost(group.items.join(", ").length),
+        group,
+      });
+    }
+  } else if (s?.entries?.length) {
+    for (const entry of s.entries) {
+      blocks.push({
+        sectionIndex,
+        kind: "entry",
+        lines: entryLines(entry),
+        entry,
+      });
+    }
+  } else if (s?.items?.length && !s.paragraphs?.length) {
+    for (const item of s.items) {
+      blocks.push({
+        sectionIndex,
+        kind: "item",
+        lines: lineCost(item.length),
+        item,
+      });
+    }
+  } else {
+    for (const paragraph of sectionDisplayParagraphs(section)) {
+      blocks.push({
+        sectionIndex,
+        kind: "paragraph",
+        lines: lineCost(paragraph.length),
+        paragraph,
+      });
+    }
+  }
+
+  return blocks;
+}
+
+/** Flatten every section of the document into a single ordered block stream. */
+export function flattenDocumentBlocks(document: PreviewDocument): FlowBlock[] {
+  return document.sections.flatMap((section, idx) =>
+    flattenSection(section, idx),
+  );
+}
+
+/**
+ * Pack the block stream into pages by accumulating line cost until the page
+ * budget is exceeded, then starting a new page. A section heading is kept with
+ * the first content block of its section so a heading never strands alone at
+ * the foot of a page. ``headerLines`` reserves room for the document header on
+ * the first page.
+ */
+export function paginateBlocks(
+  blocks: FlowBlock[],
+  headerLines = 0,
+): FlowBlock[][] {
+  const pages: FlowBlock[][] = [];
+  let current: FlowBlock[] = [];
+  let used = headerLines;
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    // Couple a heading with the first content block of the same section so the
+    // pair moves together rather than orphaning the heading.
+    let need = block.lines;
+    if (
+      block.kind === "heading" &&
+      blocks[i + 1]?.sectionIndex === block.sectionIndex
+    ) {
+      need += blocks[i + 1].lines;
+    }
+
+    if (current.length > 0 && used + need > LINES_PER_PAGE) {
+      pages.push(current);
+      current = [];
+      used = 0;
+    }
+
+    current.push(block);
+    used += block.lines;
+  }
+
+  if (current.length > 0 || pages.length === 0) pages.push(current);
+  return pages;
+}
+
+/**
+ * The document as a list of rendered pages, each carrying section slices. A
+ * section whose blocks span a page boundary appears as a slice on each page it
+ * touches; only the first slice owns the real heading, the rest are flagged
+ * ``continued``. No block is ever duplicated — the slices partition the blocks.
+ */
+export function paginateDocument(document: PreviewDocument): DocumentPage[] {
+  const blocks = flattenDocumentBlocks(document);
+  const headerLines = document.header ? HEADER_LINES : 0;
+  const blockPages = paginateBlocks(blocks, headerLines);
+  const headingSeen = new Set<number>();
+
+  return blockPages.map((pageBlocks, pageIndex) => {
+    const slices: SectionSlice[] = [];
+    let currentIndex = -1;
+    let slice: SectionSlice | null = null;
+
+    for (const block of pageBlocks) {
+      if (block.sectionIndex !== currentIndex || slice === null) {
+        currentIndex = block.sectionIndex;
+        const section = document.sections[currentIndex];
+        slice = {
+          key: section.key,
+          heading: section.heading,
+          section,
+          // Continued when this section's heading already rendered earlier and
+          // this run starts with content rather than the heading itself.
+          continued:
+            headingSeen.has(currentIndex) && block.kind !== "heading",
+          paragraphs: [],
+          groups: [],
+          entries: [],
+          items: [],
+        };
+        slices.push(slice);
+      }
+
+      switch (block.kind) {
+        case "heading":
+          headingSeen.add(currentIndex);
+          break;
+        case "paragraph":
+          if (block.paragraph !== undefined)
+            slice.paragraphs.push(block.paragraph);
+          break;
+        case "skill-group":
+          if (block.group) slice.groups.push(block.group);
+          break;
+        case "entry":
+          if (block.entry) slice.entries.push(block.entry);
+          break;
+        case "item":
+          if (block.item) slice.items.push(block.item);
+          break;
+      }
+    }
+
+    return {
+      hasHeader: pageIndex === 0 && Boolean(document.header),
+      slices,
+    };
+  });
 }

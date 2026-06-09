@@ -109,13 +109,15 @@ export function ResumeReviewWorkspace({
             onSelectSection={onSelectSection}
           />
         </main>
-        <ReviewPanel
-          section={selectedSection}
-          busyId={busyId}
-          onAccept={onAccept}
-          onReject={onReject}
-          onRevise={onRevise}
-        />
+        <div className="review-panel-column" data-testid="review-panel-column">
+          <ReviewPanel
+            section={selectedSection}
+            busyId={busyId}
+            onAccept={onAccept}
+            onReject={onReject}
+            onRevise={onRevise}
+          />
+        </div>
       </div>
     </div>
   );
