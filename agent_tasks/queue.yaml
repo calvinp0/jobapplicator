@@ -2404,3 +2404,18 @@ tasks:
       - "docs/**"
       - "agent_tasks/119-redesign-dashboard-active-jobs.md"
       - "agent_tasks/queue.yaml"
+  - id: "120-redesign-applications-table-actions-and-status"
+    title: "Redesign applications table actions and status"
+    file: "agent_tasks/120-redesign-applications-table-actions-and-status.md"
+    branch: "agent/120-redesign-applications-table-actions-and-status"
+    worktree: "agent-120-redesign-applications-table-actions-and-status"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "frontend/**"
+      - "docs/**"
+      - "agent_tasks/120-redesign-applications-table-actions-and-status.md"
+      - "agent_tasks/queue.yaml"
