@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .db import Base, engine, ensure_runtime_columns, get_db
 from .models import ClaudeRun
 from .routers import (
+    activity,
     applications,
     captures,
     evidence_banks,
@@ -350,6 +351,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(captures.router)
+    app.include_router(activity.router)
     app.include_router(jobs.router)
     app.include_router(master_resumes.router)
     app.include_router(evidence_banks.router)

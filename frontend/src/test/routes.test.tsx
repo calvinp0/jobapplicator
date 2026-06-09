@@ -7,6 +7,14 @@ vi.mock("../api", async () => {
   return {
     ...actual,
     listCaptures: vi.fn().mockResolvedValue([]),
+    getActivity: vi.fn().mockResolvedValue({
+      summary: {
+        running_count: 0,
+        attention_count: 0,
+        pending_capture_count: 0,
+      },
+      items: [],
+    }),
     listJobs: vi.fn().mockResolvedValue([]),
     listMasterResumes: vi.fn().mockResolvedValue([]),
     listEvidenceBanks: vi.fn().mockResolvedValue([]),

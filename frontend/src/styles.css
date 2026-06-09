@@ -377,6 +377,246 @@ p {
   color: var(--sidebar-fg);
 }
 
+/* ---- Activity center (task 117) ---- */
+/* Replaces the old "Local backend / N pending captures" footer with a
+   compact, clickable status surface that opens a grouped popover. */
+.sidebar-activity {
+  margin-top: auto;
+  position: relative;
+}
+
+.sidebar-activity-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--sidebar-bg-elevated);
+  border: 1px solid var(--sidebar-border);
+  color: var(--sidebar-fg);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.sidebar-activity-trigger:hover {
+  background: var(--sidebar-hover);
+  border-color: var(--accent);
+}
+
+.sidebar-activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--sidebar-fg-muted);
+}
+
+.sidebar-activity-dot-idle {
+  background: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+}
+
+.sidebar-activity-dot-running {
+  background: var(--accent-vivid);
+  box-shadow: 0 0 0 3px rgba(91, 115, 255, 0.22);
+  animation: activity-pulse 1.6s ease-in-out infinite;
+}
+
+.sidebar-activity-dot-attention {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+}
+
+@keyframes activity-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.sidebar-activity-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sidebar-activity-label {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--sidebar-fg-muted);
+  font-weight: 700;
+}
+
+.sidebar-activity-detail {
+  font-size: 12px;
+  color: var(--sidebar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--sidebar-bg-elevated);
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  padding: var(--space-3);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.activity-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.activity-popover-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sidebar-fg);
+}
+
+.activity-popover-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sidebar-fg-muted);
+}
+
+.activity-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-group-label {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--sidebar-fg-muted);
+  font-weight: 700;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-item-link {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 8px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--sidebar-fg);
+  transition: background 120ms ease;
+}
+
+.activity-item-link:hover {
+  background: var(--sidebar-hover);
+  text-decoration: none;
+}
+
+.activity-item-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+  background: var(--sidebar-fg-muted);
+}
+
+.activity-item-dot-running {
+  background: var(--accent-vivid);
+}
+
+.activity-item-dot-failed {
+  background: var(--danger);
+}
+
+.activity-item-dot-attention {
+  background: var(--warning);
+}
+
+.activity-item-dot-completed,
+.activity-item-dot-imported {
+  background: #34d399;
+}
+
+.activity-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.activity-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.activity-item-subtitle {
+  font-size: 11px;
+  color: var(--sidebar-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-item-detail {
+  font-size: 11px;
+  color: var(--warning);
+  line-height: 1.25;
+}
+
+.activity-item-meta {
+  font-size: 10px;
+  color: var(--sidebar-fg-muted);
+}
+
+.activity-item-open {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-vivid);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  flex-shrink: 0;
+}
+
+.activity-item-link:hover .activity-item-open,
+.activity-item-link:focus-visible .activity-item-open {
+  opacity: 1;
+}
+
 .content {
   flex: 1;
   background: var(--content-bg);

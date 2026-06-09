@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-const { listCapturesMock } = vi.hoisted(() => ({
+const { listCapturesMock, getActivityMock } = vi.hoisted(() => ({
   listCapturesMock: vi.fn(),
+  getActivityMock: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
   listCaptures: listCapturesMock,
+  getActivity: getActivityMock,
 }));
 
 import { Layout } from "../layout/Layout";
@@ -35,6 +37,14 @@ afterEach(() => {
 describe("Layout content shell (sticky review panel)", () => {
   it("opts the resume review route into an overflow-visible content shell so the sticky panel can pin", async () => {
     listCapturesMock.mockResolvedValue([]);
+    getActivityMock.mockResolvedValue({
+      summary: {
+        running_count: 0,
+        attention_count: 0,
+        pending_capture_count: 0,
+      },
+      items: [],
+    });
     const { container } = renderLayoutAt("/resume-versions/v1/review");
 
     await screen.findByTestId("review-stub");
@@ -48,6 +58,14 @@ describe("Layout content shell (sticky review panel)", () => {
 
   it("does not apply the overflow-visible shell on non-review routes", async () => {
     listCapturesMock.mockResolvedValue([]);
+    getActivityMock.mockResolvedValue({
+      summary: {
+        running_count: 0,
+        attention_count: 0,
+        pending_capture_count: 0,
+      },
+      items: [],
+    });
     const { container } = renderLayoutAt("/applications");
 
     await waitFor(() =>

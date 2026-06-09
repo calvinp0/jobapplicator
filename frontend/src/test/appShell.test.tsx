@@ -4,6 +4,14 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 vi.mock("../api", () => ({
   listCaptures: vi.fn().mockResolvedValue([]),
+  getActivity: vi.fn().mockResolvedValue({
+    summary: {
+      running_count: 0,
+      attention_count: 0,
+      pending_capture_count: 0,
+    },
+    items: [],
+  }),
 }));
 
 import { Layout } from "../layout/Layout";
@@ -30,18 +38,22 @@ describe("App shell", () => {
     );
   });
 
-  it("renders the primary workspace navigation with all five Track + Create labels", () => {
+  it("renders the primary workspace navigation with the Track + Create labels", () => {
     renderShell();
     const primaryNav = screen.getByRole("navigation", { name: /primary/i });
-    for (const label of [
-      "Dashboard",
-      "Jobs",
-      "Applications",
-      "Captures",
-      "Runs",
-    ]) {
+    for (const label of ["Dashboard", "Jobs", "Applications", "Runs"]) {
       expect(primaryNav).toHaveTextContent(label);
     }
+  });
+
+  it("demotes Captures out of the primary nav when nothing is pending", () => {
+    renderShell();
+    const primaryNav = screen.getByRole("navigation", { name: /primary/i });
+    // Task 117: the Capture inbox link only appears when there are pending
+    // captures; with an empty list it stays out of the primary rail.
+    expect(
+      within(primaryNav).queryByRole("link", { name: /capture/i }),
+    ).toBeNull();
   });
 
   it("groups primary nav into Track and Create sub-sections", () => {
@@ -76,9 +88,14 @@ describe("App shell", () => {
     expect(dashLink.className).not.toMatch(/nav-link-active/);
   });
 
-  it("renders a backend status indicator in the sidebar footer", () => {
+  it("renders the activity center in the sidebar footer", async () => {
     renderShell();
-    // The footer label is rendered as static copy beneath the nav groups.
-    expect(screen.getByText(/local backend/i)).toBeInTheDocument();
+    // Task 117: the old "Local backend / N pending captures" footer is gone,
+    // replaced by the clickable activity center.
+    expect(screen.queryByText(/local backend/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /activity/i }),
+    ).toBeInTheDocument();
+    await screen.findByText(/all clear/i);
   });
 });

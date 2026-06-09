@@ -1,5 +1,8 @@
 import { apiRequest } from "./client";
 import type {
+  ActivityItem,
+  ActivityResponse,
+  ActivitySummary,
   Application,
   ApplicationCreate,
   ApplicationEvent,
@@ -54,6 +57,9 @@ import type {
 
 export { API_BASE, ApiError } from "./client";
 export type {
+  ActivityItem,
+  ActivityResponse,
+  ActivitySummary,
   Application,
   ApplicationCreate,
   ApplicationEvent,
@@ -108,6 +114,10 @@ export type {
 
 export function getHealth(): Promise<{ status: string }> {
   return apiRequest("/health");
+}
+
+export function getActivity(): Promise<ActivityResponse> {
+  return apiRequest("/activity");
 }
 
 export function listCaptures(): Promise<JobCapture[]> {
