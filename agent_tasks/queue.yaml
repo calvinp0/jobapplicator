@@ -2377,7 +2377,7 @@ tasks:
     file: "agent_tasks/118-use-project-python-env-for-backend-tests.md"
     branch: "main"
     worktree: "main"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "python -m pytest"
