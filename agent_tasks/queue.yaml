@@ -2305,7 +2305,7 @@ tasks:
     file: "agent_tasks/114-build-word-like-resume-review-workspace.md"
     branch: "agent/114-build-word-like-resume-review-workspace"
     worktree: "agent-114-build-word-like-resume-review-workspace"
-    status: "ready"
+    status: "done"
     depends_on:
       - "113-add-interactive-resume-suggestion-review"
     verification:
