@@ -1633,6 +1633,55 @@ button[type="submit"]:disabled,
   align-items: center;
 }
 
+/* Task 121: file-import vs manual-paste mode toggle inside document cards. */
+.settings-mode-toggle {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.settings-mode-toggle legend {
+  font-size: 12px;
+  color: var(--muted-fg);
+  padding: 0 var(--space-1);
+}
+
+.settings-mode-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Task 121: in-card confirmation dialog for the destructive reset action. */
+.settings-confirm-dialog {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--surface-muted, var(--card-bg));
+}
+
+/* Legacy `.button` variant matching the canonical `.ui-button-danger`. */
+.button-danger {
+  background: var(--danger);
+  color: white;
+  border-color: transparent;
+}
+
+.button-danger:hover {
+  background: #962020;
+  color: white;
+}
+
 .settings-helper {
   margin: 0;
   color: var(--muted-fg);

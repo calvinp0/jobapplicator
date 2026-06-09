@@ -9,11 +9,14 @@ leaves the backend in plaintext.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from .. import gmail_settings
+from ..db import get_db
 from ..llm_providers import list_providers
+from ..local_reset import create_backup, reset_local_data
 from ..schemas import LLMProviderRead
 from ..settings import (
     UnknownLLMProviderError,
@@ -143,3 +146,57 @@ def update_gmail_oauth_settings(
 def delete_gmail_oauth_settings() -> GmailOAuthSettingsRead:
     gmail_settings.delete_config()
     return GmailOAuthSettingsRead(**gmail_settings.get_settings_view())
+
+
+# ---- Reset local data (task 121) -------------------------------------
+
+# Required confirmation text. The endpoint refuses to do anything unless
+# the client echoes this exact string, so a stray POST can never wipe
+# data — the destructive intent has to be explicit.
+RESET_CONFIRMATION = "RESET"
+
+
+class ResetLocalDataRequest(BaseModel):
+    """Body for ``POST /settings/reset-local-data``.
+
+    ``confirmation`` must equal ``"RESET"`` exactly; any other value is
+    rejected with a 400 before anything is deleted.
+    """
+
+    confirmation: str
+
+
+class ResetLocalDataResponse(BaseModel):
+    """Summary of a completed reset.
+
+    ``backup_path`` is the project-relative location of the SQLite backup
+    written before the reset (``null`` only when there was no SQLite file
+    to back up). ``deleted`` maps each cleared category to its row count.
+    """
+
+    ok: bool
+    backup_path: str | None
+    deleted: dict[str, int]
+
+
+@router.post("/reset-local-data", response_model=ResetLocalDataResponse)
+def reset_local_data_endpoint(
+    payload: ResetLocalDataRequest, db: Session = Depends(get_db)
+) -> ResetLocalDataResponse:
+    """Back up, then delete local jobs/applications/runs/captures/drafts.
+
+    Imported source material (master resumes, evidence banks, candidate
+    context files) and Gmail tokens are preserved. A timestamped SQLite
+    backup is written before anything is removed.
+    """
+    if payload.confirmation != RESET_CONFIRMATION:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirmation text must be exactly 'RESET'.",
+        )
+
+    backup_path = create_backup()
+    deleted = reset_local_data(db)
+    return ResetLocalDataResponse(
+        ok=True, backup_path=backup_path, deleted=deleted
+    )

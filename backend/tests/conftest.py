@@ -54,6 +54,8 @@ def client() -> Iterator:
         "app.run_directory",
         "app.evidence_source_discovery",
         "app.master_resume_discovery",
+        "app.file_import",
+        "app.local_reset",
         "app.run_import",
         "app.claude_worker",
         "app.llm_providers",

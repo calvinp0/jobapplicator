@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 const {
   listMasterResumesMock,
-  listEvidenceBanksMock,
+  listEvidenceSourcesMock,
   createMasterResumeMock,
   createEvidenceBankMock,
   listCapturesMock,
@@ -30,7 +30,7 @@ const {
   }
   return {
     listMasterResumesMock: vi.fn(),
-    listEvidenceBanksMock: vi.fn(),
+    listEvidenceSourcesMock: vi.fn(),
     createMasterResumeMock: vi.fn(),
     createEvidenceBankMock: vi.fn(),
     listCapturesMock: vi.fn(),
@@ -47,9 +47,12 @@ const {
 
 vi.mock("../api", () => ({
   listMasterResumes: listMasterResumesMock,
-  listEvidenceBanks: listEvidenceBanksMock,
+  listEvidenceSources: listEvidenceSourcesMock,
   createMasterResume: createMasterResumeMock,
   createEvidenceBank: createEvidenceBankMock,
+  importMasterResumeFile: vi.fn(),
+  importEvidenceSourceFile: vi.fn(),
+  resetLocalData: vi.fn(),
   listCaptures: listCapturesMock,
   getLlmProviderSetting: getLlmProviderSettingMock,
   setLlmProviderSetting: setLlmProviderSettingMock,
@@ -128,7 +131,7 @@ function settingsLoadedConfig() {
 describe("Gmail OAuth settings card", () => {
   beforeEach(() => {
     listMasterResumesMock.mockResolvedValue([]);
-    listEvidenceBanksMock.mockResolvedValue([]);
+    listEvidenceSourcesMock.mockResolvedValue([]);
     listCapturesMock.mockResolvedValue([]);
     getLlmProviderSettingMock.mockResolvedValue({
       default_provider: "claude_code",

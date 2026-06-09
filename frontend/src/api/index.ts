@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { apiRequest, apiUpload } from "./client";
 import type {
   ActivityItem,
   ActivityResponse,
@@ -14,6 +14,8 @@ import type {
   EvidenceBankCreate,
   EvidenceSource,
   EvidenceSourceType,
+  FileImportResult,
+  ResetLocalDataResponse,
   GmailAuthUrlResponse,
   GmailCandidateEmail,
   GmailCandidatesResponse,
@@ -71,6 +73,8 @@ export type {
   EvidenceBankCreate,
   EvidenceSource,
   EvidenceSourceType,
+  FileImportResult,
+  ResetLocalDataResponse,
   GmailAuthUrlResponse,
   GmailCandidateEmail,
   GmailCandidatesResponse,
@@ -162,6 +166,31 @@ export function createEvidenceBank(
 
 export function listEvidenceSources(): Promise<EvidenceSource[]> {
   return apiRequest("/evidence-sources");
+}
+
+export function importMasterResumeFile(
+  file: File,
+): Promise<FileImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiUpload("/master-resumes/import-file", form);
+}
+
+export function importEvidenceSourceFile(
+  file: File,
+): Promise<FileImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiUpload("/evidence-sources/import-file", form);
+}
+
+export function resetLocalData(
+  confirmation: string,
+): Promise<ResetLocalDataResponse> {
+  return apiRequest("/settings/reset-local-data", {
+    method: "POST",
+    body: { confirmation },
+  });
 }
 
 export interface CreateRunPayload {

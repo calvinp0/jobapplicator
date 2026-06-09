@@ -11,18 +11,25 @@ the top of the list without removing it.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Iterable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..evidence_source_discovery import (
     EvidenceSourceFile,
+    default_candidate_context_root,
     list_filesystem_evidence_sources,
 )
+from ..file_import import (
+    EVIDENCE_EXTENSIONS,
+    FileImportError,
+    save_imported_file,
+)
 from ..models import EvidenceBank
-from ..schemas import EvidenceSourceRead
+from ..schemas import EvidenceSourceRead, FileImportResult
 
 router = APIRouter(prefix="/evidence-sources", tags=["evidence-sources"])
 
@@ -68,6 +75,57 @@ def _ordered(
     out.extend(non_demo)
     out.extend(demo)
     return out
+
+
+@router.post(
+    "/import-file",
+    response_model=FileImportResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_evidence_source_file(
+    file: UploadFile = File(...),
+) -> FileImportResult:
+    """Import an uploaded evidence file into ``candidate_context/evidence_banks/``.
+
+    The file is validated, sanitized, and copied into the managed evidence
+    folder so the app owns a stable copy. It is then discoverable by the
+    same filesystem scan that powers the evidence-source list, so it is
+    immediately available to tailoring runs without a DB row.
+    """
+    data = await file.read()
+    evidence_dir = default_candidate_context_root() / "evidence_banks"
+    try:
+        imported = save_imported_file(
+            evidence_dir,
+            file.filename or "",
+            data,
+            EVIDENCE_EXTENSIONS,
+        )
+    except FileImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record = next(
+        (
+            r
+            for r in list_filesystem_evidence_sources()
+            if r.absolute_path.resolve() == imported.stored_path.resolve()
+        ),
+        None,
+    )
+    if record is None:  # pragma: no cover - defensive; the file was just written
+        raise HTTPException(
+            status_code=500, detail="imported file could not be resolved"
+        )
+
+    return FileImportResult(
+        id=record.id,
+        name=imported.name,
+        source_type=record.source_type,
+        source_format=imported.source_format,
+        original_filename=imported.original_filename,
+        stored_path=record.source_path,
+        imported_at=datetime.now(timezone.utc),
+    )
 
 
 @router.get("", response_model=list[EvidenceSourceRead])

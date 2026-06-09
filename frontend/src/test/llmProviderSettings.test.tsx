@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 const {
   listMasterResumesMock,
-  listEvidenceBanksMock,
+  listEvidenceSourcesMock,
   createMasterResumeMock,
   createEvidenceBankMock,
   getLlmProviderSettingMock,
@@ -26,7 +26,7 @@ const {
   }
   return {
     listMasterResumesMock: vi.fn(),
-    listEvidenceBanksMock: vi.fn(),
+    listEvidenceSourcesMock: vi.fn(),
     createMasterResumeMock: vi.fn(),
     createEvidenceBankMock: vi.fn(),
     getLlmProviderSettingMock: vi.fn(),
@@ -39,9 +39,12 @@ const {
 
 vi.mock("../api", () => ({
   listMasterResumes: listMasterResumesMock,
-  listEvidenceBanks: listEvidenceBanksMock,
+  listEvidenceSources: listEvidenceSourcesMock,
   createMasterResume: createMasterResumeMock,
   createEvidenceBank: createEvidenceBankMock,
+  importMasterResumeFile: vi.fn(),
+  importEvidenceSourceFile: vi.fn(),
+  resetLocalData: vi.fn(),
   getLlmProviderSetting: getLlmProviderSettingMock,
   setLlmProviderSetting: setLlmProviderSettingMock,
   getGmailStatus: getGmailStatusMock,
@@ -89,7 +92,7 @@ function getProviderCard() {
 describe("SettingsPage – Tailoring LLM card", () => {
   beforeEach(() => {
     listMasterResumesMock.mockResolvedValue([]);
-    listEvidenceBanksMock.mockResolvedValue([]);
+    listEvidenceSourcesMock.mockResolvedValue([]);
     getGmailStatusMock.mockResolvedValue({
       connected: false,
       configured: true,

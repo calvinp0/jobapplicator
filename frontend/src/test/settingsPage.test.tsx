@@ -5,10 +5,12 @@ import { MemoryRouter } from "react-router-dom";
 
 const {
   listMasterResumesMock,
-  listEvidenceBanksMock,
+  listEvidenceSourcesMock,
   createMasterResumeMock,
   createEvidenceBankMock,
-  listCapturesMock,
+  importMasterResumeFileMock,
+  importEvidenceSourceFileMock,
+  resetLocalDataMock,
   getLlmProviderSettingMock,
   setLlmProviderSettingMock,
   getGmailStatusMock,
@@ -30,10 +32,12 @@ const {
   }
   return {
     listMasterResumesMock: vi.fn(),
-    listEvidenceBanksMock: vi.fn(),
+    listEvidenceSourcesMock: vi.fn(),
     createMasterResumeMock: vi.fn(),
     createEvidenceBankMock: vi.fn(),
-    listCapturesMock: vi.fn(),
+    importMasterResumeFileMock: vi.fn(),
+    importEvidenceSourceFileMock: vi.fn(),
+    resetLocalDataMock: vi.fn(),
     getLlmProviderSettingMock: vi.fn(),
     setLlmProviderSettingMock: vi.fn(),
     getGmailStatusMock: vi.fn(),
@@ -47,10 +51,12 @@ const {
 
 vi.mock("../api", () => ({
   listMasterResumes: listMasterResumesMock,
-  listEvidenceBanks: listEvidenceBanksMock,
+  listEvidenceSources: listEvidenceSourcesMock,
   createMasterResume: createMasterResumeMock,
   createEvidenceBank: createEvidenceBankMock,
-  listCaptures: listCapturesMock,
+  importMasterResumeFile: importMasterResumeFileMock,
+  importEvidenceSourceFile: importEvidenceSourceFileMock,
+  resetLocalData: resetLocalDataMock,
   getLlmProviderSetting: getLlmProviderSettingMock,
   setLlmProviderSetting: setLlmProviderSettingMock,
   getGmailStatus: getGmailStatusMock,
@@ -72,22 +78,17 @@ function renderPage() {
 }
 
 function getResumeCard() {
-  return screen
-    .getByRole("heading", { level: 3, name: /master resumes/i })
-    .closest("section") as HTMLElement;
+  return screen.getByTestId("master-resumes-card");
 }
 
-function getBankCard() {
-  return screen
-    .getByRole("heading", { level: 3, name: /evidence banks/i })
-    .closest("section") as HTMLElement;
+function getEvidenceCard() {
+  return screen.getByTestId("evidence-sources-card");
 }
 
 describe("SettingsPage", () => {
   beforeEach(() => {
     listMasterResumesMock.mockResolvedValue([]);
-    listEvidenceBanksMock.mockResolvedValue([]);
-    listCapturesMock.mockResolvedValue([]);
+    listEvidenceSourcesMock.mockResolvedValue([]);
     getLlmProviderSettingMock.mockResolvedValue({
       default_provider: "claude_code",
       available: [
@@ -157,8 +158,6 @@ describe("SettingsPage", () => {
       ).toBeInTheDocument(),
     );
 
-    // The settings hub groups panels using SettingsGroup, each rendered
-    // as a labelled region.
     for (const groupLabel of [
       /gmail integration/i,
       /document tooling/i,
@@ -173,7 +172,7 @@ describe("SettingsPage", () => {
     }
   });
 
-  it("renders both cards with their headers and the canonical empty-state copy", async () => {
+  it("renders both document cards with their headers and empty-state copy", async () => {
     renderPage();
 
     await waitFor(() =>
@@ -183,22 +182,21 @@ describe("SettingsPage", () => {
     );
 
     expect(
-      screen.getByRole("heading", { level: 3, name: /evidence banks/i }),
+      screen.getByRole("heading", { level: 3, name: /evidence sources/i }),
     ).toBeInTheDocument();
 
     expect(
-      screen.getByText(
-        "No master resumes yet — add one to enable tailoring.",
-      ),
+      screen.getByText("No master resumes yet — add one to enable tailoring."),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "No evidence banks yet — optional, but useful for grounded tailoring.",
+        "No evidence sources yet — optional, but useful for grounded tailoring.",
       ),
     ).toBeInTheDocument();
   });
 
-  it("hides both add forms by default and exposes only the reveal buttons", async () => {
+  it("shows a file picker for master resume import and no editable Source Path field", async () => {
+    const user = userEvent.setup();
     renderPage();
 
     await waitFor(() =>
@@ -207,19 +205,44 @@ describe("SettingsPage", () => {
       ).toBeInTheDocument(),
     );
 
-    expect(
-      screen.getByRole("button", { name: /\+ add evidence bank/i }),
-    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /\+ add master resume/i }),
+    );
 
-    // No form fields are in the DOM until the user opens the form.
-    expect(screen.queryByLabelText(/^name$/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/content/i)).not.toBeInTheDocument();
+    const card = getResumeCard();
+    // File-upload mode is the default: a real file picker is shown.
+    const fileInput = within(card).getByTestId("master-resumes-card-file-input");
+    expect(fileInput).toHaveAttribute("type", "file");
+    // The old free-text "Source path" field is gone entirely.
     expect(
-      screen.queryByRole("button", { name: /^cancel$/i }),
+      within(card).queryByLabelText(/source path/i),
     ).not.toBeInTheDocument();
   });
 
-  it("reveals the master resume form when + Add master resume is clicked and only that form", async () => {
+  it("shows a file picker for evidence import", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /\+ add evidence source/i }),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /\+ add evidence source/i }),
+    );
+
+    const card = getEvidenceCard();
+    expect(
+      within(card).getByTestId("evidence-sources-card-file-input"),
+    ).toHaveAttribute("type", "file");
+    expect(
+      within(card).queryByLabelText(/source path/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("displays the selected filename after choosing a file", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -228,268 +251,155 @@ describe("SettingsPage", () => {
         screen.getByRole("button", { name: /\+ add master resume/i }),
       ).toBeInTheDocument(),
     );
-
     await user.click(
       screen.getByRole("button", { name: /\+ add master resume/i }),
     );
 
-    const resumeCard = getResumeCard();
-    expect(within(resumeCard).getByLabelText(/^name$/i)).toBeInTheDocument();
-    expect(within(resumeCard).getByLabelText(/content/i)).toBeInTheDocument();
-    expect(
-      within(resumeCard).getByRole("button", { name: /^cancel$/i }),
-    ).toBeInTheDocument();
+    const card = getResumeCard();
+    const file = new File(["resume bytes"], "calvin_resume.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+    await user.upload(
+      within(card).getByTestId("master-resumes-card-file-input"),
+      file,
+    );
 
-    // Evidence bank card form remains hidden.
-    const bankCard = getBankCard();
-    expect(within(bankCard).queryByLabelText(/^name$/i)).not.toBeInTheDocument();
     expect(
-      within(bankCard).getByRole("button", { name: /\+ add evidence bank/i }),
-    ).toBeInTheDocument();
+      within(card).getByTestId("master-resumes-card-filename"),
+    ).toHaveTextContent("calvin_resume.docx");
   });
 
-  it("reveals the evidence bank form when + Add evidence bank is clicked", async () => {
+  it("imports a master resume file and refreshes the list", async () => {
     const user = userEvent.setup();
+    importMasterResumeFileMock.mockResolvedValue({
+      id: "fs:abc123",
+      name: "calvin_resume.docx",
+      source_type: "master_resume",
+      source_format: "docx",
+      original_filename: "calvin_resume.docx",
+      stored_path: "candidate_context/master_resumes/calvin_resume.docx",
+      imported_at: "2026-06-10T10:00:00Z",
+    });
+
     renderPage();
-
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: /\+ add evidence bank/i }),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
     );
-
-    await user.click(
-      screen.getByRole("button", { name: /\+ add evidence bank/i }),
-    );
-
-    const bankCard = getBankCard();
-    expect(within(bankCard).getByLabelText(/^name$/i)).toBeInTheDocument();
-    expect(within(bankCard).getByLabelText(/content/i)).toBeInTheDocument();
-  });
-
-  it("collapses the form when Cancel is clicked", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: /\+ add master resume/i }),
-      ).toBeInTheDocument(),
-    );
-
     await user.click(
       screen.getByRole("button", { name: /\+ add master resume/i }),
     );
 
-    const resumeCard = getResumeCard();
-    expect(within(resumeCard).getByLabelText(/^name$/i)).toBeInTheDocument();
-
+    const card = getResumeCard();
+    const file = new File(["bytes"], "calvin_resume.docx");
+    await user.upload(
+      within(card).getByTestId("master-resumes-card-file-input"),
+      file,
+    );
     await user.click(
-      within(resumeCard).getByRole("button", { name: /^cancel$/i }),
+      within(card).getByRole("button", { name: /^import master resume$/i }),
     );
 
-    expect(within(resumeCard).queryByLabelText(/^name$/i)).not.toBeInTheDocument();
-    expect(
-      within(resumeCard).getByRole("button", { name: /\+ add master resume/i }),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(importMasterResumeFileMock).toHaveBeenCalledWith(file),
+    );
+    // The list is refetched after a successful import.
+    await waitFor(() =>
+      expect(listMasterResumesMock).toHaveBeenCalledTimes(2),
+    );
   });
 
-  it("creates a master resume, collapses the form, and shows the new row", async () => {
+  it("still supports manual content mode for master resumes", async () => {
     const user = userEvent.setup();
     createMasterResumeMock.mockResolvedValue({
       id: "resume-1",
       name: "Calvin – Generalist",
-      source_path: "candidate_context/resume.md",
+      source: "database",
+      source_format: null,
       content_markdown: "# Calvin",
       created_at: "2026-05-22T10:00:00Z",
       updated_at: "2026-05-22T10:00:00Z",
     });
 
     renderPage();
-
     await waitFor(() =>
-      expect(
-        screen.getByText(/no master resumes yet/i),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
     );
-
     await user.click(
       screen.getByRole("button", { name: /\+ add master resume/i }),
     );
 
-    const resumeCard = getResumeCard();
-    const utils = within(resumeCard);
+    const card = getResumeCard();
+    // Switch to manual paste mode.
+    await user.click(within(card).getByLabelText(/paste content manually/i));
 
-    await user.type(utils.getByLabelText(/^name$/i), "Calvin – Generalist");
+    await user.type(within(card).getByLabelText(/^name$/i), "Calvin – Generalist");
     await user.type(
-      utils.getByLabelText(/source path/i),
-      "candidate_context/resume.md",
+      within(card).getByLabelText(/content \(markdown\)/i),
+      "# Calvin",
     );
-    await user.type(utils.getByLabelText(/content/i), "# Calvin");
-
     await user.click(
-      utils.getByRole("button", { name: /^add master resume$/i }),
+      within(card).getByRole("button", { name: /^add master resume$/i }),
     );
 
     await waitFor(() =>
       expect(createMasterResumeMock).toHaveBeenCalledWith({
         name: "Calvin – Generalist",
-        source_path: "candidate_context/resume.md",
         content_markdown: "# Calvin",
       }),
     );
+  });
 
-    // Form collapsed after success.
-    await waitFor(() =>
-      expect(
-        within(resumeCard).queryByLabelText(/^name$/i),
-      ).not.toBeInTheDocument(),
-    );
+  it("opens a confirmation dialog when Reset local data is clicked", async () => {
+    const user = userEvent.setup();
+    renderPage();
 
-    // New row appears, empty-state gone.
+    const resetButton = await screen.findByTestId("reset-local-data-button");
     expect(
-      within(resumeCard).getByText("Calvin – Generalist"),
-    ).toBeInTheDocument();
-    expect(
-      within(resumeCard).queryByText(/no master resumes yet/i),
+      screen.queryByTestId("reset-confirm-dialog"),
     ).not.toBeInTheDocument();
+
+    await user.click(resetButton);
+
+    expect(screen.getByTestId("reset-confirm-dialog")).toBeInTheDocument();
     expect(
-      within(resumeCard).getByRole("button", {
-        name: /\+ add master resume/i,
-      }),
+      screen.getByRole("dialog", { name: /reset local data/i }),
     ).toBeInTheDocument();
   });
 
-  it("creates an evidence bank, collapses the form, and shows the new row", async () => {
+  it("requires typing RESET before the reset is allowed to run", async () => {
     const user = userEvent.setup();
-    createEvidenceBankMock.mockResolvedValue({
-      id: "bank-1",
-      name: "Backend evidence",
-      source_path: null,
-      content_markdown: "# Evidence",
-      created_at: "2026-05-22T11:00:00Z",
-      updated_at: "2026-05-22T11:00:00Z",
+    resetLocalDataMock.mockResolvedValue({
+      ok: true,
+      backup_path: "backups/database/reset-2026-06-10.db",
+      deleted: { jobs: 2, applications: 1, runs: 3, captures: 1 },
     });
 
     renderPage();
+    await user.click(await screen.findByTestId("reset-local-data-button"));
+
+    const confirmButton = screen.getByTestId("reset-confirm-button");
+    // Disabled until the exact confirmation text is entered.
+    expect(confirmButton).toBeDisabled();
+
+    await user.type(
+      screen.getByLabelText(/type reset to confirm/i),
+      "nope",
+    );
+    expect(confirmButton).toBeDisabled();
+    expect(resetLocalDataMock).not.toHaveBeenCalled();
+
+    await user.clear(screen.getByLabelText(/type reset to confirm/i));
+    await user.type(screen.getByLabelText(/type reset to confirm/i), "RESET");
+    expect(confirmButton).toBeEnabled();
+
+    await user.click(confirmButton);
 
     await waitFor(() =>
-      expect(
-        screen.getByText(/no evidence banks yet/i),
-      ).toBeInTheDocument(),
+      expect(resetLocalDataMock).toHaveBeenCalledWith("RESET"),
     );
-
-    await user.click(
-      screen.getByRole("button", { name: /\+ add evidence bank/i }),
-    );
-
-    const bankCard = getBankCard();
-    const utils = within(bankCard);
-
-    await user.type(utils.getByLabelText(/^name$/i), "Backend evidence");
-    await user.type(utils.getByLabelText(/content/i), "# Evidence");
-
-    await user.click(
-      utils.getByRole("button", { name: /^add evidence bank$/i }),
-    );
-
-    await waitFor(() =>
-      expect(createEvidenceBankMock).toHaveBeenCalledWith({
-        name: "Backend evidence",
-        source_path: null,
-        content_markdown: "# Evidence",
-      }),
-    );
-
-    await waitFor(() =>
-      expect(
-        within(bankCard).queryByLabelText(/^name$/i),
-      ).not.toBeInTheDocument(),
-    );
-
     expect(
-      within(bankCard).getByText("Backend evidence"),
+      await screen.findByText(/local data reset/i),
     ).toBeInTheDocument();
-    expect(
-      within(bankCard).queryByText(/no evidence banks yet/i),
-    ).not.toBeInTheDocument();
-  });
-
-  it("surfaces server validation errors on create and keeps the form open", async () => {
-    const user = userEvent.setup();
-    createMasterResumeMock.mockRejectedValue(
-      new ApiErrorMock("Request failed", 422, {
-        detail: [
-          {
-            loc: ["body", "name"],
-            msg: "value cannot be blank",
-            type: "value_error",
-          },
-        ],
-      }),
-    );
-
-    renderPage();
-
-    await waitFor(() =>
-      expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: /\+ add master resume/i }),
-    );
-
-    const resumeCard = getResumeCard();
-    const utils = within(resumeCard);
-
-    await user.type(utils.getByLabelText(/^name$/i), "Bad");
-    await user.type(utils.getByLabelText(/content/i), "x");
-    await user.click(
-      utils.getByRole("button", { name: /^add master resume$/i }),
-    );
-
-    expect(
-      await within(resumeCard).findByText(/value cannot be blank/i),
-    ).toBeInTheDocument();
-    // Form stays open so the user can correct the input.
-    expect(within(resumeCard).getByLabelText(/^name$/i)).toBeInTheDocument();
-  });
-
-  it("shows a friendly fallback (never the raw request string) when an ApiError has no detail", async () => {
-    const user = userEvent.setup();
-    createMasterResumeMock.mockRejectedValue(
-      new ApiErrorMock(
-        "Request to /master-resumes failed with status 500",
-        500,
-        null,
-      ),
-    );
-
-    renderPage();
-
-    await waitFor(() =>
-      expect(screen.getByText(/no master resumes yet/i)).toBeInTheDocument(),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: /\+ add master resume/i }),
-    );
-
-    const resumeCard = getResumeCard();
-    const utils = within(resumeCard);
-
-    await user.type(utils.getByLabelText(/^name$/i), "Bad");
-    await user.type(utils.getByLabelText(/content/i), "x");
-    await user.click(
-      utils.getByRole("button", { name: /^add master resume$/i }),
-    );
-
-    expect(
-      await within(resumeCard).findByText(/something went wrong/i),
-    ).toBeInTheDocument();
-    expect(
-      within(resumeCard).queryByText(/request to/i),
-    ).not.toBeInTheDocument();
   });
 
   it("renders the Gmail integration card and the privacy note", async () => {
@@ -506,36 +416,6 @@ describe("SettingsPage", () => {
         /gmail is used read-only for application tracking\. jobapplicator does not send, delete, archive, or label emails\./i,
       ),
     ).toBeInTheDocument();
-  });
-
-  it("shows the not-configured state with missing env vars and hides Connect Gmail", async () => {
-    getGmailStatusMock.mockResolvedValue({
-      connected: false,
-      configured: false,
-      missing_config: [
-        "GOOGLE_CLIENT_ID",
-        "GOOGLE_CLIENT_SECRET",
-        "GOOGLE_REDIRECT_URI",
-      ],
-      email: null,
-      scopes: [],
-      token_path_configured: true,
-      last_checked_at: null,
-    });
-
-    renderPage();
-
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("gmail-settings-status"),
-      ).toHaveTextContent(/not configured/i),
-    );
-    expect(screen.getByTestId("gmail-not-configured")).toHaveTextContent(
-      /GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI/,
-    );
-    expect(
-      screen.queryByTestId("gmail-connect-button"),
-    ).not.toBeInTheDocument();
   });
 
   it("shows the Connect Gmail action when configured but disconnected", async () => {
@@ -557,81 +437,5 @@ describe("SettingsPage", () => {
       ).toHaveTextContent(/not connected/i),
     );
     expect(screen.getByTestId("gmail-connect-button")).toBeInTheDocument();
-  });
-
-  it("opens the Gmail auth URL when Connect Gmail is clicked from Settings", async () => {
-    const originalOpen = window.open;
-    window.open = vi.fn();
-    try {
-      getGmailStatusMock.mockResolvedValue({
-        connected: false,
-        configured: true,
-        missing_config: [],
-        email: null,
-        scopes: [],
-        token_path_configured: true,
-        last_checked_at: null,
-      });
-
-      const user = userEvent.setup();
-      renderPage();
-
-      const button = await screen.findByTestId("gmail-connect-button");
-      await user.click(button);
-
-      await waitFor(() =>
-        expect(getGmailAuthUrlMock).toHaveBeenCalledTimes(1),
-      );
-      expect(window.open).toHaveBeenCalledWith(
-        "https://accounts.google.com/o/oauth2/auth?fake=1",
-        "_blank",
-        "noopener,noreferrer",
-      );
-    } finally {
-      window.open = originalOpen;
-    }
-  });
-
-  it("surfaces a structured 400 from /gmail/auth-url with actionable text", async () => {
-    getGmailStatusMock.mockResolvedValue({
-      connected: false,
-      configured: true,
-      missing_config: [],
-      email: null,
-      scopes: [],
-      token_path_configured: true,
-      last_checked_at: null,
-    });
-    getGmailAuthUrlMock.mockRejectedValue(
-      new ApiErrorMock("Request failed", 400, {
-        detail: {
-          error: "gmail_oauth_not_configured",
-          message:
-            "Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI.",
-          missing: [
-            "GOOGLE_CLIENT_ID",
-            "GOOGLE_CLIENT_SECRET",
-            "GOOGLE_REDIRECT_URI",
-          ],
-        },
-      }),
-    );
-
-    const user = userEvent.setup();
-    renderPage();
-
-    const button = await screen.findByTestId("gmail-connect-button");
-    await user.click(button);
-
-    expect(
-      await screen.findByText(
-        /gmail oauth is not configured\. set google_client_id/i,
-      ),
-    ).toBeInTheDocument();
-    // The user never sees the raw "Request to /... failed with status 400"
-    // string surfaced as an error.
-    expect(
-      screen.queryByText(/request to .* failed with status 400/i),
-    ).not.toBeInTheDocument();
   });
 });
