@@ -14,33 +14,13 @@ import type {
   ResumeVersion,
 } from "../api";
 import {
-  computeJobStage,
-  jobStageLabel,
   runIsActive,
   runNeedsImport,
   runStatusLabel,
   type JobStage,
 } from "../lib/workflow";
-import { StatusBadge } from "../components/ui";
-import type { StatusBadgeVariant } from "../components/ui";
-
-const JOB_STAGE_VARIANTS: Record<JobStage, StatusBadgeVariant> = {
-  captured: "pending",
-  tailoring: "running",
-  draft_ready: "completed",
-  approved: "approved",
-  sent: "submitted",
-};
-
-interface JobView {
-  job: Job;
-  stage: JobStage;
-  approvedVersion: ResumeVersion | null;
-  pendingVersion: ResumeVersion | null;
-  inFlightRun: ClaudeRun | null;
-  submittedApp: Application | null;
-  openApp: Application | null;
-}
+import { buildJobView, type JobView } from "../lib/dashboardJobs";
+import { DashboardActiveJobs } from "../components/dashboard";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
@@ -60,40 +40,6 @@ function formatRelative(value: string | null): string {
   const days = Math.round(hours / 24);
   if (days < 14) return `${days}d ago`;
   return new Date(value).toLocaleDateString();
-}
-
-function buildJobView(
-  job: Job,
-  versions: ResumeVersion[],
-  applications: Application[],
-  runs: ClaudeRun[],
-): JobView {
-  const jobApps = applications.filter((a) => a.job_id === job.id);
-  const submittedApp = jobApps.find((a) => a.status === "submitted") ?? null;
-  const openApp = jobApps.find((a) => a.status !== "submitted") ?? null;
-  const relevantApp = submittedApp ?? openApp;
-  const stage = computeJobStage(job, runs, versions, relevantApp);
-  const jobVersions = versions
-    .filter((v) => v.job_id === job.id)
-    .sort((a, b) => b.version_number - a.version_number);
-  const approvedVersion =
-    jobVersions.find((v) => v.approved_at !== null) ?? null;
-  const pendingVersion =
-    jobVersions.find((v) => v.approved_at === null) ?? null;
-  const jobRuns = runs.filter((r) => r.job_id === job.id);
-  const inFlightRun =
-    jobRuns.find(
-      (r) => runIsActive(r.status) || runNeedsImport(r, versions),
-    ) ?? null;
-  return {
-    job,
-    stage,
-    approvedVersion,
-    pendingVersion,
-    inFlightRun,
-    submittedApp,
-    openApp,
-  };
 }
 
 interface NextAction {
@@ -400,80 +346,7 @@ export function DashboardPage() {
         )}
       </section>
 
-      <section
-        className="dashboard-section"
-        aria-labelledby="dashboard-active-jobs"
-      >
-        <h3 id="dashboard-active-jobs">Active jobs</h3>
-        {activeJobs.length === 0 ? (
-          <p className="dashboard-empty">
-            No active jobs yet — capture a job from the extension.
-          </p>
-        ) : (
-          <ul className="job-card-grid">
-            {activeJobViews.map((view) => (
-              <li key={view.job.id} className="job-card">
-                <div className="job-card-header">
-                  <div>
-                    <Link
-                      to={`/jobs/${view.job.id}`}
-                      className="job-card-title"
-                    >
-                      {view.job.title}
-                    </Link>
-                    <p className="job-card-company">{view.job.company}</p>
-                  </div>
-                  <StatusBadge variant={JOB_STAGE_VARIANTS[view.stage]}>
-                    {jobStageLabel(view.stage)}
-                  </StatusBadge>
-                </div>
-                {view.job.location ? (
-                  <p className="job-card-meta">{view.job.location}</p>
-                ) : null}
-                <div className="job-card-actions">
-                  <Link
-                    to={`/jobs/${view.job.id}`}
-                    className="button button-secondary"
-                  >
-                    Review job
-                  </Link>
-                  {view.approvedVersion ? (
-                    <Link
-                      to={`/resume-versions/${view.approvedVersion.id}`}
-                      className="button button-secondary"
-                    >
-                      Open resume
-                    </Link>
-                  ) : view.pendingVersion ? (
-                    <Link
-                      to={`/resume-versions/${view.pendingVersion.id}`}
-                      className="button button-secondary"
-                    >
-                      Open draft
-                    </Link>
-                  ) : null}
-                  {view.openApp ? (
-                    <Link
-                      to={`/applications/${view.openApp.id}`}
-                      className="button button-secondary"
-                    >
-                      Continue application
-                    </Link>
-                  ) : null}
-                  {view.inFlightRun ? (
-                    <Link
-                      to={`/runs/${view.inFlightRun.id}`}
-                      className="button button-secondary"
-                    >
-                      View run
-                    </Link>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <DashboardActiveJobs views={activeJobViews} />
 
       <section className="dashboard-section" aria-labelledby="dashboard-runs">
         <h3 id="dashboard-runs">In-flight runs</h3>
