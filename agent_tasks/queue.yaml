@@ -2387,4 +2387,5 @@ tasks:
       - "scripts/**"
       - "docs/**"
       - "agent_tasks/118-use-project-python-env-for-backend-tests.md"
+      - "agent_tasks/planning_guidelines.md"
       - "agent_tasks/queue.yaml"
