@@ -2409,7 +2409,7 @@ tasks:
     file: "agent_tasks/120-redesign-applications-table-actions-and-status.md"
     branch: "agent/120-redesign-applications-table-actions-and-status"
     worktree: "agent-120-redesign-applications-table-actions-and-status"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "cd frontend && npm run build"
