@@ -9,33 +9,18 @@ import {
   reviseSuggestion,
 } from "../api";
 import type { ResumeSuggestion, ResumeSuggestions } from "../api/types";
-import { SuggestionCard } from "../components/SuggestionCard";
-import { Button, EmptyState, PageHeader, SectionCard } from "../components/ui";
+import { buildPreviewDocument } from "../lib/reviewModel";
+import { ResumeReviewWorkspace } from "../components/review/ResumeReviewWorkspace";
+import type { WorkflowStep } from "../components/review/WorkflowRail";
+import { EmptyState } from "../components/ui";
 
-interface SectionGroup {
-  key: string;
-  heading: string;
-  suggestions: ResumeSuggestion[];
-}
-
-function groupBySection(suggestions: ResumeSuggestion[]): SectionGroup[] {
-  const order: string[] = [];
-  const groups = new Map<string, SectionGroup>();
-  for (const suggestion of suggestions) {
-    const key = suggestion.section_id || suggestion.section_heading;
-    if (!groups.has(key)) {
-      order.push(key);
-      groups.set(key, {
-        key,
-        heading: suggestion.section_heading || suggestion.section_id,
-        suggestions: [],
-      });
-    }
-    groups.get(key)!.suggestions.push(suggestion);
-  }
-  return order.map((key) => groups.get(key)!);
-}
-
+/**
+ * Resume Review workspace (task 114). Replaces the earlier card stack with a
+ * three-panel, Word-like document review surface: workflow rail (left), live
+ * resume document preview (center), and AI change panel (right). Data still
+ * comes from the task-113 suggestion endpoints; the structured ``base_resume``
+ * / ``working_resume`` now power the document preview.
+ */
 export function ResumeReviewPage() {
   const { versionId } = useParams<{ versionId: string }>();
   const [data, setData] = useState<ResumeSuggestions | null>(null);
@@ -44,6 +29,7 @@ export function ResumeReviewPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isApplying, setIsApplying] = useState(false);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!versionId) return;
@@ -68,13 +54,32 @@ export function ResumeReviewPage() {
     };
   }, [versionId]);
 
-  const groups = useMemo(
-    () => (data ? groupBySection(data.suggestions) : []),
+  const document = useMemo(
+    () => (data ? buildPreviewDocument(data) : null),
     [data],
   );
 
+  // Default the selection to the first section that actually has suggestions,
+  // so the right panel opens on something meaningful.
+  useEffect(() => {
+    if (!document || selectedKey !== null) return;
+    const firstWithSuggestions = document.sections.find(
+      (s) => s.suggestions.length > 0,
+    );
+    const fallback = document.sections[0];
+    const target = firstWithSuggestions ?? fallback;
+    if (target) setSelectedKey(target.key);
+  }, [document, selectedKey]);
+
+  const selectedSection = useMemo(
+    () =>
+      document?.sections.find((s) => s.key === selectedKey) ?? null,
+    [document, selectedKey],
+  );
+
   const acceptedCount = useMemo(
-    () => (data ? data.suggestions.filter((s) => s.status === "accepted").length : 0),
+    () =>
+      data ? data.suggestions.filter((s) => s.status === "accepted").length : 0,
     [data],
   );
 
@@ -119,7 +124,7 @@ export function ResumeReviewPage() {
           result.accepted_count === 1 ? "" : "s"
         } to the working resume.`,
       );
-      // Refresh so applied_at / has_working_resume reflect the new state.
+      // Refresh so applied_at / working_resume reflect the new state.
       const refreshed = await getResumeSuggestions(versionId);
       setData(refreshed);
     } catch {
@@ -129,12 +134,22 @@ export function ResumeReviewPage() {
     }
   }
 
+  const steps = useMemo<WorkflowStep[]>(() => {
+    const exported = Boolean(data?.applied_at);
+    return [
+      { label: "Job", status: "complete" },
+      { label: "Evidence", status: "complete" },
+      { label: "Tailoring", status: "complete" },
+      { label: "Review", status: "active" },
+      { label: "Export", status: exported ? "complete" : "blocked" },
+    ];
+  }, [data?.applied_at]);
+
   if (loadError) {
     return (
       <div className="page">
-        <PageHeader title="Resume Review" />
         <EmptyState
-          title="No suggestions"
+          title="No suggestions to review"
           description={loadError}
           actions={
             versionId ? (
@@ -146,11 +161,10 @@ export function ResumeReviewPage() {
     );
   }
 
-  if (!data) {
+  if (!data || !document) {
     return (
       <div className="page">
-        <PageHeader title="Resume Review" />
-        <p>Loading suggestions…</p>
+        <p>Loading review workspace…</p>
       </div>
     );
   }
@@ -160,85 +174,37 @@ export function ResumeReviewPage() {
     .join(" · ");
 
   return (
-    <div className="page resume-review-page">
-      <PageHeader
-        title="Resume Review"
-        description={
-          targetLine
-            ? `AI suggestions for ${targetLine}`
-            : "Review AI suggestions section by section."
-        }
-        actions={
-          <Button
-            variant="primary"
-            onClick={handleApply}
-            disabled={isApplying}
-            data-testid="apply-suggestions"
-          >
-            {isApplying ? "Applying…" : "Apply accepted suggestions"}
-          </Button>
-        }
-        meta={
-          <span className="resume-review-summary" data-testid="accepted-count">
-            {acceptedCount} accepted ·{" "}
-            {data.suggestions.length} total
-            {data.applied_at ? " · working resume saved" : ""}
-          </span>
-        }
-      />
-
-      {actionError ? (
-        <p className="form-error" role="alert">
-          {actionError}
-        </p>
-      ) : null}
-      {applyMessage ? (
-        <p className="form-success" role="status" data-testid="apply-message">
-          {applyMessage}
-        </p>
-      ) : null}
-
-      {data.suggestions.length === 0 ? (
-        <EmptyState
-          title="No suggestions"
-          description="This run produced no section-level suggestions to review."
-        />
-      ) : (
-        <div className="resume-review-sections">
-          {groups.map((group) => (
-            <SectionCard
-              key={group.key}
-              title={group.heading}
-              data-testid={`review-section-${group.key}`}
-            >
-              <div className="suggestion-list">
-                {group.suggestions.map((suggestion) => (
-                  <SuggestionCard
-                    key={suggestion.id}
-                    suggestion={suggestion}
-                    busy={busyId === suggestion.id}
-                    onAccept={() =>
-                      runAction(suggestion.id, () =>
-                        acceptSuggestion(versionId!, suggestion.id),
-                      )
-                    }
-                    onReject={() =>
-                      runAction(suggestion.id, () =>
-                        rejectSuggestion(versionId!, suggestion.id),
-                      )
-                    }
-                    onRevise={(instruction) =>
-                      runAction(suggestion.id, () =>
-                        reviseSuggestion(versionId!, suggestion.id, instruction),
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            </SectionCard>
-          ))}
-        </div>
-      )}
-    </div>
+    <ResumeReviewWorkspace
+      targetLine={targetLine}
+      backLink={
+        versionId ? (
+          <Link className="review-back-link" to={`/resume-versions/${versionId}`}>
+            ← Draft
+          </Link>
+        ) : null
+      }
+      steps={steps}
+      document={document}
+      selectedKey={selectedKey}
+      selectedSection={selectedSection}
+      onSelectSection={setSelectedKey}
+      busyId={busyId}
+      onAccept={(s) =>
+        runAction(s.id, () => acceptSuggestion(versionId!, s.id))
+      }
+      onReject={(s) =>
+        runAction(s.id, () => rejectSuggestion(versionId!, s.id))
+      }
+      onRevise={(s, instruction) =>
+        runAction(s.id, () => reviseSuggestion(versionId!, s.id, instruction))
+      }
+      acceptedCount={acceptedCount}
+      totalCount={data.suggestions.length}
+      appliedAt={data.applied_at}
+      onApply={handleApply}
+      isApplying={isApplying}
+      applyMessage={applyMessage}
+      actionError={actionError}
+    />
   );
 }

@@ -86,6 +86,13 @@
   --space-6: 24px;
   --space-7: 32px;
   --space-8: 40px;
+
+  /* Font scale (task 114 review workspace + shared) */
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 14px;
+  --font-lg: 16px;
+  --font-xl: 20px;
 }
 
 * {
@@ -3065,17 +3072,6 @@ button[type="submit"]:disabled,
 
 /* ---- Interactive resume suggestion review (task 113) ---- */
 
-.resume-review-page .resume-review-summary {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.resume-review-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
 .suggestion-list {
   display: flex;
   flex-direction: column;
@@ -3247,10 +3243,487 @@ button[type="submit"]:disabled,
   align-self: center;
 }
 
-.resume-review-page .form-error {
-  color: var(--danger-fg);
+/* Entry points into the review workspace from detail pages (task 114). */
+.resume-version-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.review-workspace-link {
+  font-size: var(--font-sm);
+  font-weight: 500;
 }
 
-.resume-review-page .form-success {
+/* =====================================================================
+   Word-like resume review workspace (task 114)
+   left rail · center document preview · right AI review panel
+   ===================================================================== */
+
+.review-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Fill the content area height so the panels can scroll independently. */
+  min-height: calc(100vh - (var(--space-7) + var(--space-8)));
+}
+
+/* ---- Top bar ---- */
+.review-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.review-topbar-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.review-back-link {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.review-topbar-titles {
+  min-width: 0;
+}
+
+.review-topbar-title {
+  margin: 0;
+  font-size: var(--font-xl);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.review-topbar-subtitle {
+  margin: 2px 0 0;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.review-progress {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.review-banner {
+  margin: 0;
+  font-size: var(--font-sm);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+.review-banner-error {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+}
+.review-banner-success {
   color: var(--success-fg);
+  background: var(--success-soft);
+}
+
+/* ---- Three-panel grid ---- */
+.review-grid {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 350px;
+  gap: var(--space-4);
+  align-items: start;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Left: workflow rail ---- */
+.workflow-rail {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-3);
+}
+
+.workflow-rail-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
+.workflow-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.workflow-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+}
+
+.workflow-step-marker {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.workflow-step-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workflow-step-label {
+  font-size: var(--font-md);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.workflow-step-status {
+  font-size: var(--font-xs);
+  color: var(--text-subtle);
+  text-transform: capitalize;
+}
+
+.workflow-step-active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.workflow-step-active .workflow-step-marker {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.workflow-step-active .workflow-step-label {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.workflow-step-complete .workflow-step-marker {
+  background: var(--success-soft);
+  color: var(--success-fg);
+  border-color: var(--success-soft);
+}
+
+.workflow-step-failed .workflow-step-marker {
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  border-color: var(--danger-soft);
+}
+
+.workflow-step-blocked {
+  opacity: 0.6;
+}
+
+/* ---- Center: document preview ---- */
+.review-center {
+  min-width: 0;
+}
+
+.doc-preview {
+  min-width: 0;
+}
+
+.doc-page-shell {
+  display: flex;
+  justify-content: center;
+  background: #eceef4;
+  border-radius: var(--radius-md);
+  padding: var(--space-6) var(--space-4);
+}
+
+.doc-page {
+  background: #fff;
+  width: 100%;
+  max-width: 720px;
+  /* Letter-ish proportion; min-height keeps a page feel for short resumes. */
+  min-height: 920px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08),
+    0 12px 32px rgba(15, 23, 42, 0.12);
+  border: 1px solid #e3e5ec;
+  border-radius: 2px;
+  padding: 56px 64px;
+  /* Document typography: smaller and serif-neutral, not dashboard-sized. */
+  font-size: var(--font-xs);
+  line-height: 1.5;
+  color: #1d1f2b;
+}
+
+.doc-header {
+  text-align: center;
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid #e3e5ec;
+}
+
+.doc-name {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.doc-subtitle {
+  margin: 4px 0 0;
+  font-size: var(--font-sm);
+  color: #4a4d5e;
+}
+
+.doc-contact {
+  margin: 6px 0 0;
+  font-size: var(--font-xs);
+  color: #5b5d6e;
+}
+
+.doc-section {
+  padding: var(--space-2) var(--space-2);
+  margin: 0 calc(-1 * var(--space-2)) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.doc-section:hover {
+  background: #f6f7fb;
+}
+
+.doc-section-selected {
+  background: var(--accent-soft);
+  border-color: rgba(79, 107, 255, 0.35);
+}
+
+.doc-section:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.doc-section-heading-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-bottom: 1px solid #d9dbe5;
+  margin-bottom: var(--space-2);
+}
+
+.doc-section-heading {
+  margin: 0;
+  font-size: var(--font-sm);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.doc-change-flag {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+.doc-change-flag-pending,
+.doc-change-flag-mixed {
+  color: var(--warning-fg);
+  background: var(--warning-soft);
+}
+.doc-change-flag-accepted {
+  color: var(--success-fg);
+  background: var(--success-soft);
+}
+
+/* Left accent bar marking a section that carries changes. */
+.doc-section-change {
+  border-left: 2px solid var(--warning);
+}
+.doc-section-accepted {
+  border-left-color: var(--success);
+}
+
+.doc-paragraph {
+  margin: 0 0 var(--space-2);
+}
+.doc-paragraph-empty {
+  color: var(--text-subtle);
+}
+
+.doc-skills {
+  margin: 0;
+}
+.doc-skill-row {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: 2px;
+}
+.doc-skill-row dt {
+  flex: 0 0 130px;
+  font-weight: 600;
+  color: #2a2c3a;
+}
+.doc-skill-row dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.doc-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.doc-entry-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.doc-entry-primary {
+  font-weight: 700;
+  color: #1d1f2b;
+}
+.doc-entry-dates {
+  flex: 0 0 auto;
+  color: #5b5d6e;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.doc-entry-subrow {
+  margin-top: 1px;
+}
+.doc-entry-secondary {
+  font-style: italic;
+  color: #3a3d4d;
+}
+.doc-entry-place {
+  flex: 0 0 auto;
+  color: #5b5d6e;
+  white-space: nowrap;
+}
+
+.doc-bullets {
+  margin: var(--space-1) 0 0;
+  padding-left: 18px;
+}
+.doc-bullets li {
+  margin: 0 0 2px;
+}
+
+/* ---- Right: AI review panel ---- */
+.review-panel {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  max-height: calc(100vh - var(--space-8));
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.review-panel-header {
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+.review-panel-eyebrow {
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+.review-panel-title {
+  margin: 4px 0 0;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.review-panel-body {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  overflow-y: auto;
+}
+
+.review-panel-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Badge / pill overflow guards (task 114 acceptance: no overflow). The review
+   panel is narrow, so every status word, risk pill and keyword chip must clip
+   or wrap rather than spill out of its container. */
+.review-panel .status-badge,
+.review-panel .suggestion-risk,
+.review-panel .suggestion-confidence {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-panel .suggestion-keyword-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-panel .suggestion-card {
+  min-width: 0;
+}
+
+/* ---- Responsive: collapse the right panel below the document ---- */
+@media (max-width: 1180px) {
+  .review-grid {
+    grid-template-columns: 170px minmax(0, 1fr);
+  }
+  .review-panel {
+    grid-column: 1 / -1;
+    position: static;
+    max-height: none;
+  }
 }

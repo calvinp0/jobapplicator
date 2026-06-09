@@ -109,13 +109,17 @@ def _load_suggestions_doc_or_404(version: ResumeVersion) -> dict:
 
 def _suggestions_read(version: ResumeVersion, doc: dict) -> ResumeSuggestionsRead:
     review_state = version.review_state or {}
+    base_resume = review_state.get("base_resume_json")
+    working_resume = review_state.get("working_resume_json")
     return ResumeSuggestionsRead(
         resume_version_id=version.id,
         target_company=doc.get("target_company", "") or "",
         target_job_title=doc.get("target_job_title", "") or "",
         suggestions=[ResumeSuggestionRead(**s) for s in doc.get("suggestions", [])],
         applied_at=review_state.get("applied_at"),
-        has_working_resume=bool(review_state.get("working_resume_json")),
+        has_working_resume=bool(working_resume),
+        base_resume=base_resume if isinstance(base_resume, dict) else None,
+        working_resume=working_resume if isinstance(working_resume, dict) else None,
     )
 
 

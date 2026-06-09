@@ -124,3 +124,60 @@ page via the "Review AI suggestions" link.
 The preview is intentionally structural, not a pixel-faithful DOCX
 render — the deterministic renderer (task 111) owns the final document;
 this page owns the accept/reject/revise decisions that feed it.
+
+## Word-like review workspace (task 114)
+
+Task 114 replaced the task-113 card stack at
+`/resume-versions/:versionId/review` with a three-panel, document-editor
+workspace. The route, data flow, and accept/reject/revise endpoints are
+unchanged; the layout and presentation are new.
+
+- **Layout** (`components/review/ResumeReviewWorkspace.tsx`): a slim top
+  bar (back link, document title + target role/company, accepted/total
+  progress, and the `Apply accepted suggestions` action) over a CSS-grid
+  three-panel body — left workflow rail, center document preview, right
+  AI review panel. The shell uses the wide content container
+  (`Layout.isWidePath` now treats any `…/review` path as wide).
+- **Left — workflow rail** (`WorkflowRail.tsx`): the five-step pipeline
+  (Job · Evidence · Tailoring · Review · Export) with per-step status
+  (`complete` / `active` / `blocked` / `failed`). Numbered markers turn
+  into ticks once complete; the active step gets the accent bar. Export
+  flips to `complete` once suggestions have been applied.
+- **Center — document preview** (`ResumeDocumentPreview.tsx` +
+  `ResumePage` / `ResumeHeaderPreview` / `ResumeSectionPreview` /
+  `ResumeExperienceEntryPreview` / `ResumeBulletList`): renders the
+  structured resume as a white, Letter-proportioned page on a neutral
+  background with a soft shadow, document-sized (12px) type, a centered
+  header, uppercase accent section headings, right-aligned dates, and
+  real bullet lists. Each section is a click target; sections carrying
+  suggestions get a subtle track-changes flag and left accent bar.
+- **Right — AI review panel** (`ReviewPanel.tsx`): shows the selected
+  section's suggestions via the existing `SuggestionCard` (previous vs.
+  suggested text, reason, evidence, ATS keywords, risk, and
+  accept/reject/revise). A section with no suggestions shows a useful
+  empty state; a draft with no suggestions at all shows a page-level
+  empty state.
+- **Document model** (`lib/reviewModel.ts`): `buildPreviewDocument`
+  prefers the applied `working_resume` over the `base_resume`, maps each
+  suggestion onto its section by normalized heading/id, and appends any
+  unmatched suggestions (or all suggestions, when no structured resume is
+  present) as derived sections so nothing is lost. Section-level diff:
+  an accepted `replace_section_text` is reflected live in the preview.
+- **Backend** (`routers/resume_versions.py`, `schemas.py`): the
+  `GET /resume-versions/{id}/suggestions` response now includes the
+  structured `base_resume` and `working_resume` (read from
+  `suggestion_review_state`) so the frontend can render a real document
+  preview rather than reconstructing one. The fields are optional, so
+  pre-task-114 drafts still load.
+
+Design tokens: a `--font-xs … --font-xl` scale was added to `:root`
+alongside the existing `--space-*` scale; the document page deliberately
+uses smaller, document-like type instead of the dashboard body size, and
+badges/pills in the narrow review panel are overflow-guarded (clamped
+with ellipsis) so long status/risk/keyword text never spills its
+container.
+
+Entry points: `Open review workspace` links were added to the
+application detail page (resume-version row) and the run detail page
+(resume-version line), complementing the existing link from the draft
+detail page.
