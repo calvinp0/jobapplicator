@@ -426,6 +426,34 @@ class ClaudeRunRecruiterReviewRead(BaseModel):
     path: Optional[str] = None
 
 
+# ---- Resume export (task 122) ----
+
+
+class RunArtifactExportFileRead(BaseModel):
+    """One file copied into a managed export folder.
+
+    ``name`` is the file's name inside the export folder (the DOCX carries
+    the human-readable export name; audits keep their stable names);
+    ``source`` is the project-relative path of the run artifact it was
+    copied from.
+    """
+
+    name: str
+    source: str
+
+
+class RunExportRead(BaseModel):
+    """Result of copying a run's artifacts into the managed exports folder.
+
+    ``export_dir`` is the project-relative export subfolder; ``files`` lists
+    every artifact copied into it.
+    """
+
+    ok: bool
+    export_dir: str
+    files: list[RunArtifactExportFileRead] = []
+
+
 # ---- Activity center (task 117) ----
 
 

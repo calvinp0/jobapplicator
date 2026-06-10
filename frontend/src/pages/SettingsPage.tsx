@@ -4,6 +4,7 @@ import {
   createEvidenceBank,
   createMasterResume,
   deleteGmailOAuthSettings,
+  getExportSettings,
   getGmailAuthUrl,
   getGmailOAuthSettings,
   getGmailStatus,
@@ -24,7 +25,7 @@ import type {
   MasterResume,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
-import { PageHeader, SettingsGroup } from "../components/ui";
+import { Button, PageHeader, SettingsGroup } from "../components/ui";
 
 const DEFAULT_REDIRECT_URI = "http://localhost:8000/gmail/oauth/callback";
 const DEFAULT_TOKEN_PATH = "candidate_context/gmail/token.json";
@@ -867,6 +868,63 @@ function GmailIntegrationCard() {
   );
 }
 
+function ExportsCard() {
+  const [path, setPath] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getExportSettings()
+      .then((data) => {
+        if (!cancelled) setPath(data.path);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(extractApiDetail(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleCopy() {
+    if (!path) return;
+    try {
+      await navigator.clipboard?.writeText(path);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <section className="settings-card" data-testid="exports-card">
+      <header className="settings-card-header">
+        <h3>Export folder</h3>
+      </header>
+      <p className="settings-helper">
+        When you export a tailored resume, the app copies the DOCX and its
+        audits into a per-application subfolder here. Each export keeps a
+        human-readable DOCX filename.
+      </p>
+      {loadError ? (
+        <p role="alert" className="error">
+          {loadError}
+        </p>
+      ) : path ? (
+        <p className="settings-export-path">
+          <code>{path}</code>{" "}
+          <Button variant="ghost" size="sm" onClick={() => void handleCopy()}>
+            {copied ? "Copied" : "Copy path"}
+          </Button>
+        </p>
+      ) : (
+        <p className="settings-helper">Loading…</p>
+      )}
+    </section>
+  );
+}
+
 function describeResume(resume: MasterResume): string {
   const kind = resume.source === "filesystem" ? "file" : "manual";
   const format = resume.source_format ? ` · ${resume.source_format}` : "";
@@ -995,6 +1053,13 @@ export function SettingsPage() {
         description="Pick which CLI-based provider drives the automatic tailoring flow."
       >
         <LlmProviderCard />
+      </SettingsGroup>
+
+      <SettingsGroup
+        label="Exports"
+        description="Where tailored resumes land when you export them from a run or review."
+      >
+        <ExportsCard />
       </SettingsGroup>
 
       <SettingsGroup

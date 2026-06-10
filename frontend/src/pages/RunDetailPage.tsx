@@ -17,6 +17,7 @@ import type {
   ResumeVersion,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
+import { ResumeDownloadActions } from "../components/ResumeDownloadActions";
 import {
   parseTimestamp,
   runIsActive,
@@ -672,19 +673,22 @@ export function RunDetailPage() {
       ) : null}
 
       {resumeVersion ? (
-        <p className="resume-version-link">
-          Resume version:{" "}
-          <Link to={`/resume-versions/${resumeVersion.id}`}>
-            {resumeVersion.id}
-          </Link>
-          {" · "}
-          <Link
-            className="review-workspace-link"
-            to={`/resume-versions/${resumeVersion.id}/review`}
-          >
-            Open review workspace
-          </Link>
-        </p>
+        <>
+          <p className="resume-version-link">
+            Resume version:{" "}
+            <Link to={`/resume-versions/${resumeVersion.id}`}>
+              {resumeVersion.id}
+            </Link>
+            {" · "}
+            <Link
+              className="review-workspace-link"
+              to={`/resume-versions/${resumeVersion.id}/review`}
+            >
+              Open review workspace
+            </Link>
+          </p>
+          <ResumeDownloadActions runId={run.id} showExport showMarkdown />
+        </>
       ) : null}
 
       {recruiterReview && recruiterReview.available ? (

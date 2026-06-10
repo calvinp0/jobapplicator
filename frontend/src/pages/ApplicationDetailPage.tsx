@@ -25,6 +25,7 @@ import {
   timelineStageVariant,
 } from "../lib/workflow";
 import { GmailEvidence } from "../components/GmailEvidence";
+import { ResumeDownloadActions } from "../components/ResumeDownloadActions";
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "—";
@@ -349,6 +350,13 @@ export function ApplicationDetailPage() {
         </button>
         {reason ? <span className="application-gating">{reason}</span> : null}
       </div>
+
+      {version && version.claude_run_id && version.docx_path ? (
+        <ResumeDownloadActions
+          runId={version.claude_run_id}
+          docxLabel="Download resume"
+        />
+      ) : null}
 
       {actionError ? (
         <p role="alert" className="error">

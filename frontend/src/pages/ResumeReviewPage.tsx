@@ -5,11 +5,13 @@ import {
   acceptSuggestion,
   applyResumeSuggestions,
   getResumeSuggestions,
+  getResumeVersion,
   rejectSuggestion,
   reviseSuggestion,
 } from "../api";
 import type { ResumeSuggestion, ResumeSuggestions } from "../api/types";
 import { buildPreviewDocument } from "../lib/reviewModel";
+import { ResumeDownloadActions } from "../components/ResumeDownloadActions";
 import { ResumeReviewWorkspace } from "../components/review/ResumeReviewWorkspace";
 import type { WorkflowStep } from "../components/review/WorkflowRail";
 import { EmptyState } from "../components/ui";
@@ -30,6 +32,9 @@ export function ResumeReviewPage() {
   const [isApplying, setIsApplying] = useState(false);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // The run that produced this draft — needed for the DOCX download/export
+  // actions, which key off the run's ``output/`` artifacts.
+  const [runId, setRunId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!versionId) return;
@@ -48,6 +53,23 @@ export function ResumeReviewPage() {
         } else {
           setLoadError("Failed to load resume suggestions.");
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [versionId]);
+
+  // Resolve the originating run so the workspace can offer a DOCX download.
+  // Best-effort: a draft without a backing run simply hides the action.
+  useEffect(() => {
+    if (!versionId) return;
+    let cancelled = false;
+    getResumeVersion(versionId)
+      .then((version) => {
+        if (!cancelled) setRunId(version.claude_run_id);
+      })
+      .catch(() => {
+        if (!cancelled) setRunId(null);
       });
     return () => {
       cancelled = true;
@@ -208,6 +230,9 @@ export function ResumeReviewPage() {
       isApplying={isApplying}
       applyMessage={applyMessage}
       actionError={actionError}
+      downloadActions={
+        runId ? <ResumeDownloadActions runId={runId} showExport /> : null
+      }
     />
   );
 }

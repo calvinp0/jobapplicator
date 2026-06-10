@@ -17,6 +17,7 @@ from .. import gmail_settings
 from ..db import get_db
 from ..llm_providers import list_providers
 from ..local_reset import create_backup, reset_local_data
+from ..resume_export import default_exports_root, project_relative_path
 from ..schemas import LLMProviderRead
 from ..settings import (
     UnknownLLMProviderError,
@@ -69,6 +70,26 @@ def update_default_llm_provider(
         default_provider=get_default_llm_provider(),
         available=_available_providers(),
     )
+
+
+# ---- Exports folder (task 122) ---------------------------------------
+
+
+class ExportSettingsRead(BaseModel):
+    """The app-managed exports folder shown on the Settings page.
+
+    First implementation is read-only: the app owns
+    ``candidate_context/exports/`` and surfaces the resolved path so the
+    user knows where exported resumes land. ``path`` is project-relative
+    when the folder lives under the project, else an absolute path.
+    """
+
+    path: str
+
+
+@router.get("/exports", response_model=ExportSettingsRead)
+def read_export_settings() -> ExportSettingsRead:
+    return ExportSettingsRead(path=project_relative_path(default_exports_root()))
 
 
 # ---- Gmail OAuth config (task 088) -----------------------------------

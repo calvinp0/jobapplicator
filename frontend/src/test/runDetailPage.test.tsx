@@ -51,6 +51,9 @@ vi.mock("../api", () => ({
       path: null,
     }),
   ),
+  downloadRunResume: vi.fn(() => Promise.resolve()),
+  downloadRunArtifact: vi.fn(() => Promise.resolve()),
+  exportRun: vi.fn(() => Promise.resolve({ ok: true, export_dir: "", files: [] })),
   ApiError: ApiErrorMock,
 }));
 
@@ -311,6 +314,29 @@ describe("RunDetailPage default UI", () => {
       "href",
       "/resume-versions/version-1",
     );
+    // The tailored resume can be downloaded straight from the run page.
+    expect(
+      screen.getByRole("button", { name: /download docx/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the resume download action before a draft exists", async () => {
+    getRunMock.mockResolvedValue({ ...failedRun });
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: /download docx/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders summary fields by default and hides provenance behind Advanced details", async () => {

@@ -771,3 +771,37 @@ that have no DB representation yet (e.g. `waiting_for_word_result`).
 
 Backwards compatibility: runs created before this field existed have no
 `status` key. Readers must treat a missing or null value as `created`.
+
+## Exports and downloads (task 122)
+
+The internal artifact names under `output/` are **stable** — workers,
+`run_import`, and the validation tests depend on them exactly as listed
+above. They are never renamed.
+
+User-facing downloads and exports use a separate, human-readable filename
+derived from `(candidate, company, job title, run created date)` so a
+folder of generated resumes is distinguishable, e.g.
+`Calvin_Pieters__Example_Aero_Labs__Scientific_Machine_Learning_Engineer__2026-05-27.docx`.
+The mapping lives in `backend/app/resume_export.py`
+(`build_resume_export_filename`); the candidate name is a best-effort read
+of `candidate_context/candidate_profile.md` and falls back to `Resume`
+when absent.
+
+Surfaces:
+
+- `GET /runs/{run_id}/artifacts/{artifact_name}/download` and
+  `GET /runs/{run_id}/download-resume` stream an artifact as an attachment
+  with the readable filename. Only the allow-listed names
+  (`tailored_resume.docx`, `tailored_resume.md`, `claim_audit.md`,
+  `ats_audit.md`, `recruiter_review.md`, `template_fidelity_audit.md`,
+  `change_log.md`) are served; any other name or a traversal attempt is a
+  400, a missing-but-allowed artifact is a 404.
+- `POST /runs/{run_id}/export` copies the available artifacts into a managed
+  per-run subfolder under `candidate_context/exports/`
+  (`<date>__<company>__<job>__<short_run_id>/`), renaming the DOCX to the
+  readable filename and keeping the audit/markdown files under their stable
+  names. Existing export folders are never overwritten — a collision gets a
+  `-2`, `-3`, … suffix. The exports root is overridable via
+  `JOBAPPLY_EXPORTS_ROOT`.
+
+Exports are **copies** — the internal run artifacts are left untouched.

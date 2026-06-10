@@ -252,6 +252,23 @@ export interface ResumeVersion {
   created_at: string;
 }
 
+// ---- Resume export / download (task 122) ----
+
+export interface RunExportFile {
+  name: string;
+  source: string;
+}
+
+export interface RunExport {
+  ok: boolean;
+  export_dir: string;
+  files: RunExportFile[];
+}
+
+export interface ExportSettings {
+  path: string;
+}
+
 export interface EmailLink {
   id: string;
   application_id: string;
