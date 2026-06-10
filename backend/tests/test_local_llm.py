@@ -28,6 +28,15 @@ def _completion(content: str, model: str = "llama3.1:8b") -> dict:
     }
 
 
+def _ollama_completion(content: str, model: str = "llama3.1:8b") -> dict:
+    """A minimal Ollama native ``/api/chat`` response body."""
+    return {
+        "model": model,
+        "message": {"role": "assistant", "content": content},
+        "done": True,
+    }
+
+
 def _load_local_llm_with_temp_db(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "JOBAPPLY_DATABASE_URL", f"sqlite:///{tmp_path / 'local-llm.db'}"
@@ -71,6 +80,7 @@ def test_local_llm_settings_save_and_load(client):
     assert body["allow_compression"] is True
     assert body["allow_fallback"] is True
     assert body["abort_on_over_budget"] is False
+    assert body["num_ctx"] is None
     assert body["allowed_tasks"]["resume_tailoring"] is False
 
     updated = client.put(
@@ -104,6 +114,98 @@ def test_local_llm_settings_save_and_load(client):
     assert fetched["allow_compression"] is False
     assert fetched["allow_fallback"] is False
     assert fetched["abort_on_over_budget"] is True
+
+
+def test_local_llm_num_ctx_round_trips_through_settings(client):
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "num_ctx": 16384,
+        },
+    ).raise_for_status()
+
+    body = client.get("/settings/local-llm").json()
+    assert body["num_ctx"] == 16384
+
+
+def test_local_llm_num_ctx_rejects_non_positive(client):
+    resp = client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "num_ctx": 0,
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "num_ctx" in resp.json()["detail"]
+
+
+def test_get_config_parses_and_validates_num_ctx(monkeypatch, tmp_path):
+    import pytest
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+
+    # Unset on a fresh DB.
+    assert local_llm.get_config().num_ctx is None
+
+    # A positive int persists and reloads.
+    config = local_llm.save_config(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        timeout_seconds=local_llm.DEFAULT_TIMEOUT_SECONDS,
+        allowed_tasks={},
+        num_ctx=8192,
+    )
+    assert config.num_ctx == 8192
+    assert local_llm.get_config().num_ctx == 8192
+
+    # A non-positive value is rejected, independent of the context budget.
+    with pytest.raises(local_llm.LocalLLMValidationError):
+        local_llm.save_config(
+            enabled=True,
+            provider=local_llm.PROVIDER_OLLAMA,
+            base_url="http://localhost:11434/v1",
+            model="llama3.1:8b",
+            timeout_seconds=local_llm.DEFAULT_TIMEOUT_SECONDS,
+            allowed_tasks={},
+            num_ctx=-5,
+        )
+
+
+def test_get_config_treats_invalid_stored_num_ctx_as_none(monkeypatch, tmp_path):
+    import json
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+    from app.db import SessionLocal
+    from app.models import AppSetting
+
+    # A garbage stored value (non-int) is coerced to None on load.
+    with SessionLocal() as session:
+        session.add(
+            AppSetting(
+                key=local_llm.LOCAL_LLM_SETTING_KEY,
+                value=json.dumps(
+                    {
+                        "enabled": True,
+                        "provider": "ollama",
+                        "base_url": "http://localhost:11434/v1",
+                        "model": "llama3.1:8b",
+                        "num_ctx": "not-an-int",
+                    }
+                ),
+            )
+        )
+        session.commit()
+
+    assert local_llm.get_config().num_ctx is None
 
 
 def test_local_llm_settings_rejects_impossible_budget(client):
@@ -332,6 +434,96 @@ def test_client_formats_openai_compatible_request(client, monkeypatch):
     assert captured["payload"]["response_format"] == {"type": "json_object"}
     assert captured["headers"]["Authorization"] == "Bearer tok"
     assert captured["timeout"] == 42
+
+
+def test_client_sends_num_ctx_for_ollama_native(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        captured["payload"] = payload
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        num_ctx=16384,
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert result.ok is True
+    # Routed to the native /api/chat surface (the /v1 suffix is stripped).
+    assert captured["url"] == "http://localhost:11434/api/chat"
+    # The configured server context reaches the request body.
+    assert captured["payload"]["options"]["num_ctx"] == 16384
+    assert captured["payload"]["stream"] is False
+    # Native surface uses top-level "format", not OpenAI's response_format.
+    assert captured["payload"]["format"] == "json"
+    assert "response_format" not in captured["payload"]
+
+
+def test_client_never_sends_num_ctx_for_openai_compatible(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        captured["payload"] = payload
+        return _completion("ok")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # num_ctx is stored, but must never be sent on the OpenAI-compatible
+    # surface — it cannot be set per request there.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        num_ctx=16384,
+    )
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+    assert "options" not in captured["payload"]
+    assert "num_ctx" not in captured["payload"]
+
+
+def test_client_ollama_without_num_ctx_uses_openai_surface(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        captured["payload"] = payload
+        return _completion("ok")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # Ollama provider but no num_ctx configured: nothing changes — the request
+    # keeps using the existing /v1/chat/completions path with no options block.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        num_ctx=None,
+    )
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+    assert "options" not in captured["payload"]
 
 
 def test_client_refuses_over_budget_prompt_before_http(client, monkeypatch):
