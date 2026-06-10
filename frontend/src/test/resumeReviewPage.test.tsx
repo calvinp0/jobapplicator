@@ -33,10 +33,18 @@ const {
 
 vi.mock("../api", () => ({
   getResumeSuggestions: getResumeSuggestionsMock,
+  getResumeVersion: vi.fn(() =>
+    Promise.resolve({ claude_run_id: "run-1", docx_path: "x" }),
+  ),
   acceptSuggestion: acceptSuggestionMock,
   rejectSuggestion: rejectSuggestionMock,
   reviseSuggestion: reviseSuggestionMock,
   applyResumeSuggestions: applyResumeSuggestionsMock,
+  downloadRunResume: vi.fn(() => Promise.resolve()),
+  downloadRunArtifact: vi.fn(() => Promise.resolve()),
+  exportRun: vi.fn(() =>
+    Promise.resolve({ ok: true, export_dir: "", files: [] }),
+  ),
   ApiError: ApiErrorMock,
 }));
 

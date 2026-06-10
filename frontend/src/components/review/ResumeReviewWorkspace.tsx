@@ -26,6 +26,8 @@ interface ResumeReviewWorkspaceProps {
   isApplying: boolean;
   applyMessage: string | null;
   actionError: string | null;
+  /** Resume download/export actions (task 122), rendered in the top bar. */
+  downloadActions?: ReactNode;
 }
 
 /**
@@ -55,6 +57,7 @@ export function ResumeReviewWorkspace({
   isApplying,
   applyMessage,
   actionError,
+  downloadActions,
 }: ResumeReviewWorkspaceProps) {
   return (
     <div className="review-workspace" data-testid="review-workspace">
@@ -73,6 +76,7 @@ export function ResumeReviewWorkspace({
             {acceptedCount} accepted · {totalCount} total
             {appliedAt ? " · working resume saved" : ""}
           </span>
+          {downloadActions}
           <Button
             variant="primary"
             size="sm"

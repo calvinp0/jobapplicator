@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..claude_worker import (
@@ -39,6 +42,16 @@ from ..run_directory import (
     default_runtime_prompts_root,
 )
 from ..run_import import RunImportError, import_run_outputs
+from ..resume_export import (
+    ResumeExportError,
+    default_exports_root,
+    discover_candidate_name,
+    download_filename_for,
+    export_run,
+    media_type_for,
+    project_relative_path,
+    resolve_output_artifact,
+)
 from ..settings import get_default_llm_provider
 from ..schemas import (
     ClaudeRunCreate,
@@ -46,6 +59,8 @@ from ..schemas import (
     ClaudeRunProgressRead,
     ClaudeRunRead,
     ClaudeRunRecruiterReviewRead,
+    RunArtifactExportFileRead,
+    RunExportRead,
     ResumeVersionRead,
 )
 
@@ -312,6 +327,106 @@ def get_run_recruiter_review(
         available=True,
         content=content,
         path=review_relpath,
+    )
+
+
+def _run_naming(
+    run: ClaudeRun, db: Session
+) -> tuple[Optional[str], str, str, Optional[datetime]]:
+    """Resolve the (candidate, company, job_title, created_at) used for names.
+
+    Company/title come from the run's job; the candidate name is a
+    best-effort read of ``candidate_context/candidate_profile.md`` (None when
+    no real name is present, which the filename builder handles by falling
+    back to ``Resume``).
+    """
+    job = db.get(Job, run.job_id)
+    company = job.company if job is not None else ""
+    job_title = job.title if job is not None else ""
+    candidate = discover_candidate_name(default_candidate_context_root())
+    return candidate, company, job_title, run.created_at
+
+
+def _download_artifact(run_id: str, artifact_name: str, db: Session) -> FileResponse:
+    run = db.get(ClaudeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="claude run not found")
+    try:
+        path = resolve_output_artifact(Path(run.run_dir), artifact_name)
+    except ResumeExportError as exc:
+        # Unknown artifact name or a traversal attempt — never a 404, so a
+        # probing client cannot distinguish "missing" from "not allowed".
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404, detail=f"artifact not found: {artifact_name}"
+        )
+    candidate, company, job_title, created_at = _run_naming(run, db)
+    download_name = download_filename_for(
+        artifact_name, candidate, company, job_title, created_at, run.id
+    )
+    return FileResponse(
+        path,
+        media_type=media_type_for(artifact_name),
+        filename=download_name,
+    )
+
+
+@router.get("/{run_id}/artifacts/{artifact_name}/download")
+def download_run_artifact(
+    run_id: str, artifact_name: str, db: Session = Depends(get_db)
+) -> FileResponse:
+    """Stream a known run artifact as an attachment with a readable filename.
+
+    Only names in ``DOWNLOADABLE_ARTIFACTS`` are served; anything else (or a
+    path-traversal attempt) is a 400, a missing-but-allowed artifact is a
+    404. The ``Content-Disposition`` carries the human-readable export name.
+    """
+    return _download_artifact(run_id, artifact_name, db)
+
+
+@router.get("/{run_id}/download-resume")
+def download_run_resume(
+    run_id: str, db: Session = Depends(get_db)
+) -> FileResponse:
+    """Convenience download for the tailored resume DOCX (the headline output)."""
+    return _download_artifact(run_id, "tailored_resume.docx", db)
+
+
+@router.post("/{run_id}/export", response_model=RunExportRead)
+def export_run_artifacts(
+    run_id: str, db: Session = Depends(get_db)
+) -> RunExportRead:
+    """Copy a run's final artifacts into the managed exports folder.
+
+    Creates a per-run subfolder under ``candidate_context/exports/``,
+    renames the DOCX to the human-readable name, copies available
+    markdown/audit artifacts, and returns the export path plus copied files.
+    Never overwrites an existing export folder.
+    """
+    run = db.get(ClaudeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="claude run not found")
+    candidate, company, job_title, created_at = _run_naming(run, db)
+    try:
+        result = export_run(
+            Path(run.run_dir),
+            default_exports_root(),
+            candidate_name=candidate,
+            company=company,
+            job_title=job_title,
+            created_at=created_at,
+            run_id=run.id,
+        )
+    except ResumeExportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RunExportRead(
+        ok=True,
+        export_dir=project_relative_path(result.export_dir),
+        files=[
+            RunArtifactExportFileRead(name=f.name, source=f.source)
+            for f in result.files
+        ],
     )
 
 

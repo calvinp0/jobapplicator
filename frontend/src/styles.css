@@ -1502,6 +1502,56 @@ button[type="submit"]:disabled,
   margin-top: var(--space-3);
 }
 
+/* Resume download / export actions (task 122) */
+.resume-download-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.resume-download-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.resume-download-error {
+  margin: 0;
+}
+
+.resume-export-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 14px;
+}
+
+.resume-export-label {
+  color: var(--text-muted, #555);
+}
+
+.resume-export-path,
+.settings-export-path code {
+  word-break: break-all;
+}
+
+.settings-export-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The review top bar keeps the download actions inline with Apply. */
+.review-topbar-actions .resume-download-actions {
+  margin: 0;
+  flex-direction: row;
+  align-items: center;
+}
+
 .revision-feedback-form {
   display: flex;
   flex-direction: column;

@@ -64,6 +64,9 @@ vi.mock("../api", () => ({
   getGmailOAuthSettings: getGmailOAuthSettingsMock,
   setGmailOAuthSettings: setGmailOAuthSettingsMock,
   deleteGmailOAuthSettings: deleteGmailOAuthSettingsMock,
+  getExportSettings: vi.fn(() =>
+    Promise.resolve({ path: "candidate_context/exports" }),
+  ),
   ApiError: ApiErrorMock,
 }));
 

@@ -70,6 +70,11 @@ vi.mock("../api", () => ({
   linkGmailEmail: linkGmailEmailMock,
   listLinkedGmailEmails: listLinkedGmailEmailsMock,
   unlinkGmailEmail: unlinkGmailEmailMock,
+  downloadRunResume: vi.fn(() => Promise.resolve()),
+  downloadRunArtifact: vi.fn(() => Promise.resolve()),
+  exportRun: vi.fn(() =>
+    Promise.resolve({ ok: true, export_dir: "", files: [] }),
+  ),
   ApiError: ApiErrorMock,
 }));
 

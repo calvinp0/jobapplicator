@@ -1,4 +1,8 @@
-import { apiRequest, apiUpload } from "./client";
+import { API_BASE, ApiError, apiRequest, apiUpload } from "./client";
+import {
+  parseContentDispositionFilename,
+  triggerBrowserDownload,
+} from "../lib/downloads";
 import type {
   ActivityItem,
   ActivityResponse,
@@ -14,6 +18,7 @@ import type {
   EvidenceBankCreate,
   EvidenceSource,
   EvidenceSourceType,
+  ExportSettings,
   FileImportResult,
   ResetLocalDataResponse,
   GmailAuthUrlResponse,
@@ -50,6 +55,8 @@ import type {
   RevisionFeedback,
   RevisionFeedbackCreate,
   RecruiterReview,
+  RunExport,
+  RunExportFile,
   RunLog,
   RunProgress,
   WordHandoffMetadata,
@@ -74,6 +81,7 @@ export type {
   EvidenceBankCreate,
   EvidenceSource,
   EvidenceSourceType,
+  ExportSettings,
   FileImportResult,
   ResetLocalDataResponse,
   GmailAuthUrlResponse,
@@ -110,6 +118,8 @@ export type {
   RevisionFeedback,
   RevisionFeedbackCreate,
   RecruiterReview,
+  RunExport,
+  RunExportFile,
   RunLog,
   RunProgress,
   WordHandoffMetadata,
@@ -241,6 +251,60 @@ export function getRunRecruiterReview(
 
 export function importRun(runId: string): Promise<ResumeVersion> {
   return apiRequest(`/runs/${runId}/import`, { method: "POST" });
+}
+
+// ---- Resume export / download (task 122) ----
+
+/**
+ * Download a known run artifact (DOCX, markdown, audit). The backend sets a
+ * ``Content-Disposition: attachment`` header with the human-readable
+ * filename, which we honour when saving. Throws {@link ApiError} on a
+ * missing/forbidden artifact so callers can surface a clear error.
+ */
+export async function downloadRunArtifact(
+  runId: string,
+  artifactName: string,
+): Promise<void> {
+  const path = `/runs/${runId}/artifacts/${encodeURIComponent(
+    artifactName,
+  )}/download`;
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: { Accept: "*/*" },
+  });
+  if (!response.ok) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    throw new ApiError(
+      `Request to ${path} failed with status ${response.status}`,
+      response.status,
+      body,
+    );
+  }
+  const blob = await response.blob();
+  const filename =
+    parseContentDispositionFilename(
+      response.headers.get("content-disposition"),
+    ) ?? artifactName;
+  triggerBrowserDownload(blob, filename);
+}
+
+/** Download the tailored resume DOCX — the headline run output. */
+export function downloadRunResume(runId: string): Promise<void> {
+  return downloadRunArtifact(runId, "tailored_resume.docx");
+}
+
+/** Copy a run's artifacts into the managed exports folder. */
+export function exportRun(runId: string): Promise<RunExport> {
+  return apiRequest(`/runs/${runId}/export`, { method: "POST" });
+}
+
+/** Read the app-managed exports folder path shown on the Settings page. */
+export function getExportSettings(): Promise<ExportSettings> {
+  return apiRequest("/settings/exports");
 }
 
 export function listResumeVersions(): Promise<ResumeVersion[]> {

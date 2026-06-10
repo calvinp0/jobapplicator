@@ -49,6 +49,9 @@ vi.mock("../api", () => ({
   setLlmProviderSetting: setLlmProviderSettingMock,
   getGmailStatus: getGmailStatusMock,
   getGmailAuthUrl: getGmailAuthUrlMock,
+  getExportSettings: vi.fn(() =>
+    Promise.resolve({ path: "candidate_context/exports" }),
+  ),
   ApiError: ApiErrorMock,
 }));
 
