@@ -8,13 +8,16 @@ import {
   getGmailOAuthSettings,
   getGmailStatus,
   getLlmProviderSetting,
-  listEvidenceBanks,
+  importEvidenceSourceFile,
+  importMasterResumeFile,
+  listEvidenceSources,
   listMasterResumes,
+  resetLocalData,
   setGmailOAuthSettings,
   setLlmProviderSetting,
 } from "../api";
 import type {
-  EvidenceBank,
+  EvidenceSource,
   GmailOAuthSettings,
   GmailStatusResponse,
   LlmProvider,
@@ -26,48 +29,62 @@ import { PageHeader, SettingsGroup } from "../components/ui";
 const DEFAULT_REDIRECT_URI = "http://localhost:8000/gmail/oauth/callback";
 const DEFAULT_TOKEN_PATH = "candidate_context/gmail/token.json";
 
-interface SeedEntity {
+interface SourceListEntry {
   id: string;
   name: string;
-  source_path: string | null;
-  created_at: string;
+  meta: string;
 }
 
-interface CreatePayload {
-  name: string;
-  source_path?: string | null;
-  content_markdown: string;
-}
+type ImportMode = "file" | "manual";
 
-interface SeedCardProps<T extends SeedEntity> {
+interface ImportPasteCardProps {
   title: string;
-  items: T[] | null;
+  testId: string;
+  items: SourceListEntry[] | null;
   emptyLabel: string;
-  addButtonLabel: string;
-  onCreate: (payload: CreatePayload) => Promise<T>;
-  onCreated: (item: T) => void;
+  /** Verb fragment used for the reveal button + submit, e.g. "master resume". */
+  addNoun: string;
+  /** ``accept`` attribute for the file input, e.g. ".docx,.md,.txt". */
+  acceptExtensions: string;
+  /** Human description of accepted files shown under the picker. */
+  acceptHint: string;
   contentLabel: string;
+  onImportFile: (file: File) => Promise<void>;
+  onCreateManual: (name: string, content: string) => Promise<void>;
 }
 
-function SeedCard<T extends SeedEntity>({
+/**
+ * A settings card that lists app-managed sources and offers two ways to add
+ * one: upload a file (copied into candidate_context) or paste content
+ * manually. The old free-text "Source path" field is gone — users never type
+ * a local path, which browsers cannot reliably expose anyway (task 121).
+ */
+function ImportPasteCard({
   title,
+  testId,
   items,
   emptyLabel,
-  addButtonLabel,
-  onCreate,
-  onCreated,
+  addNoun,
+  acceptExtensions,
+  acceptHint,
   contentLabel,
-}: SeedCardProps<T>) {
+  onImportFile,
+  onCreateManual,
+}: ImportPasteCardProps) {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [mode, setMode] = useState<ImportMode>("file");
+  const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
-  const [sourcePath, setSourcePath] = useState("");
   const [contentMarkdown, setContentMarkdown] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const addLabel = `Add ${addNoun}`;
+
   function resetForm() {
+    setMode("file");
+    setFile(null);
     setName("");
-    setSourcePath("");
     setContentMarkdown("");
     setSubmitError(null);
   }
@@ -79,19 +96,25 @@ function SeedCard<T extends SeedEntity>({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim() || !contentMarkdown.trim()) {
+    setSubmitError(null);
+
+    if (mode === "file") {
+      if (!file) {
+        setSubmitError("Choose a file to upload.");
+        return;
+      }
+    } else if (!name.trim() || !contentMarkdown.trim()) {
       setSubmitError("Name and content are required.");
       return;
     }
+
     setIsSubmitting(true);
-    setSubmitError(null);
     try {
-      const created = await onCreate({
-        name: name.trim(),
-        source_path: sourcePath.trim() ? sourcePath.trim() : null,
-        content_markdown: contentMarkdown,
-      });
-      onCreated(created);
+      if (mode === "file" && file) {
+        await onImportFile(file);
+      } else {
+        await onCreateManual(name.trim(), contentMarkdown);
+      }
       resetForm();
       setIsFormOpen(false);
     } catch (err: unknown) {
@@ -102,7 +125,7 @@ function SeedCard<T extends SeedEntity>({
   }
 
   return (
-    <section className="settings-card">
+    <section className="settings-card" data-testid={testId}>
       <header className="settings-card-header">
         <h3>{title}</h3>
         {!isFormOpen ? (
@@ -111,7 +134,7 @@ function SeedCard<T extends SeedEntity>({
             className="button button-secondary"
             onClick={() => setIsFormOpen(true)}
           >
-            {`+ ${addButtonLabel}`}
+            {`+ ${addLabel}`}
           </button>
         ) : null}
       </header>
@@ -125,10 +148,7 @@ function SeedCard<T extends SeedEntity>({
           {items.map((item) => (
             <li key={item.id} className="settings-list-item">
               <strong>{item.name}</strong>
-              <span className="settings-meta">
-                {new Date(item.created_at).toLocaleString()}
-                {item.source_path ? ` · ${item.source_path}` : ""}
-              </span>
+              <span className="settings-meta">{item.meta}</span>
             </li>
           ))}
         </ul>
@@ -136,32 +156,79 @@ function SeedCard<T extends SeedEntity>({
 
       {isFormOpen ? (
         <form onSubmit={handleSubmit} noValidate className="settings-card-form">
-          <label className="field">
-            <span>Name</span>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>Source path (optional)</span>
-            <input
-              type="text"
-              value={sourcePath}
-              onChange={(e) => setSourcePath(e.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>{contentLabel}</span>
-            <textarea
-              value={contentMarkdown}
-              rows={8}
-              onChange={(e) => setContentMarkdown(e.target.value)}
-              required
-            />
-          </label>
+          <fieldset className="settings-mode-toggle">
+            <legend>How do you want to add it?</legend>
+            <label>
+              <input
+                type="radio"
+                name={`${testId}-mode`}
+                value="file"
+                checked={mode === "file"}
+                onChange={() => {
+                  setMode("file");
+                  setSubmitError(null);
+                }}
+              />
+              <span>Upload a source file</span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`${testId}-mode`}
+                value="manual"
+                checked={mode === "manual"}
+                onChange={() => {
+                  setMode("manual");
+                  setSubmitError(null);
+                }}
+              />
+              <span>Paste content manually</span>
+            </label>
+          </fieldset>
+
+          {mode === "file" ? (
+            <label className="field">
+              <span>Source file</span>
+              <input
+                type="file"
+                accept={acceptExtensions}
+                aria-label="Source file"
+                data-testid={`${testId}-file-input`}
+                onChange={(e) => {
+                  setFile(e.target.files?.[0] ?? null);
+                  setSubmitError(null);
+                }}
+              />
+              {file ? (
+                <span className="settings-meta" data-testid={`${testId}-filename`}>
+                  {file.name}
+                </span>
+              ) : (
+                <span className="settings-helper">{acceptHint}</span>
+              )}
+            </label>
+          ) : (
+            <>
+              <label className="field">
+                <span>Name</span>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>{contentLabel}</span>
+                <textarea
+                  value={contentMarkdown}
+                  rows={8}
+                  onChange={(e) => setContentMarkdown(e.target.value)}
+                  required
+                />
+              </label>
+            </>
+          )}
 
           {submitError ? (
             <p role="alert" className="error">
@@ -171,7 +238,13 @@ function SeedCard<T extends SeedEntity>({
 
           <div className="settings-card-form-actions">
             <button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Saving…" : addButtonLabel}
+              {isSubmitting
+                ? mode === "file"
+                  ? "Importing…"
+                  : "Saving…"
+                : mode === "file"
+                  ? `Import ${addNoun}`
+                  : addLabel}
             </button>
             <button
               type="button"
@@ -183,6 +256,135 @@ function SeedCard<T extends SeedEntity>({
             </button>
           </div>
         </form>
+      ) : null}
+    </section>
+  );
+}
+
+function DangerZoneCard() {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  function openDialog() {
+    setConfirmText("");
+    setErrorMessage(null);
+    setResultMessage(null);
+    setIsDialogOpen(true);
+  }
+
+  function closeDialog() {
+    setIsDialogOpen(false);
+    setConfirmText("");
+    setErrorMessage(null);
+  }
+
+  async function handleConfirm() {
+    if (confirmText !== "RESET") return;
+    setIsResetting(true);
+    setErrorMessage(null);
+    try {
+      const result = await resetLocalData("RESET");
+      const summary = Object.entries(result.deleted)
+        .map(([key, count]) => `${count} ${key}`)
+        .join(", ");
+      setResultMessage(
+        `Local data reset. Deleted ${summary}.` +
+          (result.backup_path
+            ? ` A backup was saved to ${result.backup_path}.`
+            : ""),
+      );
+      setIsDialogOpen(false);
+      setConfirmText("");
+    } catch (err: unknown) {
+      setErrorMessage(extractApiDetail(err));
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
+  return (
+    <section className="settings-card" data-testid="danger-zone-card">
+      <header className="settings-card-header">
+        <h3>Reset local data</h3>
+      </header>
+      <p className="settings-helper">
+        This will delete local jobs, applications, runs, captures, drafts, and
+        generated artifacts, and clear Gmail tracking state. It will not delete
+        your master resumes, evidence banks, or any source files outside
+        JobApplicator. A timestamped database backup is created first.
+      </p>
+
+      {resultMessage ? (
+        <p role="status" className="settings-success">
+          {resultMessage}
+        </p>
+      ) : null}
+
+      {!isDialogOpen ? (
+        <div className="settings-card-form-actions">
+          <button
+            type="button"
+            className="button button-danger"
+            onClick={openDialog}
+            data-testid="reset-local-data-button"
+          >
+            Reset local data
+          </button>
+        </div>
+      ) : null}
+
+      {isDialogOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reset local data"
+          className="settings-confirm-dialog"
+          data-testid="reset-confirm-dialog"
+        >
+          <p>
+            This permanently deletes local jobs, applications, runs, captures,
+            and drafts. This cannot be undone (except by restoring the backup).
+          </p>
+          <label className="field">
+            <span>Type RESET to confirm.</span>
+            <input
+              type="text"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              aria-label="Type RESET to confirm"
+              autoComplete="off"
+            />
+          </label>
+
+          {errorMessage ? (
+            <p role="alert" className="error">
+              {errorMessage}
+            </p>
+          ) : null}
+
+          <div className="settings-card-form-actions">
+            <button
+              type="button"
+              className="button button-danger"
+              onClick={handleConfirm}
+              disabled={confirmText !== "RESET" || isResetting}
+              data-testid="reset-confirm-button"
+            >
+              {isResetting ? "Resetting…" : "Reset local data"}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={closeDialog}
+              disabled={isResetting}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : null}
     </section>
   );
@@ -665,20 +867,40 @@ function GmailIntegrationCard() {
   );
 }
 
+function describeResume(resume: MasterResume): string {
+  const kind = resume.source === "filesystem" ? "file" : "manual";
+  const format = resume.source_format ? ` · ${resume.source_format}` : "";
+  return `${kind}${format}`;
+}
+
+function describeEvidence(source: EvidenceSource): string {
+  const kind = source.source === "filesystem" ? "file" : "manual";
+  const format = source.source_format ? ` · ${source.source_format}` : "";
+  return `${source.source_type} · ${kind}${format}`;
+}
+
 export function SettingsPage() {
   const [resumes, setResumes] = useState<MasterResume[] | null>(null);
-  const [evidenceBanks, setEvidenceBanks] = useState<EvidenceBank[] | null>(
-    null,
-  );
+  const [evidenceSources, setEvidenceSources] = useState<
+    EvidenceSource[] | null
+  >(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  async function refreshResumes() {
+    setResumes(await listMasterResumes());
+  }
+
+  async function refreshEvidence() {
+    setEvidenceSources(await listEvidenceSources());
+  }
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listMasterResumes(), listEvidenceBanks()])
-      .then(([r, b]) => {
+    Promise.all([listMasterResumes(), listEvidenceSources()])
+      .then(([r, e]) => {
         if (cancelled) return;
         setResumes(r);
-        setEvidenceBanks(b);
+        setEvidenceSources(e);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -688,6 +910,23 @@ export function SettingsPage() {
       cancelled = true;
     };
   }, []);
+
+  const resumeItems =
+    resumes === null
+      ? null
+      : resumes.map((r) => ({
+          id: r.id,
+          name: r.name,
+          meta: describeResume(r),
+        }));
+  const evidenceItems =
+    evidenceSources === null
+      ? null
+      : evidenceSources.map((e) => ({
+          id: e.id,
+          name: e.name,
+          meta: describeEvidence(e),
+        }));
 
   return (
     <section className="settings-page">
@@ -710,32 +949,44 @@ export function SettingsPage() {
 
       <SettingsGroup
         label="Document tooling"
-        description="Master resumes and evidence banks used as inputs to tailoring runs."
+        description="Master resumes and evidence sources used as inputs to tailoring runs. Upload a file (copied into your candidate context) or paste content directly."
       >
-        <SeedCard<MasterResume>
+        <ImportPasteCard
           title="Master resumes"
-          items={resumes}
+          testId="master-resumes-card"
+          items={resumeItems}
           emptyLabel="No master resumes yet — add one to enable tailoring."
-          addButtonLabel="Add master resume"
-          onCreate={createMasterResume}
-          onCreated={(item) =>
-            setResumes((prev) => (prev === null ? [item] : [item, ...prev]))
-          }
+          addNoun="master resume"
+          acceptExtensions=".docx,.md,.txt"
+          acceptHint="DOCX, Markdown, or text files."
           contentLabel="Content (markdown)"
+          onImportFile={async (file) => {
+            await importMasterResumeFile(file);
+            await refreshResumes();
+          }}
+          onCreateManual={async (name, content) => {
+            await createMasterResume({ name, content_markdown: content });
+            await refreshResumes();
+          }}
         />
 
-        <SeedCard<EvidenceBank>
-          title="Evidence banks"
-          items={evidenceBanks}
-          emptyLabel="No evidence banks yet — optional, but useful for grounded tailoring."
-          addButtonLabel="Add evidence bank"
-          onCreate={createEvidenceBank}
-          onCreated={(item) =>
-            setEvidenceBanks((prev) =>
-              prev === null ? [item] : [item, ...prev],
-            )
-          }
+        <ImportPasteCard
+          title="Evidence sources"
+          testId="evidence-sources-card"
+          items={evidenceItems}
+          emptyLabel="No evidence sources yet — optional, but useful for grounded tailoring."
+          addNoun="evidence source"
+          acceptExtensions=".md,.txt,.docx"
+          acceptHint="Markdown, text, or DOCX files."
           contentLabel="Content (markdown)"
+          onImportFile={async (file) => {
+            await importEvidenceSourceFile(file);
+            await refreshEvidence();
+          }}
+          onCreateManual={async (name, content) => {
+            await createEvidenceBank({ name, content_markdown: content });
+            await refreshEvidence();
+          }}
         />
       </SettingsGroup>
 
@@ -784,18 +1035,7 @@ export function SettingsPage() {
         label="Danger zone"
         description="Operations that are difficult to reverse. The cockpit will always confirm before doing anything destructive."
       >
-        <section className="settings-card" data-testid="danger-zone-card">
-          <header className="settings-card-header">
-            <h3>Reset local data</h3>
-          </header>
-          <p className="settings-helper">
-            The local SQLite database lives at{" "}
-            <code>candidate_context/jobapply.sqlite</code>. To start fresh,
-            stop the backend and delete that file. There is no in-app reset
-            today — this panel is a placeholder for future destructive
-            tooling.
-          </p>
-        </section>
+        <DangerZoneCard />
       </SettingsGroup>
     </section>
   );

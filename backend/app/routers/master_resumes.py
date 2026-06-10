@@ -3,18 +3,24 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..file_import import (
+    MASTER_RESUME_EXTENSIONS,
+    FileImportError,
+    save_imported_file,
+)
 from ..master_resume_discovery import (
     FilesystemMasterResume,
+    default_master_resumes_root,
     list_filesystem_master_resumes,
     load_filesystem_master_resume_text,
     resolve_filesystem_master_resume,
 )
 from ..models import MasterResume
-from ..schemas import MasterResumeCreate, MasterResumeRead
+from ..schemas import FileImportResult, MasterResumeCreate, MasterResumeRead
 
 router = APIRouter(prefix="/master-resumes", tags=["master-resumes"])
 
@@ -91,6 +97,56 @@ def create_master_resume(
     db.commit()
     db.refresh(resume)
     return _db_read(resume)
+
+
+@router.post(
+    "/import-file",
+    response_model=FileImportResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_master_resume_file(
+    file: UploadFile = File(...),
+) -> FileImportResult:
+    """Import an uploaded resume file into ``candidate_context/master_resumes/``.
+
+    The file is validated, sanitized, and copied into the managed folder
+    so the app owns a stable copy. It is then discoverable by the same
+    filesystem scan that powers the master-resume list, so no DB row is
+    needed. DOCX content is extracted lazily at run-creation time.
+    """
+    data = await file.read()
+    try:
+        imported = save_imported_file(
+            default_master_resumes_root(),
+            file.filename or "",
+            data,
+            MASTER_RESUME_EXTENSIONS,
+        )
+    except FileImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record = next(
+        (
+            r
+            for r in list_filesystem_master_resumes()
+            if r.absolute_path.resolve() == imported.stored_path.resolve()
+        ),
+        None,
+    )
+    if record is None:  # pragma: no cover - defensive; the file was just written
+        raise HTTPException(
+            status_code=500, detail="imported file could not be resolved"
+        )
+
+    return FileImportResult(
+        id=record.id,
+        name=imported.name,
+        source_type="master_resume",
+        source_format=imported.source_format,
+        original_filename=imported.original_filename,
+        stored_path=record.source_path,
+        imported_at=_now(),
+    )
 
 
 @router.get("", response_model=list[MasterResumeRead])

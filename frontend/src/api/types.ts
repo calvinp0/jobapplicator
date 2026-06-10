@@ -128,6 +128,26 @@ export interface EvidenceBankCreate {
   content_markdown: string;
 }
 
+// Result of importing a file into an app-managed candidate_context folder
+// (task 121). The original upload is copied so the app owns a stable copy;
+// ``stored_path`` is the managed project-relative path.
+export interface FileImportResult {
+  id: string;
+  name: string;
+  source_type: string;
+  source_format: string;
+  original_filename: string;
+  stored_path: string;
+  imported_at: string;
+}
+
+// Response from POST /settings/reset-local-data (task 121).
+export interface ResetLocalDataResponse {
+  ok: boolean;
+  backup_path: string | null;
+  deleted: Record<string, number>;
+}
+
 export type EvidenceSourceType =
   | "evidence_bank"
   | "resume_variant"

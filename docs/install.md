@@ -1001,3 +1001,24 @@ another backend (e.g. Postgres), the script exits with status 2 and a
 short message — use the vendor's native backup/restore tool
 (`pg_dump` / `pg_restore`, etc.) and document the path here.
 
+### In-app reset (Settings → Danger zone)
+
+Task 121 adds a real reset control to the Settings page so you do not
+need the CLI for a routine wipe. **Settings → Danger zone → Reset local
+data** opens a confirmation dialog that requires typing `RESET`, then
+calls `POST /settings/reset-local-data`.
+
+Unlike the CLI (which deletes the SQLite *file* and reinitializes the
+schema), the in-app reset clears rows through the running backend so it
+is safe while the server is up. It:
+
+1. Writes a timestamped SQLite backup under `backups/database/`
+   (overridable with `JOBAPPLY_BACKUPS_ROOT`) *before* deleting anything.
+2. Deletes local jobs, applications, runs, captures, drafts, application
+   events, email links, and revision feedback.
+3. Removes generated run directories that live inside the runs root
+   (run dirs resolving outside it are never touched).
+
+Master resumes, evidence banks, candidate context files, and Gmail
+tokens are preserved — imported source material survives a reset.
+

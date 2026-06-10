@@ -141,6 +141,28 @@ class MasterResumeRead(_ORMModel):
     is_demo: bool = False
 
 
+# ---- File import (task 121) ----
+
+class FileImportResult(BaseModel):
+    """Metadata for a file imported into an app-managed candidate folder.
+
+    Returned by the master-resume and evidence file-import endpoints. The
+    imported file is copied into ``candidate_context/`` so the app owns a
+    stable copy; ``stored_path`` is the project-relative managed path and
+    ``original_filename`` preserves the name the user uploaded. ``id`` is
+    the filesystem-discovery id so the frontend can immediately reference
+    the imported source.
+    """
+
+    id: str
+    name: str
+    source_type: str
+    source_format: str
+    original_filename: str
+    stored_path: str
+    imported_at: datetime
+
+
 # ---- EvidenceBank ----
 
 class EvidenceBankCreate(BaseModel):

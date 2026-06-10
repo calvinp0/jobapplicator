@@ -56,6 +56,34 @@ export async function apiRequest<T>(
   return parsed as T;
 }
 
+export async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  options: { signal?: AbortSignal } = {},
+): Promise<T> {
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  // Intentionally do NOT set Content-Type: the browser sets the correct
+  // multipart/form-data boundary header automatically for a FormData body.
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: formData,
+    signal: options.signal,
+  });
+  const text = await response.text();
+  const parsed = text ? safeParse(text) : null;
+
+  if (!response.ok) {
+    throw new ApiError(
+      `Request to ${path} failed with status ${response.status}`,
+      response.status,
+      parsed,
+    );
+  }
+
+  return parsed as T;
+}
+
 function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);

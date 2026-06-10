@@ -169,8 +169,11 @@ describe("ResumeReviewPage workspace (task 114)", () => {
     renderReview();
 
     // The summary section is selected by default (first with suggestions).
+    // The default selection is applied by an effect that commits one render
+    // after the panel first appears, so wait for the card rather than querying
+    // synchronously (which races the selection effect under full-suite load).
     const panel = await screen.findByTestId("review-panel");
-    const card = within(panel).getByTestId("suggestion-card-sug_001");
+    const card = await within(panel).findByTestId("suggestion-card-sug_001");
     expect(within(card).getByText("Old summary.")).toBeInTheDocument(); // previous
     expect(within(card).getByText("Sharper summary.")).toBeInTheDocument(); // suggested
     expect(within(card).getByText("Aligns with the role.")).toBeInTheDocument();
