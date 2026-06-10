@@ -2581,13 +2581,13 @@ tasks:
       - "agent_tasks/128-clarify-context-budget-settings-ui.md"
       - "agent_tasks/queue.yaml"
 
-  - id: 129
+  - id: "129"
     title: Add compact provider trace to application runs
-    status: planned
+    status: ready
     depends_on:
-      - 126
-      - 127
-      - 128
+      - "126"
+      - "127"
+      - "128"
     priority: medium
     task_file: agent_tasks/129-add-provider-trace-to-application-runs.md
     allowed_paths:
