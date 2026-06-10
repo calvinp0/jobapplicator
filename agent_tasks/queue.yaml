@@ -2461,7 +2461,7 @@ tasks:
     file: "agent_tasks/123-add-experimental-local-llm-provider.md"
     branch: "agent/123-add-experimental-local-llm-provider"
     worktree: "agent-123-add-experimental-local-llm-provider"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "python -m pytest"
