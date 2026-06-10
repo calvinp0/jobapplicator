@@ -2424,7 +2424,7 @@ tasks:
     file: "agent_tasks/121-clean-settings-capture-inbox-reset-and-file-imports.md"
     branch: "agent/121-clean-settings-capture-inbox-reset-and-file-imports"
     worktree: "agent-121-clean-settings-capture-inbox-reset-and-file-imports"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "python -m pytest"
