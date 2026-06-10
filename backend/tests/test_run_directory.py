@@ -865,18 +865,18 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def test_runtime_prompt_mentions_docx_word_skill_as_fallback():
-    """Task 074 originally asked Claude to use the DOCX skill for the
-    primary DOCX. Task 111 moved DOCX rendering to a deterministic
-    backend renderer, so the prompt must still mention the DOCX / Word
-    document skill but as an optional fallback path rather than the
-    primary one. The skill is named so a reader can locate the fallback
-    section."""
+def test_runtime_prompt_mentions_docx_word_mcp_as_fallback():
+    """The deterministic backend renderer owns the DOCX (task 111). The v2
+    prompt keeps the Office Word MCP (`word-document-server`) documented as
+    an optional fallback path rather than the primary one, so a reader can
+    locate the fallback section."""
     prompt_path = _repo_root() / "runtime_prompts" / "resume_tailoring.md"
     text = prompt_path.read_text(encoding="utf-8")
-    assert "DOCX / Word document skill" in text
-    # The prompt must say the DOCX is not a plain-text dump.
-    assert "not a plain-text dump" in text
+    assert "word-document-server" in text
+    assert "Office Word MCP" in text
+    assert "Optional fallback only" in text
+    # Even on the fallback path, the DOCX must not be a plain-text dump.
+    assert "never produce a plain-text dump" in text
     # The prompt must say a source DOCX in input/ should be used as a
     # formatting reference when available.
     assert "source DOCX" in text and "input/" in text
@@ -905,22 +905,20 @@ def test_runtime_prompt_office_word_mcp_remains_as_fallback():
     """
     prompt_path = _repo_root() / "runtime_prompts" / "resume_tailoring.md"
     text = prompt_path.read_text(encoding="utf-8")
+    # The fallback sentence wraps across lines in the markdown source.
+    normalized = " ".join(text.split())
 
     # The prompt must name the connected MCP server explicitly so Claude
     # Code can pick the right tool when taking the fallback path.
     assert "word-document-server" in text
     assert "Office Word MCP" in text
-    # The DOCX / Word document skill must also remain documented.
-    assert "DOCX / Word document skill" in text
 
-    # If a source DOCX exists, the prompt's master-DOCX section must
-    # still describe the copy/edit workflow as the fallback formatting
-    # source. The original sentence is capitalized as "Copy" in the
-    # numbered workflow steps.
-    assert "Copy `input/master_resume.docx` as the editable base" in text
+    # The fallback path documents the copy → tailor-in-place → preserve
+    # styles workflow for the optional preview DOCX.
+    assert "copy the source DOCX, tailor text in place, preserve styles" in normalized
 
-    # The prompt must still say the DOCX is not a plain-text dump.
-    assert "not a plain-text dump" in text
+    # The prompt must still say the fallback DOCX is not a plain-text dump.
+    assert "never produce a plain-text dump" in normalized
 
     # The new primary path must be explicitly documented: backend
     # deterministic renderer reads tailored_resume.json.

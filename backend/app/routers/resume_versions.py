@@ -472,6 +472,16 @@ def create_revision_feedback(
     # Stage the current tailored draft so the worker can revise it
     # instead of regenerating from scratch.
     current_md = source_version.content_markdown
+    # Stage the structured projection of the prior draft when available so the
+    # worker can reuse its section/entry ids across revisions. Prefer the
+    # applied working resume over the captured base.
+    current_json: Optional[str] = None
+    prior_review_state = source_version.review_state or {}
+    prior_structured = prior_review_state.get(
+        "working_resume_json"
+    ) or prior_review_state.get("base_resume_json")
+    if isinstance(prior_structured, dict) and prior_structured:
+        current_json = json.dumps(prior_structured, indent=2)
     current_docx_path: Optional[Path] = None
     if source_version.docx_path:
         candidate = Path(source_version.docx_path)
@@ -498,6 +508,7 @@ def create_revision_feedback(
             master_resume_docx_path=master_resume_docx_path,
             evidence_sources=resolved_evidence_sources,
             current_tailored_resume_markdown=current_md,
+            current_tailored_resume_json=current_json,
             current_tailored_resume_docx_path=current_docx_path,
         )
     except RunDirectoryError as exc:

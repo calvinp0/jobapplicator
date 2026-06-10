@@ -25,21 +25,28 @@ Schema (see ``docs/contracts/claude_run_directory.md`` for the full spec):
   "suggestions": [
     {
       "id": "sug_001",
-      "section_id": "professional_summary",
+      "section_id": "sec_summary",
+      "entry_id": null,
+      "bullet_index": null,
       "section_heading": "PROFESSIONAL SUMMARY",
       "operation": "replace_section_text",
       "current_text": "...",
       "suggested_text": "...",
       "reason": "Why this improves the resume.",
-      "evidence_refs": [{"source": "vtrace evidence", "quote": "..."}],
+      "evidence_refs": [{"source": "input/evidence_sources/003.md", "quote": "..."}],
       "ats_keywords": ["agentic AI", "distributed systems"],
-      "confidence": 0.86,
+      "confidence": "high",
       "risk": "low",
       "status": "pending"
     }
   ]
 }
 ```
+
+``section_id`` references a section ``id`` in ``tailored_resume.json``;
+``validate_section_references`` cross-checks it (and ``entry_id``) against
+the resume's declared ids. ``confidence`` is one of ``high``/``medium``/
+``low`` (a legacy numeric value in ``[0, 1]`` is still accepted).
 
 Only ``id``, ``section_id``, ``operation`` and ``reason`` are strictly
 required per suggestion; every other field is optional and defaults to a
@@ -85,6 +92,11 @@ APPLIED_OPERATIONS = (
 SUGGESTION_STATUSES = ("pending", "accepted", "rejected", "revised")
 
 RISK_LEVELS = ("low", "medium", "high")
+
+# Confidence levels in the v2 prompt contract. The validator also accepts a
+# legacy numeric confidence in [0, 1] (older drafts / stored ResumeVersion
+# documents used a float) so both forms round-trip without a migration.
+CONFIDENCE_LEVELS = ("high", "medium", "low")
 
 
 class SuggestionError(ValueError):
@@ -152,15 +164,41 @@ def _evidence_refs(value: Any, where: str) -> list[dict[str, str]]:
     return result
 
 
-def _confidence(value: Any, where: str) -> Optional[float]:
+def _confidence(value: Any, where: str):
+    """Validate ``confidence`` as a v2 level (high/medium/low) or legacy float.
+
+    Returns the normalized lowercase level string, a float in ``[0, 1]`` for
+    legacy numeric input, or ``None`` when omitted.
+    """
     if value is None:
         return None
+    if isinstance(value, str):
+        level = value.strip().lower()
+        if level not in CONFIDENCE_LEVELS:
+            raise SuggestionError(
+                f"{where} {value!r} is not one of {list(CONFIDENCE_LEVELS)} "
+                "(or a number between 0 and 1)"
+            )
+        return level
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SuggestionError(f"{where} must be a number between 0 and 1")
+        raise SuggestionError(
+            f"{where} must be one of {list(CONFIDENCE_LEVELS)} "
+            "or a number between 0 and 1"
+        )
     num = float(value)
     if not 0.0 <= num <= 1.0:
         raise SuggestionError(f"{where} must be between 0 and 1, got {num}")
     return num
+
+
+def _bullet_index(value: Any, where: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SuggestionError(f"{where} must be a non-negative integer or null")
+    if value < 0:
+        raise SuggestionError(f"{where} must be >= 0, got {value}")
+    return value
 
 
 def _risk(value: Any, where: str) -> str:
@@ -197,6 +235,14 @@ def validate_suggestion(raw: Any, where: str) -> dict[str, Any]:
         "id": _require_nonempty_str(sug.get("id"), f"{where}.id"),
         "section_id": _require_nonempty_str(
             sug.get("section_id"), f"{where}.section_id"
+        ),
+        # Bullet- and entry-level operations target a specific entry / bullet
+        # in the tailored JSON. Optional so section-level suggestions stay
+        # sparse; cross-validated against the resume ids by
+        # :func:`validate_section_references`.
+        "entry_id": _optional_str(sug.get("entry_id"), f"{where}.entry_id"),
+        "bullet_index": _bullet_index(
+            sug.get("bullet_index"), f"{where}.bullet_index"
         ),
         "section_heading": _optional_str(
             sug.get("section_heading"), f"{where}.section_heading"
@@ -252,6 +298,67 @@ def validate_suggestions_payload(data: Any) -> dict[str, Any]:
     }
 
 
+def index_resume_section_ids(resume_payload: Any) -> dict[str, set[str]]:
+    """Map each declared section ``id`` to the set of its entry ``id``s.
+
+    Sections / entries that do not declare an ``id`` are skipped, so the
+    result is empty for legacy resume JSON that predates the v2 id contract.
+    """
+    index: dict[str, set[str]] = {}
+    if not isinstance(resume_payload, dict):
+        return index
+    for section in resume_payload.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        sid = section.get("id")
+        if not isinstance(sid, str) or not sid.strip():
+            continue
+        entry_ids: set[str] = set()
+        for entry in section.get("entries") or []:
+            if isinstance(entry, dict):
+                eid = entry.get("id")
+                if isinstance(eid, str) and eid.strip():
+                    entry_ids.add(eid)
+        index[sid] = entry_ids
+    return index
+
+
+def validate_section_references(
+    suggestions_doc: dict[str, Any], resume_payload: Any
+) -> None:
+    """Ensure each suggestion's ``section_id`` (and ``entry_id``) is real.
+
+    Each suggestion must point at a section ``id`` that exists in
+    ``tailored_resume.json``; entry-targeted operations must also point at an
+    entry ``id`` within that section. Enforced only when the resume JSON
+    declares section ids (the v2 contract). When no ids are declared (legacy
+    JSON), this is a no-op so the fuzzy apply path keeps working.
+
+    Raises :class:`SuggestionError` so the worker can fail the run with a
+    clear, location-tagged message.
+    """
+    index = index_resume_section_ids(resume_payload)
+    if not index:
+        return
+    valid_sections = sorted(index)
+    for sug in suggestions_doc.get("suggestions") or []:
+        if not isinstance(sug, dict):
+            continue
+        sid = sug.get("section_id")
+        if sid not in index:
+            raise SuggestionError(
+                f"suggestion {sug.get('id')!r} references unknown section_id "
+                f"{sid!r}; known section ids: {valid_sections}"
+            )
+        eid = sug.get("entry_id")
+        if eid:
+            if eid not in index[sid]:
+                raise SuggestionError(
+                    f"suggestion {sug.get('id')!r} references unknown entry_id "
+                    f"{eid!r} in section {sid!r}"
+                )
+
+
 def find_suggestion(
     doc: dict[str, Any], suggestion_id: str
 ) -> Optional[dict[str, Any]]:
@@ -272,6 +379,8 @@ def load_suggestions_json(path: Path) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:  # pragma: no cover - filesystem failure
         raise SuggestionError(f"failed to read {path.name}: {exc}") from exc
+    if not text.strip():
+        raise SuggestionError(f"resume suggestions JSON is empty: output/{path.name}")
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
@@ -292,15 +401,17 @@ def _slug(text: str) -> str:
 def _section_matches(section: dict[str, Any], section_id: str) -> bool:
     """Decide whether ``section`` is the target of a suggestion's ``section_id``.
 
-    Suggestions reference sections by a stable-ish id like
-    ``professional_summary`` while the renderer schema keys sections by
-    ``type`` (``summary``) and ``heading`` (``PROFESSIONAL SUMMARY``). We
-    accept a match on the type, the slugified heading, or either being a
-    substring of the other so the prompt and the renderer schema do not have
-    to agree on an exact id vocabulary.
+    Under the v2 contract sections carry a stable ``id`` (e.g. ``sec_summary``)
+    and suggestions reference it exactly. For backward compatibility with
+    legacy JSON that keyed sections only by ``type`` (``summary``) and
+    ``heading`` (``PROFESSIONAL SUMMARY``), we also accept a match on the type,
+    the slugified heading, or either being a substring of the other so the
+    prompt and the renderer schema do not have to agree on an exact id
+    vocabulary.
     """
     target = _slug(section_id)
     candidates = {
+        _slug(str(section.get("id") or "")),
         _slug(str(section.get("type") or "")),
         _slug(str(section.get("heading") or "")),
     }

@@ -22,6 +22,7 @@ EXPECTED_OUTPUTS = (
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+    "recruiter_review.md",
 )
 
 # Valid structured resume + suggestions so the import-time schema validation

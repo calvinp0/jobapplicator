@@ -32,12 +32,15 @@ from .resume_docx_renderer import (
     TAILORED_RESUME_DOCX_FILENAME,
     TAILORED_RESUME_JSON_FILENAME,
     TEMPLATE_FIDELITY_AUDIT_FILENAME as RENDERER_TEMPLATE_FIDELITY_AUDIT_FILENAME,
+    load_resume_json,
     render_resume_from_run,
+    validate_resume_payload,
 )
 from .resume_suggestions import (
     RESUME_SUGGESTIONS_FILENAME,
     SuggestionError,
     load_suggestions_json,
+    validate_section_references,
     validate_suggestions_payload,
 )
 from .run_directory import EXPECTED_OUTPUTS
@@ -67,12 +70,10 @@ OUTPUT_DIRNAME = "output"
 # previously requested from Claude (task 107) and lives at the same path
 # so existing operator tooling continues to work.
 TEMPLATE_FIDELITY_AUDIT_FILENAME = RENDERER_TEMPLATE_FIDELITY_AUDIT_FILENAME
-# Optional output (not in EXPECTED_OUTPUTS) — the runtime prompt asks
-# Claude to also produce a recruiter/hiring-manager review of the
-# tailored resume (task 108). To avoid breaking existing dry-run /
-# import tests that wrote the original output set, this file is
-# requested but not strictly required by the worker; the warning line
-# surfaces missed reviews so the operator can spot regressions.
+# The runtime prompt asks Claude to produce a recruiter/hiring-manager
+# review of the tailored resume (task 108). It is now a required output
+# (part of EXPECTED_OUTPUTS), so a missing review fails the run via the
+# standard ``_missing_outputs`` gate alongside the other outputs.
 RECRUITER_REVIEW_FILENAME = "recruiter_review.md"
 PROGRESS_DIRNAME = "progress"
 PROGRESS_LOG_FILENAME = "progress.log"
@@ -408,6 +409,24 @@ def _validate_resume_suggestions(run_dir: Path, log_path: Path) -> None:
         log_path,
         f"resume suggestions valid: {len(payload['suggestions'])} suggestion(s)",
     )
+
+    # Cross-validate that every suggestion's section_id (and entry_id) points
+    # at a real id in the tailored resume JSON. Only enforced when the resume
+    # declares ids (v2 contract); legacy id-less JSON skips the strict check.
+    resume_path = run_dir / OUTPUT_DIRNAME / TAILORED_RESUME_JSON_FILENAME
+    try:
+        resume_payload = validate_resume_payload(load_resume_json(resume_path))
+    except RendererError as exc:
+        message = f"invalid tailored resume JSON: {exc}"
+        _append_progress(log_path, message)
+        raise RendererError(message) from exc
+    try:
+        validate_section_references(payload, resume_payload)
+    except SuggestionError as exc:
+        message = f"invalid resume suggestions JSON: {exc}"
+        _append_progress(log_path, message)
+        raise RendererError(message) from exc
+    _append_progress(log_path, "resume suggestion section references valid")
 
 
 def _write_dry_run_outputs(run_dir: Path) -> None:
@@ -829,17 +848,6 @@ def invoke_claude_run(
             _append_progress(log_path, "output contract satisfied")
             run.status = "completed"
             run.error_message = None
-        # Optional recruiter review (task 108). Always expected — the
-        # review is independent of whether a DOCX was staged.
-        recruiter_review_path = (
-            run_dir / OUTPUT_DIRNAME / RECRUITER_REVIEW_FILENAME
-        )
-        if not recruiter_review_path.is_file():
-            _append_progress(
-                log_path,
-                "warning: recruiter review missing at "
-                f"{OUTPUT_DIRNAME}/{RECRUITER_REVIEW_FILENAME}",
-            )
     run.completed_at = _now()
     db.commit()
     db.refresh(run)

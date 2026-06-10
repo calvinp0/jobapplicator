@@ -47,6 +47,7 @@ def _write_min_outputs(output_dir: Path) -> None:
         "change_log.md",
         "claim_audit.md",
         "ats_audit.md",
+        "recruiter_review.md",
     ):
         (output_dir / name).write_bytes(f"content for {name}\n".encode("utf-8"))
     (output_dir / "tailored_resume.json").write_text(
@@ -277,6 +278,9 @@ def test_revision_feedback_followup_run_input_dir_contains_expected_files(
         # the worker can revise it rather than regenerate from scratch.
         "current_tailored_resume.md",
         "current_tailored_resume.docx",
+        # The prior draft's structured projection (section/entry ids) is
+        # staged when the source version captured a base resume JSON.
+        "current_tailored_resume.json",
     }
     assert present == expected
 

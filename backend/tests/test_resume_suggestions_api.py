@@ -114,7 +114,12 @@ def _seed_imported_version(client, tmp_path: Path, monkeypatch) -> dict:
 
     out = Path(run["run_dir"]) / "output"
     out.mkdir(parents=True, exist_ok=True)
-    for name in ("change_log.md", "claim_audit.md", "ats_audit.md"):
+    for name in (
+        "change_log.md",
+        "claim_audit.md",
+        "ats_audit.md",
+        "recruiter_review.md",
+    ):
         (out / name).write_bytes(f"content for {name}\n".encode("utf-8"))
     (out / "tailored_resume.md").write_bytes(b"content for tailored_resume.md\n")
     (out / "tailored_resume.docx").write_bytes(b"docx\n")

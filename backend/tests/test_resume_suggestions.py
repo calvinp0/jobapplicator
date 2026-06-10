@@ -16,6 +16,8 @@ from app.resume_suggestions import (
     SuggestionError,
     apply_accepted,
     find_suggestion,
+    index_resume_section_ids,
+    validate_section_references,
     validate_suggestions_payload,
 )
 
@@ -96,6 +98,41 @@ def test_validate_rejects_out_of_range_confidence():
         validate_suggestions_payload(_doc(_valid_suggestion(confidence=1.5)))
 
 
+def test_validate_accepts_categorical_confidence():
+    doc = validate_suggestions_payload(
+        _doc(_valid_suggestion(confidence="High"))
+    )
+    # Normalized to lowercase level.
+    assert doc["suggestions"][0]["confidence"] == "high"
+
+
+def test_validate_rejects_unknown_confidence_level():
+    with pytest.raises(SuggestionError, match="high"):
+        validate_suggestions_payload(
+            _doc(_valid_suggestion(confidence="very-sure"))
+        )
+
+
+def test_validate_captures_entry_id_and_bullet_index():
+    sug = _valid_suggestion(
+        section_id="sec_experience",
+        entry_id="exp_001",
+        bullet_index=2,
+        operation="rewrite_bullet",
+    )
+    doc = validate_suggestions_payload(_doc(sug))
+    out = doc["suggestions"][0]
+    assert out["entry_id"] == "exp_001"
+    assert out["bullet_index"] == 2
+
+
+def test_validate_rejects_negative_bullet_index():
+    with pytest.raises(SuggestionError, match="bullet_index"):
+        validate_suggestions_payload(
+            _doc(_valid_suggestion(bullet_index=-1))
+        )
+
+
 def test_validate_rejects_duplicate_ids():
     with pytest.raises(SuggestionError, match="duplicate"):
         validate_suggestions_payload(
@@ -124,6 +161,81 @@ def test_find_suggestion_by_id():
     doc = _doc(_valid_suggestion(id="a"), _valid_suggestion(id="b"))
     assert find_suggestion(doc, "b")["id"] == "b"
     assert find_suggestion(doc, "missing") is None
+
+
+# ---- section_id cross-validation -------------------------------------------
+
+
+def _resume_with_ids():
+    return {
+        "header": {"name": "Test Candidate"},
+        "sections": [
+            {"id": "sec_summary", "type": "summary", "paragraphs": ["..."]},
+            {
+                "id": "sec_experience",
+                "type": "experience",
+                "entries": [
+                    {"id": "exp_001", "title": "Engineer", "bullets": ["..."]}
+                ],
+            },
+        ],
+    }
+
+
+def test_index_resume_section_ids():
+    index = index_resume_section_ids(_resume_with_ids())
+    assert index == {"sec_summary": set(), "sec_experience": {"exp_001"}}
+
+
+def test_validate_section_references_accepts_known_ids():
+    doc = _doc(
+        _valid_suggestion(id="s1", section_id="sec_summary"),
+        _valid_suggestion(
+            id="s2",
+            section_id="sec_experience",
+            entry_id="exp_001",
+            operation="rewrite_bullet",
+            bullet_index=0,
+        ),
+    )
+    # Does not raise.
+    validate_section_references(
+        validate_suggestions_payload(doc), _resume_with_ids()
+    )
+
+
+def test_validate_section_references_rejects_unknown_section_id():
+    doc = validate_suggestions_payload(
+        _doc(_valid_suggestion(section_id="sec_nope"))
+    )
+    with pytest.raises(SuggestionError, match="unknown section_id"):
+        validate_section_references(doc, _resume_with_ids())
+
+
+def test_validate_section_references_rejects_unknown_entry_id():
+    doc = validate_suggestions_payload(
+        _doc(
+            _valid_suggestion(
+                section_id="sec_experience",
+                entry_id="exp_999",
+                operation="rewrite_bullet",
+            )
+        )
+    )
+    with pytest.raises(SuggestionError, match="unknown entry_id"):
+        validate_section_references(doc, _resume_with_ids())
+
+
+def test_validate_section_references_noop_without_declared_ids():
+    # Legacy resume JSON has no ids -> strict check is skipped.
+    legacy = {
+        "header": {"name": "X"},
+        "sections": [{"type": "summary", "paragraphs": ["..."]}],
+    }
+    doc = validate_suggestions_payload(
+        _doc(_valid_suggestion(section_id="professional_summary"))
+    )
+    validate_section_references(doc, legacy)  # does not raise
 
 
 # ---- apply_accepted --------------------------------------------------------
@@ -248,7 +360,7 @@ def test_tailoring_prompt_requests_resume_suggestions():
     assert "output/resume_suggestions.json" in body
     assert "Structured Resume Suggestions" in body
     # The reviewable-suggestion fields are spelled out.
-    for token in ("operation", "evidence references", "confidence", "risk"):
+    for token in ("operation", "evidence_refs", "confidence", "risk"):
         assert token in body
 
 
@@ -257,8 +369,9 @@ def test_tailoring_prompt_discourages_unsupported_claims():
         encoding="utf-8"
     )
     assert "Do not suggest unsupported claims." in body
-    assert "weak or user-provided evidence" in body
-    assert "Avoid rewriting the whole resume as one giant suggestion." in body
+    assert "user-provided evidence" in body
+    # No single suggestion should rewrite the entire resume.
+    assert "rewrites the whole resume" in body
 
 
 def test_revision_prompt_requests_resume_suggestions():

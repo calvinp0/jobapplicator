@@ -139,6 +139,8 @@ def load_resume_json(path: Path) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise RendererError(f"failed to read {path.name}: {exc}") from exc
+    if not text.strip():
+        raise RendererError(f"tailored resume JSON is empty: output/{path.name}")
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:

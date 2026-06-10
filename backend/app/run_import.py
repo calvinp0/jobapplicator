@@ -28,6 +28,8 @@ EXPECTED_OUTPUT_FILES = (
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+    # Required by the v2 tailoring contract; import re-validates it too.
+    "recruiter_review.md",
 )
 
 

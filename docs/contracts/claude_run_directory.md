@@ -16,6 +16,9 @@ runs/<run_id>/
 │   ├── tailoring_prompt.md
 │   ├── prompt_snapshot.md        # verbatim snapshot of the effective runtime prompt
 │   ├── revision_feedback.md      # only present on follow-up runs
+│   ├── current_tailored_resume.md    # prior draft to revise (follow-up runs)
+│   ├── current_tailored_resume.json  # optional structured prior draft (follow-up runs)
+│   ├── current_tailored_resume.docx  # optional prior draft DOCX (follow-up runs)
 │   ├── master_resume.docx        # optional source DOCX (any accepted name)
 │   ├── master_resume_extracted.md           # written by the backend when a DOCX is present
 │   └── master_resume_extraction_error.md    # written instead if extraction fails
@@ -28,7 +31,7 @@ runs/<run_id>/
 │   ├── claim_audit.md
 │   ├── ats_audit.md
 │   ├── template_fidelity_audit.md   # written deterministically by the backend renderer
-│   └── recruiter_review.md          # optional; recruiter/hiring-manager simulated review
+│   └── recruiter_review.md          # required; recruiter/hiring-manager simulated review
 ├── progress/
 │   └── progress.log              # user-facing phase events + worker heartbeats
 ├── word_handoff/                 # only used when tailoring_method == word_handoff
@@ -304,12 +307,15 @@ input/tailoring_preferences.md
 input/resume_dos_and_donts.md
 input/tailoring_prompt.md
 input/revision_feedback.md
+input/current_tailored_resume.md
+input/current_tailored_resume.json
+input/current_tailored_resume.docx
 input/master_resume.docx
 input/master_resume_extracted.md
 input/master_resume_extraction_error.md
 ```
 
-`input/revision_feedback.md` is only present on follow-up tailoring runs (see ADR-008); when absent, the worker must treat the run as a first-draft tailoring run.
+`input/revision_feedback.md` is only present on follow-up tailoring runs (see ADR-008); when absent, the worker must treat the run as a first-draft tailoring run. The `input/current_tailored_resume.{md,json,docx}` files are staged alongside it on revision runs: the markdown and DOCX are the prior draft to revise, and the optional structured JSON (`current_tailored_resume.json`) carries the prior draft's section/entry ids so suggestions stay stable across revisions.
 
 ## Claude Code Write Boundary
 
@@ -385,11 +391,11 @@ review of the tailored resume against the target company and role
 scorecard, a first 30-second impression, strengths and weaknesses,
 missing or under-emphasized requirements, claims that need stronger
 evidence, suggested rewrites for the weakest lines, and a
-company-specific fit assessment. The review is *optional* in the
-worker output contract today: a run is not marked failed when it is
-absent. The worker logs a ``warning: recruiter review missing`` line
-when the review was not produced, and the runtime prompts (first-draft
-and revision) still list the review as a required output for Claude.
+company-specific fit assessment. The review is a **required** output of
+the v2 tailoring contract: it is part of ``EXPECTED_OUTPUTS`` and
+``run_import``'s ``EXPECTED_OUTPUT_FILES``, so a run is marked failed
+(``expected output file missing: output/recruiter_review.md``) when it
+is absent, exactly like the other required outputs.
 
 Claude Code must not write outside the run directory.
 
@@ -412,20 +418,22 @@ Schema (stable, evolved additively):
     "subtitle": "Optional subtitle line"
   },
   "sections": [
-    {"type": "summary",      "heading": "PROFESSIONAL SUMMARY", "paragraphs": ["..."]},
-    {"type": "skills",       "heading": "SKILLS",
+    {"id": "sec_summary", "type": "summary", "heading": "PROFESSIONAL SUMMARY", "paragraphs": ["..."]},
+    {"id": "sec_skills", "type": "skills", "heading": "SKILLS",
       "groups": [{"label": "Languages", "items": ["Python"]}]},
-    {"type": "experience",   "heading": "EXPERIENCE",
+    {"id": "sec_experience", "type": "experience", "heading": "WORK EXPERIENCE",
       "entries": [{
+        "id": "exp_001",
         "title": "...", "organization": "...", "location": "...",
         "dates": "2024 – Present", "subtitle": "...", "bullets": ["..."]
       }]},
-    {"type": "education",    "heading": "EDUCATION",
+    {"id": "sec_education", "type": "education", "heading": "EDUCATION",
       "entries": [{
+        "id": "edu_001",
         "institution": "...", "degree": "...",
         "dates": "...", "location": "..."
       }]},
-    {"type": "publications", "heading": "PUBLICATIONS", "items": ["..."]}
+    {"id": "sec_publications", "type": "publications", "heading": "PUBLICATIONS", "items": ["..."]}
   ],
   "metadata": {
     "target_company": "...",
@@ -439,6 +447,11 @@ Rules:
 
 - `header.name` is required and must be non-empty.
 - `sections` must be a non-empty array.
+- Every section, and every experience/education entry, carries a stable
+  `id` (lowercase snake_case, unique within the document). Suggestions in
+  `resume_suggestions.json` reference these ids, and the worker
+  cross-validates them (see "Structured Resume Suggestions"). The renderer
+  itself ignores ids — they exist for the review surface.
 - Section `type` must be one of: `summary`, `skills`, `experience`,
   `education`, `publications`, `projects`, `certifications`, `awards`,
   `other`.
@@ -477,15 +490,17 @@ Schema:
   "suggestions": [
     {
       "id": "sug_001",
-      "section_id": "professional_summary",
+      "section_id": "sec_summary",
+      "entry_id": null,
+      "bullet_index": null,
       "section_heading": "PROFESSIONAL SUMMARY",
       "operation": "replace_section_text",
       "current_text": "...",
       "suggested_text": "...",
       "reason": "Why this improves the resume for the target role.",
-      "evidence_refs": [{"source": "vtrace evidence", "quote": "..."}],
+      "evidence_refs": [{"source": "input/evidence_sources/003.md", "quote": "..."}],
       "ats_keywords": ["agentic AI", "distributed systems"],
-      "confidence": 0.86,
+      "confidence": "high",
       "risk": "low",
       "status": "pending"
     }
@@ -497,14 +512,23 @@ Rules:
 
 - `id`, `section_id`, `operation`, and `reason` are required on every
   suggestion; `id` must be unique within the document.
+- `section_id` must match a section `id` in `tailored_resume.json`.
+  Bullet- and entry-level operations set `entry_id` (matching an entry
+  `id` in that section) and, for bullet operations, `bullet_index` (a
+  0-based index into the entry's `bullets`). The worker cross-validates
+  `section_id` and `entry_id` against the resume's declared ids and fails
+  the run when a suggestion points at an id that does not exist. (Legacy
+  resume JSON without declared ids skips this strict check and falls back
+  to fuzzy section matching.)
 - `operation` must be one of `replace_section_text`, `rewrite_bullet`,
   `insert_bullet`, `delete_bullet`, `reorder_bullets`, `add_skill`,
   `remove_skill`, `rewrite_entry`. The first implementation rebuilds the
   working resume from `replace_section_text`, `rewrite_bullet`,
   `insert_bullet`, and `add_skill`; the others round-trip through review
   but do not yet mutate the resume on apply.
-- `confidence` is a number in `[0, 1]`; `risk` is one of `low`,
-  `medium`, `high`; `status` is one of `pending`, `accepted`,
+- `confidence` is one of `high`, `medium`, `low` (a legacy numeric value
+  in `[0, 1]` is still accepted for backward compatibility); `risk` is one
+  of `low`, `medium`, `high`; `status` is one of `pending`, `accepted`,
   `rejected`, `revised` and starts as `pending`.
 - `evidence_refs` are compact `{source, quote}` pairs backing the
   suggestion. Suggestions must not introduce unsupported claims; weak or

@@ -45,6 +45,9 @@ EXPECTED_OUTPUTS = (
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+    # The recruiter/hiring-manager review is a required output of the v2
+    # tailoring contract; a missing review fails the run.
+    "recruiter_review.md",
 )
 
 RUNTIME_PROMPT_FILENAME = "resume_tailoring.md"
@@ -52,6 +55,7 @@ REVISION_RUNTIME_PROMPT_FILENAME = "resume_revision.md"
 PROMPT_SNAPSHOT_FILENAME = "prompt_snapshot.md"
 REVISION_FEEDBACK_FILENAME = "revision_feedback.md"
 CURRENT_TAILORED_RESUME_MD_FILENAME = "current_tailored_resume.md"
+CURRENT_TAILORED_RESUME_JSON_FILENAME = "current_tailored_resume.json"
 CURRENT_TAILORED_RESUME_DOCX_FILENAME = "current_tailored_resume.docx"
 
 METADATA_FILENAME = "metadata.json"
@@ -231,6 +235,7 @@ def create_run_directory(
     master_resume_docx_path: Optional[Path] = None,
     evidence_sources: Optional[list[EvidenceSourceInput]] = None,
     current_tailored_resume_markdown: Optional[str] = None,
+    current_tailored_resume_json: Optional[str] = None,
     current_tailored_resume_docx_path: Optional[Path] = None,
 ) -> RunDirectoryInfo:
     """Create a Claude Code run directory for the given inputs.
@@ -328,6 +333,15 @@ def create_run_directory(
         _write_text(
             input_dir / CURRENT_TAILORED_RESUME_MD_FILENAME,
             current_tailored_resume_markdown,
+        )
+
+    # Optional structured projection of the prior draft. When present the
+    # prompt reuses its section/entry ids so suggestions stay stable across
+    # revisions.
+    if current_tailored_resume_json is not None:
+        _write_text(
+            input_dir / CURRENT_TAILORED_RESUME_JSON_FILENAME,
+            current_tailored_resume_json,
         )
 
     if current_tailored_resume_docx_path is not None:

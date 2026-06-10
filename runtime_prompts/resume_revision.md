@@ -22,6 +22,7 @@ are:
 ```text
 input/revision_feedback.md
 input/current_tailored_resume.md
+input/current_tailored_resume.json   (when the prior draft has structured JSON)
 input/current_tailored_resume.docx   (when the prior draft was a DOCX)
 ```
 
@@ -53,11 +54,13 @@ not as new factual evidence. Use it to decide what to change about
 positioning, emphasis, wording, ordering, and inclusion or removal of
 existing content.
 
-The current tailored draft (`input/current_tailored_resume.md` and the
-optional `.docx` sibling) is the document you are revising. Prefer
+The current tailored draft (`input/current_tailored_resume.md`, the
+optional `input/current_tailored_resume.json` structured projection, and
+the optional `.docx` sibling) is the document you are revising. Prefer
 in-place edits over rebuilding the draft from scratch. Keep truthful,
 relevant content unless the feedback or the contract requires removing
-it.
+it. When the structured JSON is present, reuse its section and entry
+`id`s so suggestions stay stable across revisions.
 
 ## Do Not Invent Claims
 

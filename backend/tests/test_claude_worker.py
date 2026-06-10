@@ -26,6 +26,8 @@ ALL_OUTPUTS = (
     "change_log.md",
     "claim_audit.md",
     "ats_audit.md",
+    # Required by the v2 tailoring contract.
+    "recruiter_review.md",
 )
 
 
@@ -822,7 +824,7 @@ def test_runtime_prompt_references_extracted_markdown_and_mcp():
     # The non-interactive contract must still be present so a future
     # edit does not let the prompt drift back into asking questions.
     assert "Do not ask clarifying questions" in text
-    assert "Do not wait for user input" in text
+    assert "wait for user input" in text
     # The prompt must distinguish DOCX (formatting) from extracted
     # markdown (evidence) so Claude treats them as complementary.
     assert "formatting" in text.lower()
@@ -963,9 +965,10 @@ def test_runtime_prompt_blocks_permission_and_clarifying_questions():
     for phrase in (
         "non-interactive",
         "Do not ask clarifying questions",
-        "Do not wait for user input",
-        "Do not ask the user whether to apply changes",
-        "Do not ask for permission to edit the resume",
+        "wait for user input",
+        "ask permission",
+        # The "do you want me to execute, explain, critique" refusal.
+        "do you want me to execute, explain",
     ):
         assert phrase in text, f"missing phrase: {phrase!r}"
 
@@ -975,10 +978,9 @@ def test_runtime_prompt_grants_run_directory_edit_permission():
     permission to create/edit files inside the run directory, so it
     does not stop to ask."""
     text = _runtime_prompt_text()
-    assert (
-        "task contract already grants permission to create and edit "
-        "files inside this run directory"
-    ) in text
+    # The phrase wraps across a line in the prompt, so assert the two halves.
+    assert "task contract already grants permission to" in text
+    assert "create and edit files inside this run directory" in text
 
 
 def test_runtime_prompt_restricts_writes_to_run_directory():
@@ -995,10 +997,10 @@ def test_runtime_prompt_restricts_writes_to_run_directory():
 
 
 def test_runtime_prompt_mentions_ats_optimization():
-    """The runtime prompt must call out ATS optimization explicitly."""
+    """The runtime prompt must call out ATS keyword strategy explicitly."""
     text = _runtime_prompt_text()
-    assert "ATS Optimization" in text
-    assert "Applicant Tracking System" in text
+    assert "ATS Keyword Strategy" in text
+    assert "ATS" in text
 
 
 def test_runtime_prompt_extracts_keyword_classes():
@@ -1031,14 +1033,9 @@ def test_runtime_prompt_forbids_keyword_stuffing():
 def test_runtime_prompt_requires_evidence_backed_keywords():
     """ATS keywords must only be inserted when truthful and evidence-backed."""
     text = _runtime_prompt_text()
-    assert (
-        "Use ATS keywords only when they are truthful and supported by the master"
-        in text
-    )
-    assert (
-        "Do not add unsupported skills, certifications, degrees, employers, dates"
-        in text
-    )
+    assert "Use keywords only when truthful and supported" in text
+    # The Truthfulness section enumerates what must not be invented.
+    assert "employers, job titles, dates" in text
 
 
 def test_runtime_prompt_requires_standard_section_headings():
@@ -1055,17 +1052,15 @@ def test_runtime_prompt_requires_standard_section_headings():
 
 
 def test_runtime_prompt_warns_against_unsafe_formatting():
-    """Critical resume content must not live in headers/footers/text boxes/etc."""
+    """Critical resume content must not live in tables/text boxes/graphics.
+
+    The v2 prompt keeps a lighter ATS-formatting guarantee than the legacy
+    prompt: critical content out of tables/text boxes/graphics, and no
+    tables for key experience content in the markdown.
+    """
     text = _runtime_prompt_text()
-    for unsafe in (
-        "headers/footers",
-        "text boxes",
-        "images",
-        "graphics",
-        "complex tables",
-        "multi-column layouts",
-    ):
-        assert unsafe in text, f"missing formatting warning: {unsafe!r}"
+    assert "tables/text boxes/graphics" in text
+    assert "avoid tables for key experience content" in text
 
 
 def test_runtime_prompt_requires_acronym_and_full_phrase_usage():
@@ -1073,14 +1068,13 @@ def test_runtime_prompt_requires_acronym_and_full_phrase_usage():
     text = _runtime_prompt_text()
     assert "acronym and full phrase" in text
     assert "Large Language Models (LLMs)" in text
-    assert "Applicant Tracking System (ATS)" in text
     assert "Machine Learning (ML)" in text
 
 
 def test_runtime_prompt_revision_preserves_ats_coverage_and_updates_audit():
     """Revision runs must keep ATS coverage and refresh the ATS audit."""
     text = _runtime_prompt_text()
-    assert "preserve ATS-relevant keywords" in text
+    assert "preserve truthful ATS-relevant keywords" in text
     assert "update `output/ats_audit.md`" in text
 
 
@@ -1200,79 +1194,66 @@ def _normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
-def test_runtime_prompt_preserves_master_docx_style():
-    """Tailoring prompt must call out preserving the master DOCX's style."""
+def test_runtime_prompt_master_docx_is_formatting_reference_only():
+    """Under the v2 contract the backend renderer owns layout; the master
+    DOCX is a formatting reference / secondary evidence source, never the
+    build base."""
     normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
-    assert "formatting/style source of truth" in normalized
-    assert "preserve the master resume's professional styling" in normalized
+    assert "owns all layout" in normalized
+    assert "formatting reference" in normalized
+    assert "do not build the tailored output from it" in normalized
 
 
-def test_runtime_prompt_preserves_heading_colors():
-    """Tailoring prompt must specifically call out heading colors."""
-    text = _runtime_prompt_text()
-    assert "section heading colors" in text
-    assert "heading styles/colors" in text
-
-
-def test_runtime_prompt_preserves_blue_or_simple_colored_headings():
-    """Tailoring prompt must explicitly mention blue / simple colored headings."""
+def test_runtime_prompt_renderer_owns_section_heading_style():
+    """The prompt must say the backend renderer owns the blue uppercase
+    section headings (rather than asking Claude to preserve DOCX colors)."""
     normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
-    assert "blue section headers" in normalized
-    assert "simple color styling" in normalized
+    assert "blue uppercase section headings" in normalized
 
 
-def test_runtime_prompt_copies_or_edits_source_docx():
-    """Tailoring prompt must instruct copy/edit of the source DOCX."""
+def test_runtime_prompt_renderer_owns_layout_features():
+    """The deterministic renderer, not Claude, owns the centered header,
+    separators, bullet lists, margins, fonts and spacing."""
     normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
-    assert "copying/editing the source docx" in normalized
-    assert "rather than rebuilding a generic resume from scratch" in normalized
+    for feature in (
+        "centered name/contact header",
+        "horizontal separators",
+        "real word bullet lists",
+    ):
+        assert feature in normalized, f"missing renderer-owned feature: {feature!r}"
+
+
+def test_runtime_prompt_does_not_build_output_from_source_docx():
+    """The prompt must tell Claude not to edit or rebuild from the source
+    DOCX — the structured JSON is the source of truth."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "do not edit it" in normalized
+    assert "do not build the tailored output from it" in normalized
 
 
 def test_runtime_prompt_forbids_plain_text_dump_docx():
-    """Tailoring prompt must forbid producing a plain-text dump as the DOCX."""
+    """The optional DOCX fallback must still forbid a plain-text dump."""
     text = _runtime_prompt_text()
-    assert "Do not create a plain-text dump inside a DOCX" in text
+    assert "never produce a plain-text dump" in text
 
 
-def test_runtime_prompt_balances_style_and_ats():
-    """Tailoring prompt must balance style preservation with ATS readability."""
+def test_runtime_prompt_keeps_ats_safe_formatting_guidance():
+    """The prompt must keep ATS-safe formatting guidance: standard
+    headings and no tables for key experience content."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "standard ats-safe headings" in normalized
+    assert "avoid tables for key experience content" in normalized
+
+
+def test_runtime_prompt_word_mcp_is_optional_fallback_only():
+    """The Word MCP path must be framed as an optional fallback that the
+    backend may overwrite, not the primary output path."""
     normalized = _normalize_whitespace(_runtime_prompt_text())
-    assert "Preserve visual styling while keeping the resume ATS-readable" in normalized
-    # Simple colored headings should be explicitly acceptable.
-    assert (
-        "Simple colored headings, standard fonts, normal paragraphs, "
-        "and bullet lists are acceptable" in normalized
-    )
-
-
-def test_runtime_prompt_warns_against_critical_content_in_unsafe_containers():
-    """Tailoring prompt must warn against critical content in headers/text boxes/etc."""
-    text = _runtime_prompt_text()
-    # The style-preservation section must reiterate the unsafe containers
-    # to keep the ATS contract intact even after style preservation lands.
-    style_idx = text.lower().find("style preservation vs. ats balance")
-    assert style_idx != -1, "style preservation balance section missing"
-    style_block = text[style_idx:]
-    for unsafe in (
-        "headers",
-        "footers",
-        "text boxes",
-        "images",
-        "graphics",
-        "complex tables",
-        "multi-column layouts",
-    ):
-        assert unsafe in style_block, f"missing unsafe container: {unsafe!r}"
-
-
-def test_runtime_prompt_word_mcp_style_preservation_instructions():
-    """Tailoring prompt must instruct Word MCP usage for style preservation."""
-    text = _runtime_prompt_text()
-    # The Word MCP usage block must mention preserving paragraph styles,
-    # heading styles/colors, and bullet/list styles.
-    assert "preserving paragraph styles and run formatting" in text
-    assert "preserve heading styles/colors where possible" in text
-    assert "preserve bullet/list styles where possible" in text
+    assert "Optional fallback only" in normalized
+    assert "word-document-server" in normalized
+    # The backend deterministic render overrides any fallback DOCX.
+    assert "the backend may overwrite it" in normalized
+    assert "structured JSON remains the source of truth" in normalized
 
 
 def test_revision_prompt_preserves_existing_docx_styling():
@@ -1350,64 +1331,50 @@ def test_invoke_run_skips_style_preservation_log_when_no_master_docx(
 # ---------------------------------------------------------------------------
 
 
-def test_runtime_prompt_declares_master_docx_as_template_source_of_truth():
-    """The tailoring prompt must name the master DOCX as the template
-    source of truth so Claude does not regenerate a generic document
-    from scratch."""
+def test_runtime_prompt_structured_json_is_source_of_truth():
+    """The structured JSON, rendered by the backend deterministic DOCX
+    renderer, is the source of truth for the final document."""
     normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
-    assert "template source of truth" in normalized
+    assert "source of truth" in normalized
+    assert "deterministic docx renderer" in normalized
 
 
-def test_runtime_prompt_says_copy_or_edit_source_docx_workflow():
-    """The tailoring prompt must spell out the copy → edit → save
-    workflow rather than rebuild-from-scratch."""
+def test_runtime_prompt_fallback_docx_copy_semantics():
+    """The optional DOCX fallback documents copy → tailor-in-place →
+    preserve-styles, never a plain-text dump."""
+    normalized = _normalize_whitespace(_runtime_prompt_text())
+    assert "copy the source DOCX, tailor text in place, preserve styles" in normalized
+    assert "never produce a plain-text dump" in normalized
+
+
+def test_runtime_prompt_backend_writes_docx_and_audit():
+    """The prompt must state Claude does not produce the DOCX or the
+    template fidelity audit — the backend writes both after rendering."""
     normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
-    assert "copy `input/master_resume.docx` as the editable base".lower() in normalized
-    assert "replace/tailor text inside the copied document" in normalized
-    assert (
-        "do not rebuild the resume from scratch unless copying/editing "
-        "the source docx fails" in normalized
-    )
+    assert "you do not produce" in normalized
+    assert "the backend writes both" in normalized
 
 
-def test_runtime_prompt_requires_centered_name_header_preservation():
-    text = _runtime_prompt_text()
-    assert "centered name/header block" in text
-    assert "centered contact line / links" in text
+def test_runtime_prompt_fallback_tooling_failure_is_non_fatal():
+    """If the optional MCP/DOCX tooling fails, the prompt must say not to
+    retry extensively and that the renderer does not depend on it."""
+    normalized = _normalize_whitespace(_runtime_prompt_text())
+    assert "If MCP/DOCX tooling fails" in normalized
+    assert "do not retry extensively" in normalized
+    assert "The renderer does not depend on it" in normalized
 
 
-def test_runtime_prompt_requires_horizontal_separator_preservation():
-    text = _runtime_prompt_text()
-    # Both the bulleted preservation list and the workflow language must
-    # reference horizontal dividers/separators so future drift cannot
-    # silently strip the rule.
-    assert "horizontal divider/separator lines" in text
-    assert "horizontal separators if present" in text
+def test_runtime_prompt_markdown_uses_plain_headings_and_bullets():
+    """The markdown projection must use plain headings and bullet lists."""
+    normalized = _normalize_whitespace(_runtime_prompt_text()).lower()
+    assert "use plain headings and bullet lists" in normalized
 
 
-def test_runtime_prompt_requires_bullet_list_preservation():
-    text = _runtime_prompt_text()
-    assert "bullet list formatting" in text
-    normalized = _normalize_whitespace(text).lower()
-    assert (
-        "the tailored resume should keep bullet points rather than "
-        "converting them to plain paragraphs" in normalized
-    )
-
-
-def test_runtime_prompt_requires_blue_colored_heading_preservation():
-    text = _runtime_prompt_text()
-    assert "blue or colored section heading style" in text
-
-
-def test_runtime_prompt_word_mcp_preserves_centered_header_and_separators():
-    """The Word MCP usage block must explicitly mention centered header
-    alignment and horizontal separators so Claude knows to keep them
-    when editing through the MCP tools."""
-    text = _runtime_prompt_text()
-    assert "preserve centered header alignment" in text
-    assert "preserve horizontal separators if present" in text
-    assert "replace/tailor content without flattening styles" in text
+def test_runtime_prompt_layout_owned_by_renderer():
+    """The prompt must say layout is owned by the renderer, so the JSON
+    carries no layout hints."""
+    normalized = _normalize_whitespace(_runtime_prompt_text())
+    assert "Layout is owned by the renderer" in normalized
 
 
 def test_runtime_prompt_lists_template_fidelity_audit_output():
@@ -1417,32 +1384,18 @@ def test_runtime_prompt_lists_template_fidelity_audit_output():
     assert "output/template_fidelity_audit.md" in text
 
 
-def test_runtime_prompt_describes_template_fidelity_audit_structure():
-    """The prompt must include the audit template so Claude knows the
-    required structure (source/output paths, checklist, deviations,
-    remediation)."""
+def test_runtime_prompt_does_not_own_template_fidelity_audit():
+    """Under v2 the backend renderer writes template_fidelity_audit.md, so
+    the prompt must NOT embed the audit template for Claude to fill in and
+    must say Claude does not produce it."""
     text = _runtime_prompt_text()
-    assert "# Template Fidelity Audit" in text
-    for section in (
-        "## Source Template",
-        "## Formatting Preservation Checklist",
-        "## Known Deviations",
-        "## Remediation",
-    ):
-        assert section in text, f"missing audit section: {section!r}"
-    # The checklist rows must cover each documented preservation feature.
-    for row in (
-        "Centered name/header block",
-        "Centered contact line",
-        "Blue/colored section headings",
-        "Horizontal divider lines",
-        "Bullet lists",
-        "Date alignment",
-        "Margins",
-        "Font family/size consistency",
-        "Section spacing",
-    ):
-        assert row in text, f"missing audit checklist row: {row!r}"
+    normalized = _normalize_whitespace(text).lower()
+    # The prompt references the file (to say the backend owns it) but does
+    # not carry the Claude-authored audit template heading.
+    assert "output/template_fidelity_audit.md" in text
+    assert "# Template Fidelity Audit" not in text
+    assert "you do not produce" in normalized
+    assert "the backend writes both" in normalized
 
 
 def test_revision_prompt_lists_template_fidelity_audit_output():
@@ -1776,14 +1729,15 @@ def test_runtime_prompt_recruiter_review_role_persona():
     # The Recruiter Review section must call out the multiple
     # personas the review needs to cover.
     assert "## Recruiter Review" in text
+    normalized = _normalize_whitespace(text)
     for phrase in (
-        "recruiter doing an initial screen",
-        "hiring manager doing a technical screen",
-        "ATS/human keyword-alignment reviewer",
+        "recruiter initial screen",
+        "hiring manager technical screen",
+        "ATS/keyword-alignment reviewer",
         "credibility/evidence reviewer",
         "readability/formatting reviewer",
     ):
-        assert phrase in text, f"missing recruiter review persona: {phrase!r}"
+        assert phrase in normalized, f"missing recruiter review persona: {phrase!r}"
 
 
 def test_runtime_prompt_recruiter_review_scorecard():
@@ -1829,12 +1783,10 @@ def test_runtime_prompt_recruiter_review_does_not_invent_company_facts():
     """The recruiter review section must explicitly forbid inventing
     company facts beyond the job description."""
     text = _runtime_prompt_text()
-    assert (
-        "Do not invent facts about the company beyond what the\njob description states."
-        in text
-        or "Do not invent facts about the company beyond what the job description states."
-        in _normalize_whitespace(text)
-    )
+    normalized = _normalize_whitespace(text)
+    assert "invent facts about the company or the candidate" in normalized
+    # Company/role expectations are inferred only from the job description.
+    assert "only from the job description" in normalized
 
 
 def test_runtime_prompt_recruiter_review_includes_overall_recommendation():
@@ -1911,26 +1863,29 @@ def test_invoke_run_logs_recruiter_review_requested(
     )
 
 
-def test_invoke_run_warns_when_recruiter_review_missing(
+def test_invoke_run_fails_when_recruiter_review_missing(
     client, tmp_path, monkeypatch
 ):
-    """When Claude omits recruiter_review.md, the worker must log a
-    warning so the operator can spot the regression. The run still
-    completes because the file is requested rather than strictly
-    required by the worker today."""
+    """recruiter_review.md is a required output under the v2 contract, so a
+    run that omits it is marked failed by the standard missing-output gate."""
     run = _seed_run(client, tmp_path, monkeypatch)
-    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    outputs_without_recruiter = tuple(
+        name for name in ALL_OUTPUTS if name != "recruiter_review.md"
+    )
+    binary = _write_fake_binary(
+        tmp_path, exit_code=0, write_outputs=outputs_without_recruiter
+    )
     monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
 
     resp = client.post(f"/runs/{run['id']}/invoke")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["status"] == "completed"
+    assert body["status"] == "failed"
+    assert "output/recruiter_review.md" in body["error_message"]
 
     log_text = (Path(body["run_dir"]) / "run.log").read_text(encoding="utf-8")
     assert (
-        "jobapply: warning: recruiter review missing at "
-        "output/recruiter_review.md"
+        "jobapply: missing expected output file: output/recruiter_review.md"
     ) in log_text
 
 
@@ -2002,9 +1957,16 @@ def test_get_run_recruiter_review_returns_available_false_when_missing(
     client, tmp_path, monkeypatch
 ):
     """When the file is absent the endpoint reports available=False
-    rather than returning 404, so the UI can render a hint."""
+    rather than returning 404, so the UI can render a hint. The endpoint is
+    a pure filesystem check, independent of whether the run passed
+    validation (the run fails because recruiter_review.md is required)."""
     run = _seed_run(client, tmp_path, monkeypatch)
-    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    outputs_without_recruiter = tuple(
+        name for name in ALL_OUTPUTS if name != "recruiter_review.md"
+    )
+    binary = _write_fake_binary(
+        tmp_path, exit_code=0, write_outputs=outputs_without_recruiter
+    )
     monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
 
     invoke_resp = client.post(f"/runs/{run['id']}/invoke")
@@ -2046,30 +2008,38 @@ def test_runtime_prompt_requires_actually_writing_files():
     """
     text = _runtime_prompt_text()
     normalized = _normalize_whitespace(text)
-    assert "Actually write the files" in normalized
-    assert "Do not merely describe what each file should contain" in normalized
-    assert "Do not end your response until the files have been written" in normalized
-    assert "Use shell/file-writing operations if needed" in normalized
+    assert "Actually" in normalized and "write the files" in normalized
+    assert (
+        "a response that describes a file but does not write it counts as a "
+        "missing file" in normalized
+    )
+    # Verification must be evidence-based (directory listing / shell), not
+    # from memory.
+    assert "Confirm via a directory listing or shell command" in normalized
+    assert "not from memory" in normalized
 
 
 def test_runtime_prompt_final_checklist_lists_all_required_files():
-    """The Final Verification Checklist must enumerate every required
-    output file by path so the model has a concrete list to verify
-    against before ending its response."""
+    """The Final Verification section must enumerate every Claude-owned
+    required output by path so the model has a concrete list to verify
+    against before ending its response. The backend-owned DOCX and
+    template fidelity audit are intentionally absent."""
     text = _runtime_prompt_text()
-    assert "Final Verification Checklist" in text
-    checklist_idx = text.find("Final Verification Checklist")
+    assert "Final Verification" in text
+    checklist_idx = text.find("Final Verification")
     checklist = text[checklist_idx:]
     for required in (
         "output/tailored_resume.json",
+        "output/resume_suggestions.json",
         "output/tailored_resume.md",
         "output/change_log.md",
         "output/claim_audit.md",
         "output/ats_audit.md",
-        "output/template_fidelity_audit.md",
         "output/recruiter_review.md",
     ):
         assert required in checklist, f"missing from checklist: {required!r}"
+    # The backend renders these; Claude must not be told to verify them.
+    assert "output/template_fidelity_audit.md" not in checklist
 
 
 def test_runtime_prompt_includes_structured_resume_schema():

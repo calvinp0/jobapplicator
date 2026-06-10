@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -514,6 +514,10 @@ class ResumeSuggestionRead(BaseModel):
 
     id: str
     section_id: str
+    # Entry / bullet targeting for bullet- and entry-level operations (v2
+    # contract). Null on section-level suggestions.
+    entry_id: Optional[str] = None
+    bullet_index: Optional[int] = None
     section_heading: str = ""
     operation: str
     current_text: str = ""
@@ -521,7 +525,9 @@ class ResumeSuggestionRead(BaseModel):
     reason: str
     evidence_refs: list[EvidenceRefRead] = []
     ats_keywords: list[str] = []
-    confidence: Optional[float] = None
+    # ``high``/``medium``/``low`` under the v2 contract; legacy drafts may
+    # carry a numeric confidence in [0, 1], so accept either form.
+    confidence: Optional[Union[str, float]] = None
     risk: str = "medium"
     status: str = "pending"
     revision_instruction: str = ""
