@@ -285,7 +285,8 @@ backups/
 candidate_context/gmail/token.json
 candidate_context/gmail/oauth_state.json
 candidate_context/gmail/*.json
-
+backend/candidate_context/gmail/*.json
+!backend/candidate_context/gmail/token.example.json
 # Settings-stored secrets (task 088). The Gmail OAuth client secret is
 # persisted in the app DB today; these patterns are defensive in case a
 # future change writes a settings file under candidate_context/settings/.

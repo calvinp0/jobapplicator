@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Job, JobCapture
 from ..schemas import (
+    JobCaptureConfirm,
     JobCaptureCreate,
     JobCaptureCreateResponse,
     JobCaptureRead,
@@ -167,7 +168,11 @@ def get_capture(capture_id: str, db: Session = Depends(get_db)) -> JobCapture:
 
 
 @router.post("/{capture_id}/confirm", response_model=JobRead, status_code=status.HTTP_201_CREATED)
-def confirm_capture(capture_id: str, db: Session = Depends(get_db)) -> Job:
+def confirm_capture(
+    capture_id: str,
+    payload: JobCaptureConfirm | None = None,
+    db: Session = Depends(get_db),
+) -> Job:
     """Promote a JobCapture into a confirmed Job.
 
     Task 002 §"Capture Confirmation Behavior":
@@ -208,6 +213,29 @@ def confirm_capture(capture_id: str, db: Session = Depends(get_db)) -> Job:
                 },
             )
         return existing_job
+
+    if payload is not None:
+        if payload.external_url is not None:
+            canonical = canonicalize_job_url(payload.external_url)
+            capture.external_url = canonical.canonical_url
+            capture.source_url = canonical.source_url
+            capture.canonical_url = canonical.canonical_url
+            capture.external_job_id = (
+                capture.external_job_id or canonical.external_job_id
+            )
+            capture.source_platform = (
+                capture.source_platform or canonical.source_platform
+            )
+        if payload.company is not None:
+            capture.company = payload.company
+        if payload.title is not None:
+            capture.title = payload.title
+        if payload.location is not None:
+            capture.location = payload.location
+        if payload.description_text is not None:
+            capture.description_text = payload.description_text
+        if payload.application_method is not None:
+            capture.application_method = payload.application_method
 
     required_fields = {
         "company": capture.company,

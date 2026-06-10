@@ -2456,3 +2456,22 @@ tasks:
       - "docs/**"
       - "agent_tasks/122-add-resume-export-downloads-and-filenames.md"
       - "agent_tasks/queue.yaml"
+  - id: "123-add-experimental-local-llm-provider"
+    title: "Add experimental local LLM provider"
+    file: "agent_tasks/123-add-experimental-local-llm-provider.md"
+    branch: "agent/123-add-experimental-local-llm-provider"
+    worktree: "agent-123-add-experimental-local-llm-provider"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "python -m pytest"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/**"
+      - "README_INSTALL.md"
+      - "agent_tasks/123-add-experimental-local-llm-provider.md"
+      - "agent_tasks/queue.yaml"

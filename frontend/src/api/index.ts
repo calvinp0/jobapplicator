@@ -40,6 +40,7 @@ import type {
   GmailOAuthSettingsUpdate,
   Job,
   JobCapture,
+  JobCaptureConfirm,
   LlmProvider,
   LlmProviderSetting,
   MasterResume,
@@ -102,6 +103,7 @@ export type {
   GmailOAuthSettingsUpdate,
   Job,
   JobCapture,
+  JobCaptureConfirm,
   LlmProvider,
   LlmProviderSetting,
   MasterResume,
@@ -142,8 +144,14 @@ export function getCapture(captureId: string): Promise<JobCapture> {
   return apiRequest(`/captures/${captureId}`);
 }
 
-export function confirmCapture(captureId: string): Promise<Job> {
-  return apiRequest(`/captures/${captureId}/confirm`, { method: "POST" });
+export function confirmCapture(
+  captureId: string,
+  payload?: JobCaptureConfirm,
+): Promise<Job> {
+  return apiRequest(`/captures/${captureId}/confirm`, {
+    method: "POST",
+    body: payload,
+  });
 }
 
 export function listJobs(): Promise<Job[]> {
