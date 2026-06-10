@@ -9,6 +9,7 @@ const {
   rejectSuggestionMock,
   reviseSuggestionMock,
   applyResumeSuggestionsMock,
+  getRunMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -27,6 +28,10 @@ const {
     rejectSuggestionMock: vi.fn(),
     reviseSuggestionMock: vi.fn(),
     applyResumeSuggestionsMock: vi.fn(),
+    getRunMock: vi.fn(
+      (): Promise<any> =>
+        Promise.resolve({ id: "run-1", provider_summary: null }),
+    ),
     ApiErrorMock,
   };
 });
@@ -36,6 +41,7 @@ vi.mock("../api", () => ({
   getResumeVersion: vi.fn(() =>
     Promise.resolve({ claude_run_id: "run-1", docx_path: "x" }),
   ),
+  getRun: getRunMock,
   acceptSuggestion: acceptSuggestionMock,
   rejectSuggestion: rejectSuggestionMock,
   reviseSuggestion: reviseSuggestionMock,
@@ -160,6 +166,34 @@ describe("ResumeReviewPage workspace (task 114)", () => {
     expect(screen.getByTestId("workflow-step-5")).toHaveTextContent("Export");
     // Right AI review panel.
     expect(screen.getByTestId("review-panel")).toBeInTheDocument();
+  });
+
+  it("shows a compact provider provenance strip from the originating run (task 129)", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    getRunMock.mockResolvedValue({
+      id: "run-1",
+      provider_summary: {
+        label: "Preflight: Ollama · Tailoring: Claude Code · DOCX: Backend",
+        providers_used: ["ollama", "claude_code", "backend"],
+        has_warnings: false,
+      },
+    });
+    renderReview();
+
+    const strip = await screen.findByTestId("review-provenance");
+    expect(strip).toHaveTextContent("Generated with:");
+    expect(strip).toHaveTextContent(
+      "Preflight: Ollama · Tailoring: Claude Code · DOCX: Backend",
+    );
+  });
+
+  it("omits the provenance strip when the run has no provider summary", async () => {
+    getResumeSuggestionsMock.mockResolvedValue(payload());
+    getRunMock.mockResolvedValue({ id: "run-1", provider_summary: null });
+    renderReview();
+
+    await screen.findByTestId("review-workspace");
+    expect(screen.queryByTestId("review-provenance")).not.toBeInTheDocument();
   });
 
   it("renders the resume sections in the document preview", async () => {

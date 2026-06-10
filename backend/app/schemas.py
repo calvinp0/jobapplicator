@@ -371,6 +371,14 @@ class ClaudeRunRead(_ORMModel):
     # row), so this is best-effort: the router populates it after the
     # ClaudeRun is created; older runs without the field default to [].
     evidence_source_ids: list[str] = []
+    # Provider trace (task 129). Both fields live on disk in the run
+    # directory (``metadata.json`` summary + ``provider_trace.json``), not
+    # on the DB row, so the router attaches them after load. Older runs
+    # without a trace report ``None`` / ``[]``. ``provider_trace`` rows carry
+    # compact fields at the top level and advanced/technical fields under a
+    # nested ``details`` block; no credentials are ever included.
+    provider_summary: Optional[Dict[str, Any]] = None
+    provider_trace: list[Dict[str, Any]] = []
 
 
 # ---- LLMProvider ----

@@ -4461,3 +4461,148 @@ fieldset.field legend {
     max-height: none;
   }
 }
+
+/* ---- Provider trace (task 129) ----
+   Deliberately quiet: a subtle one-line summary, a collapsed "Run trace"
+   disclosure with aligned columns, and a nested per-row Details disclosure
+   for advanced fields. No colour pills, no big panel. */
+.provider-trace {
+  margin: var(--space-3) 0 var(--space-5);
+  max-width: 720px;
+}
+
+.provider-trace-summary {
+  margin: 0;
+  color: var(--muted-fg);
+  font-size: 13px;
+}
+
+.provider-trace-summary-warning {
+  margin: var(--space-1) 0 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.provider-trace-disclosure {
+  margin-top: var(--space-2);
+  font-size: 13px;
+}
+
+.provider-trace-disclosure > summary {
+  cursor: pointer;
+  color: var(--muted-fg);
+  font-weight: 500;
+}
+
+.provider-trace-disclosure > summary:hover {
+  color: var(--content-fg);
+}
+
+.provider-trace-rows {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.provider-trace-row {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.provider-trace-row-main {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1.4fr) 6rem 4rem;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.provider-trace-step {
+  color: var(--content-fg);
+}
+
+.provider-trace-provider {
+  color: var(--muted-fg);
+}
+
+.provider-trace-status {
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+
+.provider-trace-status::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+  vertical-align: middle;
+}
+
+.provider-trace-status-complete::before {
+  background: var(--success);
+}
+
+.provider-trace-status-fallback::before,
+.provider-trace-status-aborted::before {
+  background: var(--warning);
+}
+
+.provider-trace-status-failed::before {
+  background: var(--danger);
+}
+
+.provider-trace-duration {
+  color: var(--text-subtle);
+  font-size: 12px;
+  text-align: right;
+}
+
+.provider-trace-row-warning {
+  margin: var(--space-1) 0 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.provider-trace-advanced {
+  margin-top: var(--space-1);
+  font-size: 12px;
+}
+
+.provider-trace-advanced > summary {
+  cursor: pointer;
+  color: var(--text-subtle);
+}
+
+.provider-trace-advanced-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-3);
+  margin: var(--space-1) 0 0;
+  color: var(--muted-fg);
+}
+
+.provider-trace-advanced-list dt {
+  font-weight: 500;
+}
+
+.provider-trace-advanced-list dd {
+  margin: 0;
+}
+
+/* Provenance strip in the review workspace top bar. */
+.review-provenance {
+  margin: var(--space-1) 0 0;
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+
+.review-provenance-label {
+  font-weight: 600;
+}
+
+.review-provenance-warning {
+  color: var(--warning);
+}

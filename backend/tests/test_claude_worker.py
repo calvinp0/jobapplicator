@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -2212,3 +2213,106 @@ def test_invoke_run_preflight_artifacts_staged_inside_run_directory_only(
     preflight_dir = run_dir / "input" / "preflight"
     for path in preflight_dir.iterdir():
         assert path.resolve().is_relative_to(run_dir)
+
+
+# ---- provider trace (task 129) ---------------------------------------
+
+
+def test_invoke_run_writes_provider_trace(client, tmp_path, monkeypatch):
+    """A completed run persists provider_trace.json + a metadata summary.
+
+    Local LLM is disabled by default, so preflight is the deterministic
+    backend; tailoring is Claude Code; DOCX is the backend renderer. Each
+    band must appear as its own provider so the operator can see exactly
+    which engine produced each step.
+    """
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    run_dir = Path(resp.json()["run_dir"])
+
+    trace_path = run_dir / "provider_trace.json"
+    assert trace_path.is_file()
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    by_step = {row["step"]: row for row in trace}
+
+    # Preflight band: deterministic backend (local LLM disabled).
+    assert by_step["job_summary"]["provider"] == "deterministic"
+    assert by_step["evidence_gap_plan"]["provider"] == "deterministic"
+
+    # Tailoring band: Claude Code, recorded separately from preflight.
+    assert by_step["resume_generation"]["provider"] == "claude_code"
+    assert by_step["resume_generation"]["provider_label"] == "Claude Code"
+    assert by_step["resume_generation"]["status"] == "complete"
+    assert by_step["claim_audit"]["provider"] == "claude_code"
+    assert by_step["claim_audit"]["status"] == "complete"
+
+    # Backend band: deterministic DOCX render + fidelity audit.
+    assert by_step["docx_render"]["provider"] == "backend"
+    assert by_step["docx_render"]["provider_label"] == "Backend renderer"
+    assert by_step["docx_render"]["status"] == "complete"
+    assert by_step["template_fidelity_audit"]["provider"] == "backend"
+
+    # The compact summary is mirrored into metadata.json.
+    metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+    summary = metadata["provider_summary"]
+    assert "Tailoring: Claude Code" in summary["label"]
+    assert "DOCX: Backend" in summary["label"]
+    assert summary["providers_used"] == ["deterministic", "claude_code", "backend"]
+
+
+def test_run_api_exposes_provider_summary_and_trace(client, tmp_path, monkeypatch):
+    """GET /runs/{id} returns the compact summary + expandable trace."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+    client.post(f"/runs/{run['id']}/invoke")
+
+    resp = client.get(f"/runs/{run['id']}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    summary = body["provider_summary"]
+    assert summary is not None
+    assert "claude_code" in summary["providers_used"]
+    assert "backend" in summary["providers_used"]
+    assert summary["has_warnings"] is False
+
+    trace = body["provider_trace"]
+    steps = {row["step"] for row in trace}
+    assert {"resume_generation", "docx_render", "claim_audit"} <= steps
+    # Each row exposes compact fields suitable for the list/detail view.
+    gen = next(r for r in trace if r["step"] == "resume_generation")
+    assert gen["provider_label"] == "Claude Code"
+    assert gen["status"] == "complete"
+    assert "duration_ms" in gen
+
+
+def test_run_api_provider_trace_exposes_no_credentials(
+    client, tmp_path, monkeypatch
+):
+    """No API keys / endpoint URLs leak through the trace API response."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0, write_outputs=ALL_OUTPUTS)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+    client.post(f"/runs/{run['id']}/invoke")
+
+    resp = client.get(f"/runs/{run['id']}")
+    blob = json.dumps(resp.json()).lower()
+    assert "api_key" not in blob
+    assert "apikey" not in blob
+    assert "authorization" not in blob
+    assert "base_url" not in blob
+
+
+def test_get_run_without_trace_returns_empty(client, tmp_path, monkeypatch):
+    """A run that never executed has no trace; the API stays well-formed."""
+    run = _seed_run(client, tmp_path, monkeypatch)
+    resp = client.get(f"/runs/{run['id']}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["provider_summary"] is None
+    assert body["provider_trace"] == []

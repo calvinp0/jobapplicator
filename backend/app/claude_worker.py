@@ -27,7 +27,9 @@ from .llm_providers import (
     resolve_binary,
 )
 from .models import ClaudeRun
-from .preflight import PreflightError, run_preflight
+from .preflight import PreflightError, PreflightResult, run_preflight
+from . import provider_trace
+from . import run_directory
 from .resume_docx_renderer import (
     RendererError,
     TAILORED_RESUME_DOCX_FILENAME,
@@ -313,7 +315,7 @@ def _extract_master_resume_docx(
 
 def _run_preflight_analysis(
     run_dir: Path, log_path: Path, progress_path: Path
-) -> None:
+) -> Optional[PreflightResult]:
     """Run the provider-routed preflight pipeline before launching Claude.
 
     Writes the structured analysis artifacts under ``input/preflight/`` and
@@ -321,6 +323,10 @@ def _run_preflight_analysis(
     is advisory: it must not fail the tailoring run. Any error is logged and
     the run proceeds — the manifest (when written) records degradation, and
     the deterministic fallback is the floor for normal operation.
+
+    Returns the :class:`PreflightResult` so the caller can fold the
+    per-task provider/model/timing into the run's provider trace (task
+    129); returns ``None`` when preflight degraded before producing one.
     """
 
     def on_log(msg: str) -> None:
@@ -337,12 +343,107 @@ def _run_preflight_analysis(
         # Best-effort: a preflight failure never blocks tailoring. The main
         # prompt treats preflight artifacts as optional advisory inputs.
         _append_progress(log_path, f"preflight analysis degraded: {exc}")
-        return
+        return None
     suffix = " (fallback used)" if result.fallback_used else ""
     _append_progress(
         log_path,
         f"preflight analysis complete: provider {result.provider}{suffix}",
     )
+    return result
+
+
+def _record_provider_trace(
+    run_dir: Path,
+    log_path: Path,
+    *,
+    preflight_result: Optional[PreflightResult],
+    tailoring_provider_id: Optional[str],
+    tailoring_failed: bool,
+    tailoring_duration_ms: Optional[int],
+    docx_duration_ms: Optional[int],
+) -> None:
+    """Assemble and persist the run's provider trace (task 129).
+
+    Folds the preflight per-task events together with the Claude tailoring
+    band (resume generation, claim audit, optional suggestions) and the
+    deterministic backend band (DOCX render, template fidelity audit), then
+    writes ``provider_trace.json`` and mirrors a compact summary into
+    ``metadata.json``. Best-effort: a trace error is logged and swallowed so
+    it can never fail or alter the tailoring run itself.
+    """
+    try:
+        events = (
+            provider_trace.events_from_preflight(preflight_result)
+            if preflight_result is not None
+            else []
+        )
+
+        output_dir = run_dir / OUTPUT_DIRNAME
+        json_exists = (output_dir / TAILORED_RESUME_JSON_FILENAME).is_file()
+        docx_exists = (output_dir / TAILORED_RESUME_DOCX_FILENAME).is_file()
+        claim_exists = (output_dir / "claim_audit.md").is_file()
+        suggestions_exists = (output_dir / RESUME_SUGGESTIONS_FILENAME).is_file()
+        fidelity_exists = (output_dir / TEMPLATE_FIDELITY_AUDIT_FILENAME).is_file()
+
+        def _band_status(produced: bool) -> str:
+            if produced:
+                return provider_trace.STATUS_COMPLETE
+            return (
+                provider_trace.STATUS_SKIPPED
+                if tailoring_failed
+                else provider_trace.STATUS_FAILED
+            )
+
+        gen_status = (
+            provider_trace.STATUS_FAILED
+            if tailoring_failed
+            else _band_status(json_exists)
+        )
+        events.append(
+            provider_trace.claude_event(
+                provider_trace.STEP_RESUME_GENERATION,
+                provider_id=tailoring_provider_id,
+                status=gen_status,
+                duration_ms=tailoring_duration_ms,
+            )
+        )
+        events.append(
+            provider_trace.claude_event(
+                provider_trace.STEP_CLAIM_AUDIT,
+                provider_id=tailoring_provider_id,
+                status=_band_status(claim_exists),
+            )
+        )
+        # Suggestions are optional today; only surface a row when produced so
+        # a disabled/absent step doesn't clutter the trace.
+        if suggestions_exists:
+            events.append(
+                provider_trace.claude_event(
+                    provider_trace.STEP_RESUME_SUGGESTIONS,
+                    provider_id=tailoring_provider_id,
+                    status=provider_trace.STATUS_COMPLETE,
+                )
+            )
+        events.append(
+            provider_trace.backend_event(
+                provider_trace.STEP_DOCX_RENDER,
+                status=_band_status(docx_exists),
+                duration_ms=docx_duration_ms,
+            )
+        )
+        events.append(
+            provider_trace.backend_event(
+                provider_trace.STEP_TEMPLATE_FIDELITY_AUDIT,
+                status=_band_status(fidelity_exists),
+            )
+        )
+
+        provider_trace.write_provider_trace(run_dir, events)
+        run_directory.set_provider_summary(
+            run_dir, provider_trace.build_summary(events)
+        )
+    except Exception as exc:  # noqa: BLE001 - trace must never fail the run
+        _append_progress(log_path, f"provider trace not recorded: {exc}")
 
 
 def _missing_outputs(run_dir: Path) -> list[str]:
@@ -670,7 +771,7 @@ def invoke_claude_run(
     # tailoring prompt so its structured artifacts (job summary, ATS
     # keywords, role requirements, evidence gap plan) are available under
     # input/preflight/ as advisory inputs. Best-effort: never fails the run.
-    _run_preflight_analysis(run_dir, log_path, progress_path)
+    preflight_result = _run_preflight_analysis(run_dir, log_path, progress_path)
 
     if is_dry_run():
         _append_progress(log_path, "dry-run mode: skipping Claude subprocess")
@@ -685,13 +786,24 @@ def invoke_claude_run(
         _write_dry_run_outputs(run_dir)
         # Dry-run still exercises the deterministic renderer so the
         # placeholder JSON → DOCX pipeline is smoke-tested end-to-end.
+        docx_start = time.monotonic()
         try:
             _render_docx_from_structured_json(
                 run_dir, log_path, extraction_docx_relpath=None
             )
             _validate_resume_suggestions(run_dir, log_path)
         except RendererError as exc:
+            _record_provider_trace(
+                run_dir,
+                log_path,
+                preflight_result=preflight_result,
+                tailoring_provider_id=run.llm_provider,
+                tailoring_failed=True,
+                tailoring_duration_ms=None,
+                docx_duration_ms=int((time.monotonic() - docx_start) * 1000),
+            )
             return _record_failure(db, run, str(exc))
+        docx_duration_ms = int((time.monotonic() - docx_start) * 1000)
         with log_path.open("a", encoding="utf-8") as log:
             log.write(
                 f"[dry-run] skipped Claude subprocess at {_now().isoformat()}\n"
@@ -699,6 +811,15 @@ def invoke_claude_run(
             )
         _append_progress(log_path, "validating output files")
         _append_progress(log_path, "output contract satisfied")
+        _record_provider_trace(
+            run_dir,
+            log_path,
+            preflight_result=preflight_result,
+            tailoring_provider_id=run.llm_provider,
+            tailoring_failed=False,
+            tailoring_duration_ms=None,
+            docx_duration_ms=docx_duration_ms,
+        )
         run.status = "completed"
         run.completed_at = _now()
         db.commit()
@@ -773,6 +894,7 @@ def invoke_claude_run(
     heartbeat_interval = _heartbeat_interval_seconds()
     heartbeat_stop = threading.Event()
     heartbeat_thread: Optional[threading.Thread] = None
+    claude_started = time.monotonic()
     try:
         with log_path.open("a", encoding="utf-8") as log:
             log.write(
@@ -847,10 +969,12 @@ def invoke_claude_run(
             f"failed to write run log: {exc}",
         )
 
+    claude_duration_ms = int((time.monotonic() - claude_started) * 1000)
     _append_progress(
         log_path, f"Claude Code process exited with code {returncode}"
     )
 
+    docx_duration_ms: Optional[int] = None
     if returncode != 0:
         _append_progress(log_path, "marking run failed")
         run.status = "failed"
@@ -863,6 +987,7 @@ def invoke_claude_run(
             if extraction.docx_found
             else None
         )
+        docx_start = time.monotonic()
         try:
             _render_docx_from_structured_json(
                 run_dir, log_path, extraction_docx_relpath=extraction_docx_relpath
@@ -873,9 +998,19 @@ def invoke_claude_run(
             run.status = "failed"
             run.error_message = str(exc)
             run.completed_at = _now()
+            _record_provider_trace(
+                run_dir,
+                log_path,
+                preflight_result=preflight_result,
+                tailoring_provider_id=run.llm_provider,
+                tailoring_failed=False,
+                tailoring_duration_ms=claude_duration_ms,
+                docx_duration_ms=int((time.monotonic() - docx_start) * 1000),
+            )
             db.commit()
             db.refresh(run)
             return run
+        docx_duration_ms = int((time.monotonic() - docx_start) * 1000)
 
         _append_progress(log_path, "validating output files")
         missing = _missing_outputs(run_dir)
@@ -890,6 +1025,15 @@ def invoke_claude_run(
             run.status = "completed"
             run.error_message = None
     run.completed_at = _now()
+    _record_provider_trace(
+        run_dir,
+        log_path,
+        preflight_result=preflight_result,
+        tailoring_provider_id=run.llm_provider,
+        tailoring_failed=returncode != 0,
+        tailoring_duration_ms=claude_duration_ms,
+        docx_duration_ms=docx_duration_ms,
+    )
     db.commit()
     db.refresh(run)
     return run

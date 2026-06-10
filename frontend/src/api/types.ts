@@ -180,6 +180,48 @@ export interface EvidenceSource {
   is_demo: boolean;
 }
 
+// ---- Provider trace (task 129) ----
+// Records which execution provider produced each step of a tailoring run so
+// the UI can answer "was the local LLM used?" without log spelunking. The
+// compact fields drive the default (subtle) view; advanced/technical fields
+// live under ``details`` so they only show behind a disclosure. No
+// credentials are ever included.
+
+export interface ProviderTraceDetails {
+  context_budget_tokens?: number | null;
+  usable_input_tokens?: number | null;
+  requested_num_ctx?: number | null;
+  server_reported_context_tokens?: number | null;
+  context_verified?: boolean | null;
+  endpoint_host?: string | null;
+}
+
+export interface ProviderTraceEvent {
+  step: string;
+  label: string;
+  provider: string;
+  provider_label: string;
+  model: string | null;
+  status: string;
+  duration_ms?: number | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  compression_used?: boolean;
+  fallback_used?: boolean;
+  warning?: string | null;
+  details?: ProviderTraceDetails;
+}
+
+export interface ProviderSummary {
+  label: string;
+  preflight?: string;
+  tailoring?: string;
+  docx?: string;
+  providers_used: string[];
+  warnings?: string[];
+  has_warnings: boolean;
+}
+
 export interface ClaudeRun {
   id: string;
   job_id: string;
@@ -196,6 +238,8 @@ export interface ClaudeRun {
   error_message: string | null;
   llm_provider?: string | null;
   evidence_source_ids?: string[];
+  provider_summary?: ProviderSummary | null;
+  provider_trace?: ProviderTraceEvent[];
 }
 
 export interface RunLog {

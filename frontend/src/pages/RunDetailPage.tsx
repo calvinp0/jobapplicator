@@ -18,6 +18,7 @@ import type {
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
 import { ResumeDownloadActions } from "../components/ResumeDownloadActions";
+import { ProviderTracePanel } from "../components/ProviderTrace";
 import {
   parseTimestamp,
   runIsActive,
@@ -633,6 +634,11 @@ export function RunDetailPage() {
         lines={logLines}
         hasLoadedOnce={activityHasLoadedOnce}
         truncated={activityTruncated}
+      />
+
+      <ProviderTracePanel
+        summary={run.provider_summary}
+        trace={run.provider_trace}
       />
 
       <dl className="run-meta">

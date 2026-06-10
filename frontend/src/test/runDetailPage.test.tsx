@@ -385,3 +385,132 @@ describe("RunDetailPage default UI", () => {
     );
   });
 });
+
+describe("RunDetailPage provider trace (task 129)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getJobMock.mockResolvedValue(job);
+    listResumeVersionsMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const runWithTrace = {
+    ...failedRun,
+    provider_summary: {
+      label: "Preflight: deterministic backend · Tailoring: Claude Code · DOCX: Backend",
+      providers_used: ["deterministic", "claude_code", "backend"],
+      warnings: ["Ollama request failed; deterministic fallback used."],
+      has_warnings: true,
+    },
+    provider_trace: [
+      {
+        step: "job_summary",
+        label: "Job summary",
+        provider: "ollama",
+        provider_label: "Ollama",
+        model: "qwen3.5:9b",
+        status: "complete",
+        duration_ms: 1800,
+        details: { context_budget_tokens: 8192, requested_num_ctx: 8192 },
+      },
+      {
+        step: "resume_generation",
+        label: "Resume generation",
+        provider: "claude_code",
+        provider_label: "Claude Code",
+        model: "claude-code",
+        status: "complete",
+        duration_ms: 42000,
+      },
+      {
+        step: "docx_render",
+        label: "DOCX render",
+        provider: "backend",
+        provider_label: "Backend renderer",
+        model: null,
+        status: "complete",
+        duration_ms: 700,
+      },
+    ],
+  };
+
+  it("shows the compact provider summary line", async () => {
+    getRunMock.mockResolvedValue({ ...runWithTrace });
+    renderRunDetail("run-1");
+
+    const summary = await screen.findByTestId("provider-trace-summary");
+    expect(summary).toHaveTextContent(
+      "Preflight: deterministic backend · Tailoring: Claude Code · DOCX: Backend",
+    );
+    // Warnings are visible but quiet — present without dominating.
+    expect(
+      screen.getByTestId("provider-trace-summary-warning"),
+    ).toHaveTextContent(/deterministic fallback used/i);
+  });
+
+  it("keeps the run trace collapsed by default", async () => {
+    getRunMock.mockResolvedValue({ ...runWithTrace });
+    renderRunDetail("run-1");
+
+    await screen.findByTestId("provider-trace-summary");
+    const disclosure = screen
+      .getByText("Run trace")
+      .closest("details") as HTMLDetailsElement;
+    expect(disclosure).not.toBeNull();
+    expect(disclosure.open).toBe(false);
+  });
+
+  it("shows per-step provider, model, status and duration when expanded", async () => {
+    const user = userEvent.setup();
+    getRunMock.mockResolvedValue({ ...runWithTrace });
+    renderRunDetail("run-1");
+
+    await screen.findByTestId("provider-trace-summary");
+    await user.click(screen.getByText("Run trace"));
+
+    const preflightRow = screen.getByTestId("provider-trace-row-job_summary");
+    expect(preflightRow).toHaveTextContent("Job summary");
+    expect(preflightRow).toHaveTextContent("Ollama / qwen3.5:9b");
+    expect(preflightRow).toHaveTextContent("complete");
+    expect(preflightRow).toHaveTextContent("1.8s");
+
+    const tailoringRow = screen.getByTestId(
+      "provider-trace-row-resume_generation",
+    );
+    expect(tailoringRow).toHaveTextContent("Claude Code");
+    expect(tailoringRow).toHaveTextContent("42.0s");
+
+    expect(
+      screen.getByTestId("provider-trace-row-docx_render"),
+    ).toHaveTextContent("Backend renderer");
+  });
+
+  it("hides advanced context details behind a nested disclosure", async () => {
+    getRunMock.mockResolvedValue({ ...runWithTrace });
+    renderRunDetail("run-1");
+
+    await screen.findByTestId("provider-trace-summary");
+    // The advanced budget figure is only reachable behind the nested
+    // "Details" disclosure, never in the compact default view.
+    const advanced = screen
+      .getAllByText("Details")[0]
+      .closest("details") as HTMLDetailsElement;
+    expect(advanced.open).toBe(false);
+    expect(within(advanced).getByText(/8192 tokens/)).toBeInTheDocument();
+  });
+
+  it("renders nothing when the run has no provider trace", async () => {
+    getRunMock.mockResolvedValue({ ...failedRun });
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 2, name: /resume tailoring run/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("provider-trace")).not.toBeInTheDocument();
+  });
+});

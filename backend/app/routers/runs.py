@@ -40,7 +40,9 @@ from ..run_directory import (
     default_candidate_context_root,
     default_runs_root,
     default_runtime_prompts_root,
+    get_provider_summary,
 )
+from ..provider_trace import read_provider_trace
 from ..run_import import RunImportError, import_run_outputs
 from ..resume_export import (
     ResumeExportError,
@@ -238,9 +240,28 @@ def create_run(payload: ClaudeRunCreate, db: Session = Depends(get_db)) -> Claud
     return run
 
 
+def _attach_provider_trace(run: ClaudeRun) -> ClaudeRun:
+    """Attach the run's provider summary + trace from disk (task 129).
+
+    Both are read from the run directory (``metadata.json`` summary and
+    ``provider_trace.json``), not the DB row, mirroring how
+    ``evidence_source_ids`` is populated. Best-effort: a run that predates
+    the trace (or whose write was interrupted) simply reports ``None`` / an
+    empty list. Credentials never enter these files, so nothing is redacted
+    here — the trace writer only emits whitelisted fields.
+    """
+    run_dir = Path(run.run_dir)
+    run.provider_summary = get_provider_summary(run_dir)
+    run.provider_trace = read_provider_trace(run_dir)
+    return run
+
+
 @router.get("", response_model=list[ClaudeRunRead])
 def list_runs(db: Session = Depends(get_db)) -> list[ClaudeRun]:
-    return list(db.query(ClaudeRun).order_by(ClaudeRun.created_at.desc()).all())
+    runs = list(db.query(ClaudeRun).order_by(ClaudeRun.created_at.desc()).all())
+    for run in runs:
+        _attach_provider_trace(run)
+    return runs
 
 
 @router.get("/{run_id}", response_model=ClaudeRunRead)
@@ -248,7 +269,7 @@ def get_run(run_id: str, db: Session = Depends(get_db)) -> ClaudeRun:
     run = db.get(ClaudeRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="claude run not found")
-    return run
+    return _attach_provider_trace(run)
 
 
 @router.get("/{run_id}/log", response_model=ClaudeRunLogRead)

@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import type { PreviewDocument, PreviewSection } from "../../lib/reviewModel";
-import type { ResumeSuggestion } from "../../api/types";
+import type { ProviderSummary, ResumeSuggestion } from "../../api/types";
 import { Button } from "../ui";
+import { ProvenanceStrip } from "../ProviderTrace";
 import { WorkflowRail } from "./WorkflowRail";
 import type { WorkflowStep } from "./WorkflowRail";
 import { ResumeDocumentPreview } from "./ResumeDocumentPreview";
@@ -28,6 +29,8 @@ interface ResumeReviewWorkspaceProps {
   actionError: string | null;
   /** Resume download/export actions (task 122), rendered in the top bar. */
   downloadActions?: ReactNode;
+  /** Provider summary (task 129) for the compact provenance strip. */
+  providerSummary?: ProviderSummary | null;
 }
 
 /**
@@ -58,6 +61,7 @@ export function ResumeReviewWorkspace({
   applyMessage,
   actionError,
   downloadActions,
+  providerSummary,
 }: ResumeReviewWorkspaceProps) {
   return (
     <div className="review-workspace" data-testid="review-workspace">
@@ -69,6 +73,7 @@ export function ResumeReviewWorkspace({
             {targetLine ? (
               <p className="review-topbar-subtitle">{targetLine}</p>
             ) : null}
+            <ProvenanceStrip summary={providerSummary} />
           </div>
         </div>
         <div className="review-topbar-actions">
