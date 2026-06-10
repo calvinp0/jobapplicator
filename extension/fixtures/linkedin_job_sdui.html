@@ -1,0 +1,123 @@
+<!doctype html>
+<!--
+  Reproduces LinkedIn's newer Server-Driven UI (SDUI) job detail layout.
+
+  Key properties this fixture exercises:
+    - The classic `.jobs-description__*` / `#job-details` nodes are ABSENT.
+    - Wrapper class names are content-hashed atomic CSS (`_107b9f77`,
+      `_437b6ccc`, `aaf70612`, …) that must never be relied on.
+    - The description is anchored by stable data attributes:
+        data-sdui-component="...aboutTheJob"
+        data-testid="expandable-text-box"
+    - Control affordances (Apply / Save / Back to careers / See more jobs /
+      Premium / Show more) sit in and around the description and must be
+      stripped from the captured text.
+    - A "People also viewed" recommendations rail and a Premium upsell card
+      sit alongside the description and must NOT be captured.
+-->
+<html lang="en">
+  <head>
+    <title>Senior AI Engineer at Northstar AI | LinkedIn</title>
+    <meta property="og:title" content="Senior AI Engineer" />
+    <meta
+      name="description"
+      content="Northstar AI is hiring a Senior AI Engineer to build frontier models."
+    />
+  </head>
+  <body>
+    <div id="root">
+      <header class="_16f6700c _782529d2">
+        <nav class="_global-nav aaf70612">
+          <a href="/feed/">Home</a>
+          <a href="/jobs/">Jobs</a>
+          <button>Premium</button>
+        </nav>
+      </header>
+
+      <main id="workspace" class="_89118895 bc3fc062 _9c9a83de">
+        <div class="_795185bc f3d19dae _08eddcfc">
+          <div class="_78065787 _60b13eba _1893fc19">
+            <!-- Top card: title + company carry hashed classes only. -->
+            <div class="_5b6ffe55 b079e387 ca1f942c">
+              <a class="_back-link _abc12345" href="/jobs/">Back to careers</a>
+              <h1 class="_2eed8786 _8f0e4305">Senior AI Engineer</h1>
+              <div class="_company _9bbfdbbc">Northstar AI</div>
+              <div class="_meta aaf70612">
+                San Francisco, CA · Reposted 3 days ago · 41 applicants
+              </div>
+              <div class="_actions _8d3ac719">
+                <button class="_apply _7c875090">Apply</button>
+                <button class="_save _58978128">Save</button>
+              </div>
+            </div>
+
+            <!-- SDUI description region. The hashed wrappers are noise; the
+                 data-sdui-component / data-testid attributes are the anchors. -->
+            <div class="_8913226f a787d4b5 _8ba8b6ad _00207442 d1620da4">
+              <section
+                data-sdui-component="com.linkedin.sdui.generated.jobseeker.dsl.impl.aboutTheJob"
+                class="_107b9f77 _02b51b14"
+              >
+                <div class="e780c63f _8913226f _00207442">
+                  <div data-testid="expandable-text-box" class="_437b6ccc _26662fbf">
+                    <h2 class="_hd c4e3b5c4">Description</h2>
+                    <p class="_1cdd0e53 _7ad3c46a">
+                      Northstar AI builds frontier models that help people reason
+                      about hard problems. We are looking for a Senior AI Engineer
+                      to own model training infrastructure end to end.
+                    </p>
+                    <h2 class="_hd c4e3b5c4">About the AI Division</h2>
+                    <p class="_1cdd0e53 _7ad3c46a">
+                      The AI Division is a small, senior team shipping research
+                      into production. You will work across data, training, and
+                      evaluation with direct ownership of outcomes.
+                    </p>
+                    <h2 class="_hd c4e3b5c4">About the Role</h2>
+                    <p class="_1cdd0e53 _7ad3c46a">
+                      You will design distributed training pipelines, profile and
+                      optimize GPU utilization, and partner with researchers to
+                      take experiments from notebook to scaled run.
+                    </p>
+                    <h2 class="_hd c4e3b5c4">Responsibilities</h2>
+                    <ul>
+                      <li>Build and operate large-scale training infrastructure.</li>
+                      <li>Improve throughput and reliability of training runs.</li>
+                      <li>Mentor engineers and raise the team's technical bar.</li>
+                    </ul>
+                    <h2 class="_hd c4e3b5c4">Requirements</h2>
+                    <ul>
+                      <li>5+ years building production ML systems.</li>
+                      <li>Strong experience with PyTorch or TensorFlow.</li>
+                      <li>Comfort with distributed systems and GPUs.</li>
+                    </ul>
+                    <h2 class="_hd c4e3b5c4">Qualifications</h2>
+                    <ul>
+                      <li>Degree in CS or equivalent practical experience.</li>
+                      <li>Track record of shipping ML to production.</li>
+                    </ul>
+                    <button class="_expand _show-more">Show more</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Recommendations rail — must never be captured as description. -->
+          <aside class="_sidebar _recommended" data-testid="similar-jobs">
+            <h2>People also viewed</h2>
+            <a href="/jobs/view/1/">Staff ML Engineer at OtherCo · See more jobs</a>
+            <a href="/jobs/view/2/">Research Engineer at AnotherCo · See more jobs</a>
+          </aside>
+
+          <!-- Premium upsell — must never be captured as description. -->
+          <div class="_premium-upsell premium" data-testid="premium-upsell-card">
+            <p>
+              Try Premium to see how you compare to other applicants. People
+              also viewed jobs like this with Premium insights and salary data.
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

@@ -88,6 +88,94 @@ const DESCRIPTION_SELECTORS = [
   ".description__text",
 ];
 
+// Newer LinkedIn renders the job detail pane as Server-Driven UI (SDUI). The
+// classic `.jobs-description__*` / `#job-details` nodes are gone; the only
+// stable handles are *semantic data attributes* the SDUI runtime emits. The
+// surrounding class names are content-hashed atomic CSS (e.g. `._107b9f77`)
+// and rotate on every deploy, so we anchor on the attributes instead and try
+// them after the classic selectors above. See task 053 (no hashed classes /
+// no absolute XPath).
+const SDUI_DESCRIPTION_SELECTORS = [
+  '[data-sdui-component*="aboutTheJob"]',
+  '[data-testid="expandable-text-box"]',
+  '[data-testid*="expandable"]',
+  '[data-testid*="description"]',
+];
+
+// Ranked list tried first: classic markup, then SDUI semantic attributes.
+const RANKED_DESCRIPTION_SELECTORS = [
+  ...DESCRIPTION_SELECTORS,
+  ...SDUI_DESCRIPTION_SELECTORS,
+];
+
+// Headings/phrases that signal a real job description. Used by the SDUI
+// scoring fallback (below) to tell a description container apart from
+// navigation, recommendations, or premium-upsell blocks.
+const JOB_HEADING_KEYWORDS = [
+  "description",
+  "about the role",
+  "about the job",
+  "about the team",
+  "about the company",
+  "about us",
+  "about the ai division",
+  "responsibilities",
+  "what you'll do",
+  "what you will do",
+  "requirements",
+  "qualifications",
+  "minimum qualifications",
+  "preferred qualifications",
+  "basic qualifications",
+  "who you are",
+  "your impact",
+  "benefits",
+  "what we offer",
+];
+
+// Whole-line control affordances LinkedIn injects in/around the description
+// (buttons, back links, the Premium pill). Matched against a node's *entire*
+// trimmed text so we strip "Apply" but never the word inside a sentence.
+const CONTROL_LINE_RE =
+  /^(back to careers|see more jobs|see less|show more|show less|premium|try premium|apply|easy apply|apply now|save|saved|report this job)$/i;
+
+// Markers (id / class / data-* / role) that disqualify a scored candidate
+// outright: site chrome, recommendations, premium upsell. We deliberately do
+// NOT inspect hashed atomic classes here — they carry no signal either way, so
+// a container is never chosen or rejected because of them.
+const DESCRIPTION_NEGATIVE_RE =
+  /(^|[\s_-])(nav|navigation|footer|sidebar|aside|breadcrumb|recommended|recommendation|similar-?jobs|people-also-viewed|premium|upsell|signin|login)([\s_-]|$)/i;
+
+// Body text that marks a block as recommendations/upsell rather than the role.
+const UPSELL_TEXT_RE =
+  /(try premium|retry premium|premium to see|unlock with premium|people also viewed|similar jobs|more jobs for you|jobs you may be interested)/i;
+
+// Length past which extra characters stop improving a candidate's score, so a
+// giant wrapper can't beat a focused description on raw length alone.
+const DESCRIPTION_SCORE_LENGTH_CAP = 4000;
+
+// Block-level tags after which we insert a newline when serializing a cloned
+// container. Lets us recover paragraph structure without depending on the
+// browser's innerText (which jsdom does not implement) and without reading a
+// detached clone's layout (which yields "" for innerText in a real browser).
+const BLOCK_TAGS = new Set([
+  "P",
+  "DIV",
+  "SECTION",
+  "ARTICLE",
+  "LI",
+  "UL",
+  "OL",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "TR",
+  "BLOCKQUOTE",
+]);
+
 // A non-empty match shorter than this is treated as suspect (e.g. a not-yet-
 // hydrated skeleton). We still keep it as a fallback in case no selector
 // returns a "real" description.
@@ -277,20 +365,178 @@ function extractLocation(document) {
   return firstMatchingText(document, LOCATION_FALLBACK_SELECTORS);
 }
 
+// Serialize an element to plain text, inserting newlines at block
+// boundaries. Works identically under jsdom (tests) and a real browser, and
+// is safe on a detached clone — unlike innerText, which needs layout.
+function collectBlockText(node, out) {
+  for (const child of node.childNodes) {
+    if (child.nodeType === 3) {
+      out.push(child.textContent || "");
+    } else if (child.nodeType === 1) {
+      const tag = child.tagName;
+      if (tag === "BR") {
+        out.push("\n");
+        continue;
+      }
+      collectBlockText(child, out);
+      if (BLOCK_TAGS.has(tag)) out.push("\n");
+    }
+  }
+}
+
+// Normalize multi-line text and drop standalone control-affordance lines
+// ("Apply", "Save", "Show more", the Premium pill, …) that survive as their
+// own line after block serialization.
+function cleanDescriptionText(raw) {
+  const normalized = normalizeMultiline(raw);
+  if (!normalized) return "";
+  return normalized
+    .split("\n")
+    .filter((line) => !CONTROL_LINE_RE.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
+// Read a description container's visible text. We clone the node so we can
+// prune control elements (Apply/Save buttons, "Back to careers" / "See more
+// jobs" links) without mutating the live page, then serialize to clean text.
+function readContainerText(node) {
+  if (!node || typeof node.cloneNode !== "function") {
+    return cleanDescriptionText(readVisibleText(node));
+  }
+  const clone = node.cloneNode(true);
+  if (typeof clone.querySelectorAll === "function") {
+    clone.querySelectorAll("button, [role='button']").forEach((el) => el.remove());
+    clone.querySelectorAll("a, span, div, li").forEach((el) => {
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (t && CONTROL_LINE_RE.test(t)) el.remove();
+    });
+  }
+  const out = [];
+  collectBlockText(clone, out);
+  return cleanDescriptionText(out.join(""));
+}
+
+// Describe a scored candidate with a *stable* selector for diagnostics —
+// never a hashed atomic class. Prefer SDUI/test attributes, then a semantic
+// id, then the bare tag name.
+function describeCandidateSelector(node) {
+  const sdui = node.getAttribute("data-sdui-component");
+  if (sdui) return `[data-sdui-component="${sdui}"]`;
+  const testid = node.getAttribute("data-testid");
+  if (testid) return `[data-testid="${testid}"]`;
+  const tag = (node.tagName || "div").toLowerCase();
+  const id = node.id;
+  if (id && /^[a-z][\w-]*$/i.test(id) && !/^_?[0-9a-f]{6,}$/i.test(id)) {
+    return `${tag}#${id}`;
+  }
+  return tag;
+}
+
+// Score a single container as a job-description candidate. Returns null when
+// the node is site chrome / recommendations / upsell or too short to be real.
+function scoreDescriptionCandidate(node) {
+  if (!node || typeof node.querySelectorAll !== "function") return null;
+  if (typeof node.closest === "function" && node.closest("nav, footer, header, aside")) {
+    return null;
+  }
+  const role = (node.getAttribute("role") || "").toLowerCase();
+  if (["navigation", "banner", "contentinfo", "complementary", "search"].includes(role)) {
+    return null;
+  }
+
+  const marker = [
+    node.id || "",
+    typeof node.className === "string" ? node.className : "",
+    node.getAttribute("data-testid") || "",
+    node.getAttribute("data-sdui-component") || "",
+  ].join(" ");
+  if (DESCRIPTION_NEGATIVE_RE.test(marker)) return null;
+
+  const text = readContainerText(node);
+  if (!text || text.length < DESCRIPTION_MIN_CHARS) return null;
+  // A short block that is purely upsell/recommendation chatter is noise.
+  if (UPSELL_TEXT_RE.test(text) && text.length < 600) return null;
+
+  const lower = text.toLowerCase();
+  let keywordHits = 0;
+  for (const keyword of JOB_HEADING_KEYWORDS) {
+    if (lower.includes(keyword)) keywordHits += 1;
+  }
+
+  const lengthScore =
+    Math.min(text.length, DESCRIPTION_SCORE_LENGTH_CAP) / DESCRIPTION_SCORE_LENGTH_CAP;
+  let score = keywordHits * 3 + lengthScore * 2;
+
+  const sdui = (node.getAttribute("data-sdui-component") || "").toLowerCase();
+  const testid = (node.getAttribute("data-testid") || "").toLowerCase();
+  if (sdui.includes("aboutthejob")) score += 4;
+  if (/(expandable|description|about-the-job)/.test(testid)) score += 3;
+  if (UPSELL_TEXT_RE.test(text)) score -= 3;
+
+  // Require some positive job signal: either a heading keyword or a strong
+  // attribute hint that already lifted the score.
+  if (keywordHits === 0 && score < 3) return null;
+
+  return { text, score, selector: describeCandidateSelector(node) };
+}
+
+// SDUI scoring fallback: when neither the classic selectors nor the SDUI
+// attribute selectors resolve a description, score visible candidate
+// containers and return the best one. Anchors on semantics (attributes,
+// headings) and never on hashed classes.
+function scoreSduiDescription(document) {
+  const seen = new Set();
+  const candidates = [];
+  const add = (node) => {
+    if (node && node.nodeType === 1 && !seen.has(node)) {
+      seen.add(node);
+      candidates.push(node);
+    }
+  };
+
+  document
+    .querySelectorAll("[data-sdui-component], [data-testid], main, article, section")
+    .forEach(add);
+  // Containers anchored by a recognizable job heading.
+  document.querySelectorAll("h1, h2, h3, h4").forEach((heading) => {
+    const text = (heading.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!text) return;
+    const isJobHeading = JOB_HEADING_KEYWORDS.some(
+      (keyword) => text === keyword || text.startsWith(keyword),
+    );
+    if (!isJobHeading) return;
+    if (typeof heading.closest !== "function") return;
+    const block = heading.closest(
+      "[data-sdui-component], [data-testid], section, article, main, div",
+    );
+    add(block);
+    if (block) add(block.parentElement);
+  });
+
+  let best = null;
+  for (const node of candidates) {
+    const scored = scoreDescriptionCandidate(node);
+    if (scored && (!best || scored.score > best.score)) best = scored;
+  }
+  if (!best) return null;
+  return { text: best.text, selector: best.selector };
+}
+
 function extractDescription(document) {
-  // Walk the ranked selector list within the active pane first, then across
-  // the document. Return the first match that clears the "real description"
-  // length bar; otherwise return the longest shorter match so an unusually
-  // terse posting still surfaces something useful.
+  // 1. Ranked selectors (classic markup first, then SDUI semantic attributes)
+  //    within the active pane, then across the document. Return the first
+  //    match that clears the "real description" length bar; otherwise keep the
+  //    longest shorter match so a terse posting still surfaces something.
   const pane = findActivePane(document);
   const scopes = pane ? [pane.node, document] : [document];
 
   let fallback = null;
   for (const scope of scopes) {
-    for (const selector of DESCRIPTION_SELECTORS) {
+    for (const selector of RANKED_DESCRIPTION_SELECTORS) {
       const node = scope.querySelector(selector);
       if (!node) continue;
-      let text = normalizeMultiline(readVisibleText(node));
+      let text = readContainerText(node);
       if (!text) continue;
       if (text.length > DESCRIPTION_MAX_CHARS) {
         text = text.slice(0, DESCRIPTION_MAX_CHARS);
@@ -304,6 +550,27 @@ function extractDescription(document) {
     }
     if (fallback) break; // don't widen scope past pane if we found anything
   }
+
+  // 2. SDUI scoring fallback: no known selector resolved a full description,
+  //    so score candidate containers by length + job-heading keywords while
+  //    excluding nav/footer/recommendation/premium blocks.
+  const scored = scoreSduiDescription(document);
+  if (scored) {
+    let text = scored.text;
+    if (text.length > DESCRIPTION_MAX_CHARS) {
+      text = text.slice(0, DESCRIPTION_MAX_CHARS);
+    }
+    if (
+      text.length >= DESCRIPTION_MIN_CHARS &&
+      (!fallback || text.length > fallback.text.length)
+    ) {
+      return { text, selector: scored.selector };
+    }
+    if (!fallback || text.length > fallback.text.length) {
+      fallback = { text, selector: scored.selector };
+    }
+  }
+
   return fallback;
 }
 

@@ -405,6 +405,123 @@ describe("parseLinkedInJob — fallback fields and diagnostics", () => {
   });
 });
 
+describe("parseLinkedInJob — LinkedIn SDUI layout", () => {
+  const url = "https://www.linkedin.com/jobs/view/4012345678/";
+  let payload;
+  let document;
+
+  beforeAll(async () => {
+    document = await loadFixtureDocument("linkedin_job_sdui.html");
+    payload = parseLinkedInJob({ document, url });
+  });
+
+  it("extracts the description from the SDUI about-the-job region", () => {
+    expect(payload.description_text).toContain("Description");
+    expect(payload.description_text).toContain("About the AI Division");
+    expect(payload.description_text).toContain("About the Role");
+    expect(payload.description_text).toContain("Responsibilities");
+    expect(payload.description_text).toContain("Requirements");
+    expect(payload.description_text).toContain("Qualifications");
+    expect(payload.description_text).toContain("PyTorch or TensorFlow");
+    expect(payload.diagnostics.selectors_matched.description).toBe(true);
+  });
+
+  it("anchors on a stable attribute selector, never a hashed atomic class", () => {
+    const selector = payload.diagnostics.matched_selectors.description;
+    expect(selector).toMatch(/data-sdui-component|data-testid/);
+    // The hashed wrappers from the page must never appear as the selector.
+    expect(selector).not.toMatch(/_107b9f77|_437b6ccc|aaf70612/);
+  });
+
+  it("strips control affordances and never captures Apply/Save/Show more", () => {
+    const lines = payload.description_text.split("\n").map((l) => l.trim());
+    for (const noise of [
+      "Apply",
+      "Save",
+      "Show more",
+      "Back to careers",
+      "Premium",
+    ]) {
+      expect(lines).not.toContain(noise);
+    }
+  });
+
+  it("excludes the recommendations rail and premium upsell", () => {
+    expect(payload.description_text).not.toMatch(/People also viewed/i);
+    expect(payload.description_text).not.toMatch(/Try Premium/i);
+    expect(payload.description_text).not.toMatch(/See more jobs/i);
+  });
+
+  it("still resolves a title via fallbacks on the SDUI layout", () => {
+    expect(payload.title).toBe("Senior AI Engineer");
+  });
+
+  it("does not depend on hashed class names (extraction survives class removal)", async () => {
+    // Re-parse the same DOM with EVERY class attribute stripped. If extraction
+    // leaned on hashed classes this would now miss; it must still resolve the
+    // description from the SDUI data attributes alone.
+    const stripped = await loadFixtureDocument("linkedin_job_sdui.html");
+    stripped.querySelectorAll("*").forEach((el) => el.removeAttribute("class"));
+    const reparsed = parseLinkedInJob({ document: stripped, url });
+    expect(reparsed.description_text).toContain("Requirements");
+    expect(reparsed.description_text).toContain("PyTorch or TensorFlow");
+    expect(reparsed.diagnostics.matched_selectors.description).toMatch(
+      /data-sdui-component|data-testid/,
+    );
+  });
+
+  it("still only runs for LinkedIn URLs — rejects an SDUI DOM on a non-LinkedIn URL", () => {
+    expect(() =>
+      parseLinkedInJob({ document, url: "https://example.com/jobs/view/1" }),
+    ).toThrow(/Not a LinkedIn job page/);
+  });
+});
+
+describe("parseLinkedInJob — SDUI scoring fallback (no known selectors)", () => {
+  const url = "https://www.linkedin.com/jobs/view/4012345678/";
+
+  function buildDoc(bodyHtml) {
+    const dom = new JSDOM(
+      `<!doctype html><html><body>${bodyHtml}</body></html>`,
+    );
+    return dom.window.document;
+  }
+
+  it("scores the description container over nav/recommendations/upsell", () => {
+    // No #job-details, no .jobs-description__*, no data-sdui-component, and no
+    // data-testid — only job headings inside a div with hashed classes. The
+    // scoring fallback must still find it and exclude the chrome around it.
+    const document = buildDoc(`
+      <nav class="_nav123"><a>Home</a><a>Jobs</a><button>Premium</button></nav>
+      <div class="_aaa111 _bbb222">
+        <h2>About the Role</h2>
+        <p>You will design distributed training pipelines and partner with
+           researchers to take experiments from notebook to scaled run.</p>
+        <h2>Responsibilities</h2>
+        <ul>
+          <li>Build and operate large-scale training infrastructure.</li>
+          <li>Improve throughput and reliability of training runs.</li>
+        </ul>
+        <h2>Requirements</h2>
+        <p>Strong experience with PyTorch or TensorFlow and distributed systems.</p>
+      </div>
+      <div class="premium-upsell premium">
+        <p>Try Premium to see how you compare to other applicants.</p>
+      </div>
+      <aside class="recommended">
+        <h2>People also viewed</h2>
+        <a href="/jobs/view/2/">More jobs for you</a>
+      </aside>
+    `);
+    const payload = parseLinkedInJob({ document, url });
+    expect(payload.description_text).toContain("Responsibilities");
+    expect(payload.description_text).toContain("PyTorch or TensorFlow");
+    expect(payload.description_text).not.toMatch(/Try Premium/i);
+    expect(payload.description_text).not.toMatch(/People also viewed/i);
+    expect(payload.diagnostics.selectors_matched.description).toBe(true);
+  });
+});
+
 describe("parseLinkedInJob — non-LinkedIn page rejection", () => {
   it("throws when the URL is not a LinkedIn job page", async () => {
     const document = await loadFixtureDocument("non_linkedin_page.html");
