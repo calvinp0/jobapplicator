@@ -49,6 +49,39 @@ npm install
 VITE_API_BASE=http://localhost:8000 npm run dev -- --host localhost --port 5173
 ```
 
+## Local LLM (experimental, optional)
+
+The app can route **low-risk** tasks (job-description summary, ATS
+keyword extraction, email classification, experimental resume
+suggestions) to a local OpenAI-compatible endpoint such as Ollama. This
+is **opt-in and off by default**. Claude Code remains the default for
+resume tailoring, claim auditing, and recruiter review — local LLMs are
+never used for those unless you explicitly enable them.
+
+Quick start with Ollama (exposes an OpenAI-compatible API at `/v1`):
+
+```bash
+# Install Ollama: https://ollama.com/download
+ollama pull llama3.1:8b
+ollama serve            # serves http://localhost:11434
+```
+
+Then in the cockpit:
+
+1. Open **Settings → LLM Providers**.
+2. Tick **Enable local LLM (experimental)**.
+3. Set the endpoint (e.g. `http://localhost:11434/v1`) and model
+   (e.g. `llama3.1:8b`). An API key is only needed if your endpoint
+   requires one; it is stored locally and masked in the UI.
+4. Click **Test connection** to confirm the model responds.
+5. Choose which tasks may use the local LLM. High-risk tasks stay on
+   Claude Code unless you deliberately turn them on.
+
+Outputs are schema-validated with a single repair retry, and the
+provider/model is logged. See [`docs/llm_providers.md`](docs/llm_providers.md)
+for the task policy, fallback behavior, and why Claude Code remains the
+default for final tailoring.
+
 ## Browser extension
 
 ```bash

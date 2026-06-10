@@ -173,7 +173,7 @@ describe("ApplicationsPage Sync Gmail", () => {
       ).toBeInTheDocument(),
     );
     expect(
-      screen.getByRole("button", { name: /sync gmail/i }),
+      await screen.findByRole("button", { name: /sync gmail/i }),
     ).toBeInTheDocument();
   });
 
@@ -210,7 +210,7 @@ describe("ApplicationsPage Sync Gmail", () => {
       ).toBeInTheDocument(),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: /sync gmail/i }),
+      await screen.findByRole("button", { name: /sync gmail/i }),
     );
     expect(syncApplicationsGmailMock).toHaveBeenCalledTimes(1);
   });
@@ -229,7 +229,7 @@ describe("ApplicationsPage Sync Gmail", () => {
       ).toBeInTheDocument(),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: /sync gmail/i }),
+      await screen.findByRole("button", { name: /sync gmail/i }),
     );
     expect(screen.getByRole("button", { name: /syncing gmail/i })).toBeDisabled();
     resolve?.({
@@ -286,7 +286,7 @@ describe("ApplicationsPage Sync Gmail", () => {
       ).toBeInTheDocument(),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: /sync gmail/i }),
+      await screen.findByRole("button", { name: /sync gmail/i }),
     );
     await waitFor(() =>
       expect(screen.getByText(/Checked 3 applications/i)).toBeInTheDocument(),
@@ -314,7 +314,7 @@ describe("ApplicationsPage Sync Gmail", () => {
       ).toBeInTheDocument(),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: /sync gmail/i }),
+      await screen.findByRole("button", { name: /sync gmail/i }),
     );
     await waitFor(() =>
       expect(
@@ -357,7 +357,7 @@ describe("ApplicationsPage Sync Gmail", () => {
     );
     listApplicationsMock.mockClear();
     await userEvent.click(
-      screen.getByRole("button", { name: /sync gmail/i }),
+      await screen.findByRole("button", { name: /sync gmail/i }),
     );
     await waitFor(() => expect(listApplicationsMock).toHaveBeenCalledTimes(1));
   });

@@ -43,6 +43,11 @@ import type {
   JobCaptureConfirm,
   LlmProvider,
   LlmProviderSetting,
+  LocalLlmSettings,
+  LocalLlmSettingsUpdate,
+  LocalLlmTaskPolicy,
+  LocalLlmTestRequest,
+  LocalLlmTestResult,
   MasterResume,
   MasterResumeCreate,
   PromptHarnessDetail,
@@ -106,6 +111,11 @@ export type {
   JobCaptureConfirm,
   LlmProvider,
   LlmProviderSetting,
+  LocalLlmSettings,
+  LocalLlmSettingsUpdate,
+  LocalLlmTaskPolicy,
+  LocalLlmTestRequest,
+  LocalLlmTestResult,
   MasterResume,
   MasterResumeCreate,
   PromptHarnessDetail,
@@ -465,6 +475,25 @@ export function setLlmProviderSetting(
   return apiRequest("/settings/llm-provider", {
     method: "PUT",
     body: { default_provider: defaultProvider },
+  });
+}
+
+export function getLocalLlmSettings(): Promise<LocalLlmSettings> {
+  return apiRequest("/settings/local-llm");
+}
+
+export function setLocalLlmSettings(
+  payload: LocalLlmSettingsUpdate,
+): Promise<LocalLlmSettings> {
+  return apiRequest("/settings/local-llm", { method: "PUT", body: payload });
+}
+
+export function testLocalLlmConnection(
+  payload: LocalLlmTestRequest = {},
+): Promise<LocalLlmTestResult> {
+  return apiRequest("/llm/local/test-connection", {
+    method: "POST",
+    body: payload,
   });
 }
 

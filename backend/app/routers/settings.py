@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import gmail_settings
+from .. import gmail_settings, local_llm
 from ..db import get_db
 from ..llm_providers import list_providers
 from ..local_reset import create_backup, reset_local_data
@@ -70,6 +70,86 @@ def update_default_llm_provider(
         default_provider=get_default_llm_provider(),
         available=_available_providers(),
     )
+
+
+# ---- Experimental local LLM config (task 123) ------------------------
+
+
+class LocalLLMTaskPolicy(BaseModel):
+    """Static per-task policy metadata surfaced to the Settings UI."""
+
+    task: str
+    risk: str
+    configurable: bool
+    default_local: bool
+
+
+class LocalLLMSettingsRead(BaseModel):
+    """Sanitized snapshot of the experimental local LLM config.
+
+    The optional API key is **never** returned in plaintext; the UI sees
+    ``has_api_key`` plus a masked preview. ``task_policy`` carries the
+    static risk metadata so the UI can label high-risk tasks.
+    """
+
+    enabled: bool
+    provider: str
+    base_url: str
+    model: str
+    timeout_seconds: int
+    allowed_tasks: dict[str, bool]
+    has_api_key: bool
+    api_key_preview: str
+    updated_at: str | None
+    task_policy: list[LocalLLMTaskPolicy]
+
+
+class LocalLLMSettingsUpdate(BaseModel):
+    """Request body for ``PUT /settings/local-llm``.
+
+    ``api_key`` may be omitted; with ``preserve_existing_key`` set, any
+    previously stored key is retained on update.
+    """
+
+    enabled: bool = False
+    provider: str = local_llm.PROVIDER_OPENAI_COMPATIBLE
+    base_url: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    timeout_seconds: int = local_llm.DEFAULT_TIMEOUT_SECONDS
+    allowed_tasks: dict[str, bool] = Field(default_factory=dict)
+    api_key: str | None = None
+    preserve_existing_key: bool = False
+
+
+@router.get("/local-llm", response_model=LocalLLMSettingsRead)
+def read_local_llm_settings() -> LocalLLMSettingsRead:
+    return LocalLLMSettingsRead(**local_llm.get_settings_view())
+
+
+@router.put("/local-llm", response_model=LocalLLMSettingsRead)
+def update_local_llm_settings(
+    payload: LocalLLMSettingsUpdate,
+) -> LocalLLMSettingsRead:
+    try:
+        local_llm.save_config(
+            enabled=payload.enabled,
+            provider=payload.provider,
+            base_url=payload.base_url,
+            model=payload.model,
+            timeout_seconds=payload.timeout_seconds,
+            allowed_tasks=payload.allowed_tasks,
+            api_key=payload.api_key,
+            preserve_existing_key=payload.preserve_existing_key,
+        )
+    except local_llm.LocalLLMValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LocalLLMSettingsRead(**local_llm.get_settings_view())
+
+
+@router.delete("/local-llm", response_model=LocalLLMSettingsRead)
+def delete_local_llm_settings() -> LocalLLMSettingsRead:
+    local_llm.delete_config()
+    return LocalLLMSettingsRead(**local_llm.get_settings_view())
 
 
 # ---- Exports folder (task 122) ---------------------------------------

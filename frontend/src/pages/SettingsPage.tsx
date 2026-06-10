@@ -9,6 +9,7 @@ import {
   getGmailOAuthSettings,
   getGmailStatus,
   getLlmProviderSetting,
+  getLocalLlmSettings,
   importEvidenceSourceFile,
   importMasterResumeFile,
   listEvidenceSources,
@@ -16,12 +17,15 @@ import {
   resetLocalData,
   setGmailOAuthSettings,
   setLlmProviderSetting,
+  setLocalLlmSettings,
+  testLocalLlmConnection,
 } from "../api";
 import type {
   EvidenceSource,
   GmailOAuthSettings,
   GmailStatusResponse,
   LlmProvider,
+  LocalLlmSettings,
   MasterResume,
 } from "../api";
 import { extractApiDetail } from "../lib/api-errors";
@@ -490,6 +494,302 @@ function LlmProviderCard() {
 
           <div className="settings-card-form-actions">
             <button type="submit" disabled={isSaving || !isDirty}>
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+// Human labels for the toggleable local-LLM tasks. Order is driven by the
+// backend's task_policy so high-risk tasks render last.
+const LOCAL_TASK_LABELS: Record<string, string> = {
+  job_summary: "Job description summarization",
+  ats_keywords: "ATS keyword extraction",
+  email_classification: "Email classification",
+  resume_suggestions: "Resume suggestions (experimental)",
+  resume_tailoring: "Full resume tailoring (experimental)",
+  claim_audit: "Claim audit (experimental)",
+};
+
+/**
+ * Experimental local LLM provider card (task 123).
+ *
+ * Lets the user point the app at a local OpenAI-compatible endpoint
+ * (Ollama, vLLM, LM Studio, …) for *low-risk* tasks only. Full resume
+ * tailoring and claim audits default to off and are clearly flagged as
+ * experimental; Claude Code remains the default for those.
+ */
+function LocalLlmCard() {
+  const [settings, setSettings] = useState<LocalLlmSettings | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [provider, setProvider] = useState("openai_compatible");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState("");
+  const [timeoutSeconds, setTimeoutSeconds] = useState(60);
+  const [apiKey, setApiKey] = useState("");
+  const [allowedTasks, setAllowedTasks] = useState<Record<string, boolean>>({});
+
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  function applySettings(data: LocalLlmSettings) {
+    setSettings(data);
+    setEnabled(data.enabled);
+    setProvider(data.provider);
+    setBaseUrl(data.base_url);
+    setModel(data.model);
+    setTimeoutSeconds(data.timeout_seconds);
+    setAllowedTasks(data.allowed_tasks);
+    setApiKey("");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    getLocalLlmSettings()
+      .then((data) => {
+        if (cancelled) return;
+        applySettings(data);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(extractApiDetail(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function clearFeedback() {
+    setSaveSuccess(null);
+    setSaveError(null);
+    setTestResult(null);
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      const updated = await setLocalLlmSettings({
+        enabled,
+        provider,
+        base_url: baseUrl,
+        model,
+        timeout_seconds: timeoutSeconds,
+        allowed_tasks: allowedTasks,
+        api_key: apiKey ? apiKey : null,
+        preserve_existing_key: !apiKey,
+      });
+      applySettings(updated);
+      setSaveSuccess("Saved.");
+    } catch (err: unknown) {
+      setSaveError(extractApiDetail(err));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleTestConnection() {
+    setIsTesting(true);
+    setTestResult(null);
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      const result = await testLocalLlmConnection({
+        base_url: baseUrl,
+        model,
+        timeout_seconds: timeoutSeconds,
+        provider,
+        api_key: apiKey ? apiKey : null,
+        preserve_existing_key: !apiKey,
+      });
+      setTestResult({
+        ok: result.ok,
+        message: result.ok
+          ? result.message
+          : result.error || result.message,
+      });
+    } catch (err: unknown) {
+      setTestResult({ ok: false, message: extractApiDetail(err) });
+    } finally {
+      setIsTesting(false);
+    }
+  }
+
+  const configurableTasks = (settings?.task_policy ?? []).filter(
+    (t) => t.configurable,
+  );
+
+  return (
+    <section className="settings-card" data-testid="local-llm-card">
+      <header className="settings-card-header">
+        <h3>Local LLM (experimental)</h3>
+      </header>
+
+      <p className="settings-helper" role="note">
+        Local LLM support is experimental. High-risk outputs such as final
+        resume tailoring and claim audits should use Claude Code unless you
+        review carefully.
+      </p>
+
+      {loadError ? (
+        <p role="alert" className="error">
+          {loadError}
+        </p>
+      ) : settings === null ? (
+        <p>Loading…</p>
+      ) : (
+        <form onSubmit={handleSubmit} noValidate className="settings-card-form">
+          <label className="field-inline">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => {
+                setEnabled(e.target.checked);
+                clearFeedback();
+              }}
+            />
+            <span>Enable local LLM (experimental)</span>
+          </label>
+
+          <label className="field">
+            <span>Provider</span>
+            <select
+              value={provider}
+              onChange={(e) => {
+                setProvider(e.target.value);
+                clearFeedback();
+              }}
+            >
+              <option value="openai_compatible">OpenAI-compatible</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Local LLM endpoint</span>
+            <input
+              type="text"
+              value={baseUrl}
+              placeholder="http://localhost:11434/v1"
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <label className="field">
+            <span>Model name</span>
+            <input
+              type="text"
+              value={model}
+              placeholder="llama3.1:8b"
+              onChange={(e) => {
+                setModel(e.target.value);
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <label className="field">
+            <span>Timeout (seconds)</span>
+            <input
+              type="number"
+              min={1}
+              value={timeoutSeconds}
+              onChange={(e) => {
+                setTimeoutSeconds(Number(e.target.value));
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <label className="field">
+            <span>
+              API key (optional)
+              {settings.has_api_key ? " — saved" : ""}
+            </span>
+            <input
+              type="password"
+              value={apiKey}
+              placeholder={
+                settings.has_api_key
+                  ? settings.api_key_preview
+                  : "Leave blank if not required"
+              }
+              onChange={(e) => {
+                setApiKey(e.target.value);
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <fieldset className="field">
+            <legend>Use local LLM for</legend>
+            {configurableTasks.map((task) => (
+              <label key={task.task} className="field-inline">
+                <input
+                  type="checkbox"
+                  checked={Boolean(allowedTasks[task.task])}
+                  onChange={(e) => {
+                    setAllowedTasks((prev) => ({
+                      ...prev,
+                      [task.task]: e.target.checked,
+                    }));
+                    clearFeedback();
+                  }}
+                />
+                <span>
+                  {LOCAL_TASK_LABELS[task.task] ?? task.task}
+                  {task.risk === "high" ? (
+                    <em className="local-llm-risk"> (high risk — off by default)</em>
+                  ) : null}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+
+          {saveError ? (
+            <p role="alert" className="error">
+              {saveError}
+            </p>
+          ) : null}
+          {saveSuccess ? (
+            <p role="status" className="settings-success">
+              {saveSuccess}
+            </p>
+          ) : null}
+          {testResult ? (
+            <p
+              role={testResult.ok ? "status" : "alert"}
+              className={testResult.ok ? "settings-success" : "error"}
+            >
+              {testResult.message}
+            </p>
+          ) : null}
+
+          <div className="settings-card-form-actions">
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={isTesting}
+            >
+              {isTesting ? "Testing…" : "Test connection"}
+            </button>
+            <button type="submit" disabled={isSaving}>
               {isSaving ? "Saving…" : "Save"}
             </button>
           </div>
@@ -1053,6 +1353,13 @@ export function SettingsPage() {
         description="Pick which CLI-based provider drives the automatic tailoring flow."
       >
         <LlmProviderCard />
+      </SettingsGroup>
+
+      <SettingsGroup
+        label="LLM Providers"
+        description="Experimental: route low-risk tasks to a local LLM (Ollama or an OpenAI-compatible endpoint). Claude Code remains the default for resume tailoring."
+      >
+        <LocalLlmCard />
       </SettingsGroup>
 
       <SettingsGroup

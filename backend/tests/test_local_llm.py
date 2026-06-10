@@ -1,0 +1,391 @@
+"""Tests for the experimental local LLM provider (task 123).
+
+Covers four layers:
+
+- the persisted ``/settings/local-llm`` config (save/load, key masking);
+- the ``/llm/local/test-connection`` endpoint (success and failure);
+- the :class:`~app.local_llm.LocalLLMClient` (request shape, JSON schema
+  validation with a repair retry);
+- the task policy (high-risk tasks default to Claude Code; low-risk tasks
+  are allowed; resume tailoring is blocked unless explicitly enabled) and
+  the run-metadata helper.
+
+The network boundary (``app.local_llm._post_json``) is monkeypatched so no
+live server is needed.
+"""
+
+from __future__ import annotations
+
+import urllib.error
+
+
+def _completion(content: str, model: str = "llama3.1:8b") -> dict:
+    """A minimal OpenAI-compatible chat-completions response body."""
+    return {
+        "model": model,
+        "choices": [{"message": {"role": "assistant", "content": content}}],
+    }
+
+
+# ---- settings persistence --------------------------------------------
+
+
+def test_local_llm_settings_save_and_load(client):
+    # Defaults on a fresh DB: disabled, documented endpoint/model.
+    read = client.get("/settings/local-llm")
+    assert read.status_code == 200, read.text
+    body = read.json()
+    assert body["enabled"] is False
+    assert body["base_url"] == "http://localhost:11434/v1"
+    assert body["model"] == "llama3.1:8b"
+    assert body["allowed_tasks"]["resume_tailoring"] is False
+
+    updated = client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "openai_compatible",
+            "base_url": "http://localhost:1234/v1",
+            "model": "qwen2.5-coder:14b",
+            "timeout_seconds": 30,
+            "allowed_tasks": {"ats_keywords": True, "resume_tailoring": False},
+        },
+    )
+    assert updated.status_code == 200, updated.text
+
+    # The change survives a follow-up GET.
+    fetched = client.get("/settings/local-llm").json()
+    assert fetched["enabled"] is True
+    assert fetched["base_url"] == "http://localhost:1234/v1"
+    assert fetched["model"] == "qwen2.5-coder:14b"
+    assert fetched["timeout_seconds"] == 30
+
+
+def test_local_llm_settings_rejects_bad_base_url(client):
+    resp = client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "localhost:11434",  # missing scheme
+            "model": "llama3.1:8b",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "base_url" in resp.json()["detail"]
+
+
+def test_local_llm_api_key_is_masked_in_read(client):
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "api_key": "super-secret-token",
+        },
+    ).raise_for_status()
+
+    body = client.get("/settings/local-llm").json()
+    assert body["has_api_key"] is True
+    # The plaintext key must never appear in the read view.
+    assert "super-secret-token" not in str(body)
+    assert body["api_key_preview"] and "super-secret-token" not in body[
+        "api_key_preview"
+    ]
+
+
+def test_local_llm_preserve_existing_key(client):
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "api_key": "keep-me",
+        },
+    ).raise_for_status()
+
+    # Update other fields without resending the key.
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "mistral-small",
+            "preserve_existing_key": True,
+        },
+    ).raise_for_status()
+
+    import app.local_llm as local_llm
+
+    assert local_llm.get_config().api_key == "keep-me"
+
+
+# ---- test-connection endpoint ----------------------------------------
+
+
+def test_test_connection_success(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        return _completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={"base_url": "http://localhost:11434/v1", "model": "llama3.1:8b"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert "model responded" in body["message"].lower()
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+
+
+def test_test_connection_timeout(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={"base_url": "http://localhost:9/v1", "model": "x"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert "timeout" in (body["error"] or "").lower()
+
+
+def test_test_connection_connection_error(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post("/llm/local/test-connection", json={})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]
+
+
+# ---- client request shape --------------------------------------------
+
+
+def test_client_formats_openai_compatible_request(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        captured["payload"] = payload
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        return _completion('{"ok": true}', model="qwen")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        base_url="http://localhost:11434/v1/",  # trailing slash handled
+        model="qwen2.5-coder:14b",
+        timeout_seconds=42,
+        api_key="tok",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert result.ok is True
+    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+    assert captured["payload"]["model"] == "qwen2.5-coder:14b"
+    assert captured["payload"]["messages"] == [{"role": "user", "content": "hi"}]
+    assert captured["payload"]["response_format"] == {"type": "json_object"}
+    assert captured["headers"]["Authorization"] == "Bearer tok"
+    assert captured["timeout"] == 42
+
+
+# ---- task policy ------------------------------------------------------
+
+
+def test_policy_defaults_resume_tailoring_to_claude_code(client):
+    import app.local_llm as local_llm
+
+    # Even with the subsystem enabled, the default per-task toggle keeps
+    # resume tailoring on Claude Code.
+    config = local_llm.LocalLLMConfig(enabled=True)
+    assert local_llm.local_allowed_for_task("resume_tailoring", config) is False
+    assert (
+        local_llm.provider_for_task("resume_tailoring", config) == "claude_code"
+    )
+
+
+def test_policy_allows_low_risk_tasks_when_enabled(client):
+    import app.local_llm as local_llm
+
+    config = local_llm.LocalLLMConfig(enabled=True)
+    for task in ("job_summary", "ats_keywords", "email_classification"):
+        assert local_llm.local_allowed_for_task(task, config) is True
+        assert local_llm.provider_for_task(task, config) == (
+            "local_openai_compatible"
+        )
+
+
+def test_policy_blocks_low_risk_when_subsystem_disabled(client):
+    import app.local_llm as local_llm
+
+    config = local_llm.LocalLLMConfig(enabled=False)
+    assert local_llm.local_allowed_for_task("ats_keywords", config) is False
+    assert local_llm.provider_for_task("ats_keywords", config) == "claude_code"
+
+
+def test_policy_blocks_resume_tailoring_unless_explicitly_enabled(client):
+    import app.local_llm as local_llm
+
+    explicit = local_llm.LocalLLMConfig(
+        enabled=True,
+        allowed_tasks={**local_llm.DEFAULT_ALLOWED_TASKS, "resume_tailoring": True},
+    )
+    assert local_llm.local_allowed_for_task("resume_tailoring", explicit) is True
+    assert (
+        local_llm.provider_for_task("resume_tailoring", explicit)
+        == "local_openai_compatible"
+    )
+
+
+def test_policy_recruiter_review_is_never_local(client):
+    import app.local_llm as local_llm
+
+    # recruiter_review is not configurable; even if someone smuggles a True
+    # toggle in, it stays on Claude Code.
+    config = local_llm.LocalLLMConfig(
+        enabled=True, allowed_tasks={"recruiter_review": True}
+    )
+    assert local_llm.local_allowed_for_task("recruiter_review", config) is False
+    assert local_llm.provider_for_task("recruiter_review", config) == "claude_code"
+
+
+# ---- schema validation -----------------------------------------------
+
+
+def test_invalid_json_fails_validation_after_repair(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # Both the initial call and the repair retry return non-JSON.
+        return _completion("this is not json")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(enabled=True)
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "give me json"}],
+        required_fields=["suggestions"],
+        task="resume_suggestions",
+    )
+    assert result.ok is True  # the HTTP call succeeded...
+    assert result.schema_valid is False  # ...but the payload is not valid
+    assert result.repaired is True
+
+
+def test_valid_json_passes_validation(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _completion('{"suggestions": [{"target": "summary"}]}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(enabled=True)
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "go"}],
+        required_fields=["suggestions"],
+        task="resume_suggestions",
+    )
+    assert result.schema_valid is True
+    assert result.repaired is False
+    assert result.parsed == {"suggestions": [{"target": "summary"}]}
+
+
+# ---- run metadata ----------------------------------------------------
+
+
+def test_run_metadata_records_provider_and_model(client):
+    import app.local_llm as local_llm
+
+    # Default (disabled) → Claude Code, sentinel model.
+    default_meta = local_llm.task_run_metadata("ats_keywords")
+    assert default_meta["provider"] == "claude_code"
+    assert default_meta["model"] == "claude-code"
+    assert default_meta["local_llm_enabled"] is False
+
+    # Enabled + low-risk task → local provider/model recorded.
+    config = local_llm.LocalLLMConfig(enabled=True, model="mistral-small")
+    local_meta = local_llm.task_run_metadata("ats_keywords", config)
+    assert local_meta["provider"] == "local_openai_compatible"
+    assert local_meta["model"] == "mistral-small"
+    assert local_meta["local_llm_enabled"] is True
+
+    # High-risk task stays on Claude Code regardless.
+    high = local_llm.task_run_metadata("resume_tailoring", config)
+    assert high["provider"] == "claude_code"
+
+
+# ---- suggest-resume-edits endpoint -----------------------------------
+
+
+def test_suggest_resume_edits_blocked_when_not_enabled(client):
+    resp = client.post(
+        "/llm/local/suggest-resume-edits",
+        json={"job_description": "jd", "resume_excerpt": "resume"},
+    )
+    assert resp.status_code == 409, resp.text
+
+
+def test_suggest_resume_edits_returns_suggestions(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _completion(
+            '{"suggestions": [{"target": "summary", "suggestion": "tighten", '
+            '"rationale": "matches jd"}]}'
+        )
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "allowed_tasks": {
+                **local_llm.DEFAULT_ALLOWED_TASKS,
+                "resume_suggestions": True,
+            },
+        },
+    ).raise_for_status()
+
+    resp = client.post(
+        "/llm/local/suggest-resume-edits",
+        json={"job_description": "build things", "resume_excerpt": "did things"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["experimental"] is True
+    assert body["provider"] == "local_openai_compatible"
+    assert body["model"] == "llama3.1:8b"
+    assert body["schema_valid"] is True
+    assert len(body["suggestions"]) == 1

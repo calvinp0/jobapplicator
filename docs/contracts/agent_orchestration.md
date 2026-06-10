@@ -1311,6 +1311,27 @@ available via the same variable. The reviewer used to default to `plan`
 (read-only); it now defaults to `acceptEdits` so it can write the
 structured review artifact, with the prompt narrowing what it may write.
 
+### Runtime LLM providers are a separate concern
+
+The Claude Code invocations above belong to the *orchestration harness* —
+the agent that implements queued builder tasks. They are unrelated to the
+*runtime* LLM provider that the application uses to tailor resumes:
+
+- **Resume tailoring (`auto` flow).** Driven by the CLI provider registry
+  in `backend/app/llm_providers.py` (ADR-009). Claude Code is the default;
+  Codex and Gemini are alternatives. This is a high-risk, evidence-grounded
+  output path and is the only flow that produces the run-directory outputs.
+- **Experimental local LLM (task 123).** An opt-in, off-by-default
+  subsystem (`backend/app/local_llm.py`) for *low-risk* tasks only —
+  job-description summary, ATS keyword extraction, email classification,
+  and (experimentally) resume suggestions. It speaks an OpenAI-compatible
+  HTTP endpoint (Ollama/vLLM/LM Studio), never drives the `auto` tailoring
+  flow, and never takes over claim auditing or recruiter review. See
+  `docs/llm_providers.md`.
+
+Neither runtime provider changes the agent-task lifecycle, the worktree
+isolation rules, or the permission strategy documented above.
+
 ## Dependencies
 
 The script is plain Bash with `set -euo pipefail`. It shells out to `python3`
