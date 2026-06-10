@@ -84,6 +84,15 @@ class JobCaptureCreateResponse(JobCaptureRead):
     job_reused: bool = False
 
 
+class JobCaptureConfirm(BaseModel):
+    company: Optional[str] = None
+    title: Optional[str] = None
+    location: Optional[str] = None
+    external_url: Optional[str] = None
+    description_text: Optional[str] = None
+    application_method: Optional[str] = None
+
+
 # ---- Job ----
 
 class JobCreate(BaseModel):

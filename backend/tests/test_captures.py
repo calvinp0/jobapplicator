@@ -127,6 +127,36 @@ def test_confirm_capture_missing_fields_returns_422(client):
     assert set(detail["missing_fields"]) == {"company", "title", "description_text"}
 
 
+def test_confirm_capture_uses_reviewed_fields(client):
+    payload = _capture_payload(company=None, description_text="")
+    create = client.post("/captures", json=payload).json()
+    capture_id = create["id"]
+
+    confirm = client.post(
+        f"/captures/{capture_id}/confirm",
+        json={
+            "company": "Reviewed Corp",
+            "title": "Reviewed Engineer",
+            "location": "Hybrid",
+            "external_url": "https://www.linkedin.com/jobs/view/42?trackingId=abc",
+            "description_text": "Reviewed description.",
+            "application_method": "external",
+        },
+    )
+    assert confirm.status_code == 201, confirm.text
+    job = confirm.json()
+    assert job["company"] == "Reviewed Corp"
+    assert job["title"] == "Reviewed Engineer"
+    assert job["location"] == "Hybrid"
+    assert job["external_url"] == "https://www.linkedin.com/jobs/view/42"
+    assert job["description_text"] == "Reviewed description."
+    assert job["application_method"] == "external"
+
+    fetched = client.get(f"/captures/{capture_id}").json()
+    assert fetched["company"] == "Reviewed Corp"
+    assert fetched["user_confirmed"] is True
+
+
 def test_confirm_capture_whitespace_treated_as_missing(client):
     payload = _capture_payload(company="   ", title="ML", description_text="ok")
     create = client.post("/captures", json=payload).json()

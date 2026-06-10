@@ -105,7 +105,14 @@ describe("CaptureDetailPage confirm flow", () => {
     await user.click(screen.getByRole("button", { name: /confirm/i }));
 
     await waitFor(() =>
-      expect(confirmCaptureMock).toHaveBeenCalledWith("cap-1"),
+      expect(confirmCaptureMock).toHaveBeenCalledWith("cap-1", {
+        company: "Acme Corp",
+        title: "Senior Engineer",
+        location: "Remote",
+        external_url: "https://www.linkedin.com/jobs/view/1",
+        description_text: "Build cool things in a small team.",
+        application_method: "easy_apply",
+      }),
     );
     await waitFor(() =>
       expect(screen.getByTestId("job-landing")).toBeInTheDocument(),

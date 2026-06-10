@@ -147,7 +147,7 @@ export function CaptureDetailPage() {
     setMissingFields([]);
 
     try {
-      const job = await confirmCapture(captureId);
+      const job = await confirmCapture(captureId, form);
       navigate(`/jobs/${job.id}`);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

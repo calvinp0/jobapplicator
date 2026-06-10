@@ -3,16 +3,16 @@
 # agentctl.sh - lightweight orchestration harness for agent_tasks.
 #
 # Subcommands:
-#   run <task-id>     Start Claude Code on a task in an isolated worktree.
-#   review <task-id>  Start a review-only Claude session for a task. The
+#   run <task-id>     Start the configured agent on a task in an isolated worktree.
+#   review <task-id>  Start a review-only agent session for a task. The
 #                     reviewer writes a structured verdict artifact at
 #                     .agentctl/reviews/<task-id>.md (front matter with
 #                     `verdict:` plus required-fixes / notes sections).
 #   review-status <task-id>
 #                     Print the latest review verdict, artifact path, and
 #                     a short summary of required fixes / optional notes
-#                     for a task. Does not invoke Claude.
-#   fix <task-id>     Launch Claude inside the task worktree to address the
+#                     for a task. Does not invoke an agent.
+#   fix <task-id>     Launch the configured agent inside the task worktree to address the
 #                     `Required fixes` from the latest review artifact.
 #                     Refuses if the latest verdict is APPROVE,
 #                     APPROVE_WITH_NOTES, or there is no review artifact.
@@ -51,19 +51,20 @@
 #   ready             Print tasks whose status is 'ready'.
 #   doctor            Run a read-only preflight check of the local agent
 #                     harness environment (git state, queue.yaml, tool
-#                     availability, Claude permission settings, and node
+#                     availability, agent permission settings, and node
 #                     workspace readiness). Reports PASS / WARN / FAIL per
 #                     check. Exits 0 if no FAIL items were reported.
-#   plan "<goal>"     Run a local Claude Code planning session that generates
+#   plan "<goal>"     Run a local agent planning session that generates
 #                     scoped task files and queue entries from a high-level
 #                     goal. Does not implement product code.
 #   plan --ultraplan "<goal>"
 #                     Write an Ultraplan-ready prompt file under .agent_plans/
 #                     and print manual handoff instructions. Does not invoke
-#                     Claude Code itself.
+#                     an agent itself.
 #   plan --help       Show plan-specific help.
 #
 # Configuration via environment variables:
+#   AGENTCTL_AGENT                   Agent provider: claude or codex. Default: claude
 #   CLAUDE_BIN                       Claude Code executable. Default: claude
 #   CLAUDE_PERMISSION_MODE           Permission mode for run. Default: acceptEdits
 #   CLAUDE_REVIEW_PERMISSION_MODE    Permission mode for review. Default: acceptEdits
@@ -73,6 +74,12 @@
 #   CLAUDE_FIX_PERMISSION_MODE       Permission mode for fix. Default: acceptEdits
 #   CLAUDE_PLAN_PERMISSION_MODE      Permission mode for plan. Default: acceptEdits
 #   CLAUDE_PYTHON                    Python interpreter used to parse YAML. Default: python3
+#   CODEX_BIN                        Codex executable. Default: codex
+#   CODEX_MODEL                      Optional model override passed as --model.
+#   CODEX_PROFILE                    Optional profile passed as --profile.
+#   CODEX_SANDBOX                    Sandbox policy. Default: workspace-write
+#   CODEX_ASK_FOR_APPROVAL           Approval policy for interactive Codex. Default: on-request
+#   CODEX_EXTRA_ARGS                 Extra shell words appended to Codex invocations.
 #
 # Dependencies:
 #   bash, git, and a Python 3 interpreter with PyYAML available.
@@ -80,12 +87,19 @@
 #
 set -euo pipefail
 
+AGENTCTL_AGENT="${AGENTCTL_AGENT:-claude}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_REVIEW_PERMISSION_MODE="${CLAUDE_REVIEW_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_FIX_PERMISSION_MODE="${CLAUDE_FIX_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PLAN_PERMISSION_MODE="${CLAUDE_PLAN_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PYTHON="${CLAUDE_PYTHON:-python3}"
+CODEX_BIN="${CODEX_BIN:-codex}"
+CODEX_MODEL="${CODEX_MODEL:-}"
+CODEX_PROFILE="${CODEX_PROFILE:-}"
+CODEX_SANDBOX="${CODEX_SANDBOX:-workspace-write}"
+CODEX_ASK_FOR_APPROVAL="${CODEX_ASK_FOR_APPROVAL:-on-request}"
+CODEX_EXTRA_ARGS="${CODEX_EXTRA_ARGS:-}"
 
 # Python interpreter used to run BACKEND verification commands (pytest,
 # python -m pytest, and any `python ...` step). Backend tests must run in
@@ -112,6 +126,87 @@ REVIEW_VERDICTS=(APPROVE APPROVE_WITH_NOTES REQUEST_CHANGES REJECT BLOCKED)
 
 err() { printf 'error: %s\n' "$*" >&2; }
 die() { err "$*"; exit 1; }
+
+normalize_agent() {
+  case "$1" in
+    claude|claude-code|claude_code) printf 'claude\n' ;;
+    codex) printf 'codex\n' ;;
+    *) die "unknown agent '$1' (expected: claude or codex)" ;;
+  esac
+}
+
+agent_name() {
+  case "$(normalize_agent "$AGENTCTL_AGENT")" in
+    claude) printf 'Claude Code\n' ;;
+    codex)  printf 'Codex\n' ;;
+  esac
+}
+
+codex_common_args() {
+  local args=()
+  [[ -n "$CODEX_MODEL" ]] && args+=(--model "$CODEX_MODEL")
+  [[ -n "$CODEX_PROFILE" ]] && args+=(--profile "$CODEX_PROFILE")
+  [[ -n "$CODEX_SANDBOX" ]] && args+=(--sandbox "$CODEX_SANDBOX")
+  if [[ -n "$CODEX_EXTRA_ARGS" ]]; then
+    # Intentional simple shell-word split for operator-supplied overrides.
+    # Use environment variables above for values that may contain spaces.
+    local extra=()
+    read -r -a extra <<< "$CODEX_EXTRA_ARGS"
+    args+=("${extra[@]}")
+  fi
+  if [[ "${#args[@]}" -gt 0 ]]; then
+    printf '%s\0' "${args[@]}"
+  fi
+}
+
+run_codex_exec() {
+  local prompt="$1"
+  local args=()
+  while IFS= read -r -d '' arg; do
+    args+=("$arg")
+  done < <(codex_common_args)
+  "$CODEX_BIN" exec "${args[@]}" "$prompt"
+}
+
+run_codex_interactive() {
+  local prompt="$1"
+  local args=()
+  while IFS= read -r -d '' arg; do
+    args+=("$arg")
+  done < <(codex_common_args)
+  [[ -n "$CODEX_ASK_FOR_APPROVAL" ]] && args+=(--ask-for-approval "$CODEX_ASK_FOR_APPROVAL")
+  "$CODEX_BIN" "${args[@]}" "$prompt"
+}
+
+run_agent_exec() {
+  local worktree="$1" permission_mode="$2" prompt="$3"
+  case "$(normalize_agent "$AGENTCTL_AGENT")" in
+    claude)
+      "$CLAUDE_BIN" \
+        --worktree "$worktree" \
+        --permission-mode "$permission_mode" \
+        -p "$prompt"
+      ;;
+    codex)
+      run_codex_exec "$prompt"
+      ;;
+  esac
+}
+
+run_agent_interactive() {
+  local worktree="$1" permission_mode="$2" prompt="$3"
+  case "$(normalize_agent "$AGENTCTL_AGENT")" in
+    claude)
+      "$CLAUDE_BIN" \
+        --worktree "$worktree" \
+        --permission-mode "$permission_mode" \
+        "$prompt"
+      ;;
+    codex)
+      run_codex_interactive "$prompt"
+      ;;
+  esac
+}
 
 require_queue() {
   if [[ ! -f "$QUEUE_FILE" ]]; then
@@ -303,19 +398,23 @@ cmd_run_interactive() {
   local prompt
   prompt="$(build_run_interactive_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT")"
 
-  printf 'Starting interactive Claude Code for task %s\n' "$task_id"
+  printf 'Starting interactive %s for task %s\n' "$(agent_name)" "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
   [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
   printf '  launch dir: %s\n' "$launch_dir"
-  printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
-  printf '\nInteractive supervised mode: Claude will stop before committing and wait for you to type "commit".\n\n'
+  printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
+  else
+    printf '  sandbox: %s\n' "$CODEX_SANDBOX"
+    printf '  ask-for-approval: %s\n' "$CODEX_ASK_FOR_APPROVAL"
+  fi
+  printf '\nInteractive supervised mode: the agent will stop before committing and wait for you to type "commit".\n\n'
 
-  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
-      --worktree "$worktree" \
-      --permission-mode "$CLAUDE_PERMISSION_MODE" \
-      "$prompt" ); then
-    die "Claude Code exited with a non-zero status"
+  if ! ( cd "$launch_dir" && run_agent_interactive \
+      "$worktree" "$CLAUDE_PERMISSION_MODE" "$prompt" ); then
+    die "$(agent_name) exited with a non-zero status"
   fi
 
   printf '\nSession ended. Recent commits:\n'
@@ -366,7 +465,7 @@ worktree_path() {
   git -C "$REPO_ROOT" worktree list --porcelain \
     | awk -v name="$name" '
         /^worktree / { wt=$2; if (wt ~ ("/" name "$")) { print wt; exit } }
-      '
+      ' || true
 }
 
 # ensure_worktree <name>
@@ -687,22 +786,25 @@ cmd_run() {
   local prompt
   prompt="$(build_run_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT")"
 
-  printf 'Starting Claude Code for task %s\n' "$task_id"
+  printf 'Starting %s for task %s\n' "$(agent_name)" "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
   [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
   printf '  launch dir: %s\n' "$launch_dir"
-  printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
+  printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
+  else
+    printf '  sandbox: %s\n' "$CODEX_SANDBOX"
+  fi
 
-  # Launch Claude from inside the task worktree path. The explicit cd is the
+  # Launch the agent from inside the task worktree path. The explicit cd is the
   # authoritative isolation mechanism; --worktree is passed too for builds
   # that honor it, but we do not rely on it alone (see
   # docs/contracts/agent_orchestration.md - "Worktree Isolation").
-  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
-      --worktree "$worktree" \
-      --permission-mode "$CLAUDE_PERMISSION_MODE" \
-      -p "$prompt" ); then
-    die "Claude Code exited with a non-zero status"
+  if ! ( cd "$launch_dir" && run_agent_exec \
+      "$worktree" "$CLAUDE_PERMISSION_MODE" "$prompt" ); then
+    die "$(agent_name) exited with a non-zero status"
   fi
 
   printf '\nAgent finished. Recent commits:\n'
@@ -750,20 +852,23 @@ cmd_review() {
   local prompt
   prompt="$(build_review_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT" "$artifact_path")"
 
-  printf 'Starting Claude Code review for task %s\n' "$task_id"
+  printf 'Starting %s review for task %s\n' "$(agent_name)" "$task_id"
   printf '  task file: %s\n' "$task_file"
   printf '  worktree:  %s\n' "$worktree"
   [[ -n "$wt_path" ]] && printf '  worktree-path: %s\n' "$wt_path"
   printf '  launch dir: %s\n' "$launch_dir"
-  printf '  permission-mode: %s\n' "$CLAUDE_REVIEW_PERMISSION_MODE"
+  printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    printf '  permission-mode: %s\n' "$CLAUDE_REVIEW_PERMISSION_MODE"
+  else
+    printf '  sandbox: %s\n' "$CODEX_SANDBOX"
+  fi
   printf '  review artifact: %s\n' "$artifact_path"
 
   # Launch from inside the task worktree path (see cmd_run for rationale).
-  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
-      --worktree "$worktree" \
-      --permission-mode "$CLAUDE_REVIEW_PERMISSION_MODE" \
-      -p "$prompt" ); then
-    die "Claude Code exited with a non-zero status"
+  if ! ( cd "$launch_dir" && run_agent_exec \
+      "$worktree" "$CLAUDE_REVIEW_PERMISSION_MODE" "$prompt" ); then
+    die "$(agent_name) exited with a non-zero status"
   fi
 
   printf '\nReview session ended.\n'
@@ -1247,7 +1352,7 @@ find_main_worktree() {
     | awk '
         /^worktree / { wt=$2; next }
         /^branch refs\/heads\/main$/ { print wt; exit }
-      ')"
+      ' || true)"
   if [[ -z "$path" ]]; then
     err "could not find a worktree on branch main; complete needs the main checkout."
     return 1
@@ -2337,28 +2442,33 @@ cmd_fix_verification_failure() {
     "$wt_path" "$REPO_ROOT" "$state_path" \
     "$failing_command" "$failure_excerpt")"
 
-  printf 'Starting Claude Code verification-fix session for task %s\n' "$task_id"
+  printf 'Starting %s verification-fix session for task %s\n' "$(agent_name)" "$task_id"
   printf '  task file:        %s\n' "$task_file"
   printf '  worktree:         %s\n' "$worktree"
   [[ -n "$wt_path" ]] && printf '  worktree-path:    %s\n' "$wt_path"
   printf '  launch dir:       %s\n' "$launch_dir"
-  printf '  permission-mode:  %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+  printf '  agent:            %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    printf '  permission-mode:  %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+  else
+    printf '  sandbox:          %s\n' "$CODEX_SANDBOX"
+  fi
   printf '  verification:     %s (status: failed)\n' "$state_path"
   printf '  failing command:  %s\n' "$failing_command"
   [[ -n "$journal_path" ]] && printf '  journal:          %s\n' "$journal_path"
 
   local rc=0
-  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
-      --worktree "$worktree" \
-      --permission-mode "$CLAUDE_FIX_PERMISSION_MODE" \
-      -p "$prompt" ); then
+  if ( cd "$launch_dir" && run_agent_exec \
+      "$worktree" "$CLAUDE_FIX_PERMISSION_MODE" "$prompt" ); then
+    rc=0
+  else
     rc=$?
   fi
 
   [[ -n "$journal_path" ]] && journal_verification_fix_end "$journal_path" "$task_id" "$rc"
 
   if [[ "$rc" -ne 0 ]]; then
-    die "Claude Code exited with a non-zero status"
+    die "$(agent_name) exited with a non-zero status"
   fi
 
   printf '\nVerification-fix session ended. Recent commits:\n'
@@ -2468,19 +2578,22 @@ cmd_fix() {
   local prompt
   prompt="$(build_fix_prompt "$task_id" "$abs_task_file" "$wt_path" "$REPO_ROOT" "$artifact_path")"
 
-  printf 'Starting Claude Code fix session for task %s\n' "$task_id"
+  printf 'Starting %s fix session for task %s\n' "$(agent_name)" "$task_id"
   printf '  task file:       %s\n' "$task_file"
   printf '  worktree:        %s\n' "$worktree"
   [[ -n "$wt_path" ]] && printf '  worktree-path:   %s\n' "$wt_path"
   printf '  launch dir:      %s\n' "$launch_dir"
-  printf '  permission-mode: %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+  printf '  agent:           %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    printf '  permission-mode: %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+  else
+    printf '  sandbox:         %s\n' "$CODEX_SANDBOX"
+  fi
   printf '  review artifact: %s (verdict: %s)\n' "$artifact_path" "$verdict"
 
-  if ! ( cd "$launch_dir" && "$CLAUDE_BIN" \
-      --worktree "$worktree" \
-      --permission-mode "$CLAUDE_FIX_PERMISSION_MODE" \
-      -p "$prompt" ); then
-    die "Claude Code exited with a non-zero status"
+  if ! ( cd "$launch_dir" && run_agent_exec \
+      "$worktree" "$CLAUDE_FIX_PERMISSION_MODE" "$prompt" ); then
+    die "$(agent_name) exited with a non-zero status"
   fi
 
   printf '\nFix session ended. Recent commits:\n'
@@ -2590,7 +2703,7 @@ work_stop() {
 # work_one_task <task-id> <dry-run> <max-fix-attempts>
 #
 # Run the full lifecycle for one task. Returns 0 on successful completion,
-# 1 on any stop condition. All Claude-invoking subcommands run as
+# 1 on any stop condition. All agent-invoking subcommands run as
 # subprocesses (`"$0" run|review|fix|complete <id>`) so that a failure
 # does not unwind this function via set -e.
 work_one_task() {
@@ -2917,7 +3030,7 @@ Options:
   --max-fix-attempts N     Cap on auto-fix attempts per task on
                            REQUEST_CHANGES (default: 2).
   --dry-run                Print what would happen without invoking
-                           Claude or mutating queue.yaml.
+                           an agent or mutating queue.yaml.
 
 Lifecycle per task:
 
@@ -3315,7 +3428,7 @@ PYEOF
 doctor_tool_checks() {
   printf 'Tools\n'
   local tool path
-  for tool in git python python3 claude npm pytest; do
+  for tool in git python python3 claude codex npm pytest; do
     path="$(command -v "$tool" 2>/dev/null || true)"
     if [[ -n "$path" ]]; then
       doctor_pass "$tool: $path"
@@ -3533,12 +3646,19 @@ cmd_doctor() {
   DOCTOR_FAIL=0
 
   printf 'Agent Harness Doctor\n\n'
+  printf 'Configured agent: %s (%s)\n\n' "$(agent_name)" "$(normalize_agent "$AGENTCTL_AGENT")"
 
   local main_wt=""
   doctor_git_checks main_wt
   doctor_queue_checks
   doctor_tool_checks
-  doctor_settings_checks "$main_wt"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    doctor_settings_checks "$main_wt"
+  else
+    printf 'Claude permissions\n'
+    doctor_warn "skipped because AGENTCTL_AGENT=codex"
+    printf '\n'
+  fi
   doctor_workspace_checks "$main_wt"
   doctor_ready_task_checks
 
@@ -3555,6 +3675,7 @@ cmd_help() {
 agentctl.sh - agent task orchestration harness
 
 Usage:
+  scripts/agentctl.sh [--agent claude|codex] <command> [args...]
   scripts/agentctl.sh run <task-id>
   scripts/agentctl.sh run-interactive <task-id>
   scripts/agentctl.sh review <task-id>
@@ -3575,6 +3696,19 @@ Usage:
   scripts/agentctl.sh plan --ultraplan "<high-level goal>"
   scripts/agentctl.sh plan --help
 
+Agent selection:
+  Claude Code remains the default.
+  Use Codex for one invocation with:
+    scripts/agentctl.sh --agent codex run <task-id>
+  Or via environment:
+    AGENTCTL_AGENT=codex scripts/agentctl.sh run <task-id>
+
+Codex defaults:
+  CODEX_BIN=codex
+  CODEX_SANDBOX=workspace-write
+  CODEX_ASK_FOR_APPROVAL=on-request
+  Optional: CODEX_MODEL, CODEX_PROFILE, CODEX_EXTRA_ARGS
+
 See docs/contracts/agent_orchestration.md for the full contract,
 including the review verdict enum (APPROVE / APPROVE_WITH_NOTES /
 REQUEST_CHANGES / REJECT / BLOCKED) and the review/fix/complete flow.
@@ -3587,14 +3721,14 @@ agentctl.sh plan - generate scoped agent task packs from a high-level goal
 
 Usage:
   scripts/agentctl.sh plan "<high-level goal>"
-       Launch a local Claude Code planning session. The planner reads the
+       Launch a local agent planning session. The planner reads the
        current queue, architecture docs, ADRs, and contracts, then produces
        one or more scoped task markdown files under agent_tasks/ and matching
        entries in agent_tasks/queue.yaml. The planner does not implement
        product code and does not mark new tasks as done.
 
   scripts/agentctl.sh plan --ultraplan "<high-level goal>"
-       Do not invoke Claude Code. Instead, write a self-contained
+       Do not invoke an agent. Instead, write a self-contained
        Ultraplan-ready prompt file under .agent_plans/<timestamp>-ultraplan.md
        that includes current queue context, references to docs/ADRs/contracts,
        and task-generation instructions. Then print manual handoff steps.
@@ -3870,16 +4004,20 @@ plan_local() {
   local prompt
   prompt="$(build_local_plan_prompt "$goal")"
 
-  printf 'Starting local Claude Code planning session\n'
+  printf 'Starting local %s planning session\n' "$(agent_name)"
   printf '  goal: %s\n' "$goal"
-  printf '  permission-mode: %s\n' "$CLAUDE_PLAN_PERMISSION_MODE"
+  printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+  if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
+    printf '  permission-mode: %s\n' "$CLAUDE_PLAN_PERMISSION_MODE"
+  else
+    printf '  sandbox: %s\n' "$CODEX_SANDBOX"
+  fi
   printf '  (planner may edit only agent_tasks/**, docs/contracts/agent_orchestration.md,\n'
   printf '   .agent_plans/**, and .gitignore. See plan --help for the full boundary.)\n\n'
 
-  if ! "$CLAUDE_BIN" \
-      --permission-mode "$CLAUDE_PLAN_PERMISSION_MODE" \
-      -p "$prompt"; then
-    die "Claude Code exited with a non-zero status"
+  if ! run_agent_exec \
+      "main" "$CLAUDE_PLAN_PERMISSION_MODE" "$prompt"; then
+    die "$(agent_name) exited with a non-zero status"
   fi
 
   printf '\nPlanner finished. Review the diff before committing:\n'
@@ -3935,6 +4073,34 @@ cmd_plan() {
 }
 
 main() {
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --agent)
+        shift
+        [[ $# -gt 0 ]] || die "usage: agentctl.sh --agent claude|codex <command> [args...]"
+        AGENTCTL_AGENT="$(normalize_agent "$1")"
+        shift
+        ;;
+      --agent=*)
+        AGENTCTL_AGENT="$(normalize_agent "${1#--agent=}")"
+        shift
+        ;;
+      --codex)
+        AGENTCTL_AGENT="codex"
+        shift
+        ;;
+      --claude)
+        AGENTCTL_AGENT="claude"
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  AGENTCTL_AGENT="$(normalize_agent "$AGENTCTL_AGENT")"
+  export AGENTCTL_AGENT
+
   local cmd="${1:-}"
   if [[ "$#" -gt 0 ]]; then shift; fi
   case "$cmd" in

@@ -72,6 +72,15 @@ export interface JobCapture {
   job_id: string | null;
 }
 
+export interface JobCaptureConfirm {
+  company: string;
+  title: string;
+  location: string;
+  external_url: string;
+  description_text: string;
+  application_method: string;
+}
+
 export interface Job {
   id: string;
   source_platform: string;
