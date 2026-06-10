@@ -2516,3 +2516,68 @@ tasks:
       - "README_INSTALL.md"
       - "agent_tasks/125-add-local-llm-context-budget-safeguards.md"
       - "agent_tasks/queue.yaml"
+  - id: "126-add-ollama-num-ctx-setting"
+    title: "Add optional Ollama num_ctx setting and send it on native requests"
+    file: "agent_tasks/126-add-ollama-num-ctx-setting.md"
+    branch: "agent/126-add-ollama-num-ctx-setting"
+    worktree: "agent-126-add-ollama-num-ctx-setting"
+    status: "ready"
+    depends_on:
+      - "125-add-local-llm-context-budget-safeguards"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/schemas.py"
+      - "backend/app/routers/settings.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/126-add-ollama-num-ctx-setting.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "127-detect-and-log-local-server-context"
+    title: "Detect local server context and log assumed context in preflight manifest"
+    file: "agent_tasks/127-detect-and-log-local-server-context.md"
+    branch: "agent/127-detect-and-log-local-server-context"
+    worktree: "agent-127-detect-and-log-local-server-context"
+    status: "planned"
+    depends_on:
+      - "126-add-ollama-num-ctx-setting"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest backend/tests/test_preflight.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/preflight.py"
+      - "backend/app/routers/local_llm.py"
+      - "backend/app/schemas.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/127-detect-and-log-local-server-context.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "128-clarify-context-budget-settings-ui"
+    title: "Clarify context-budget label and surface server context in Settings"
+    file: "agent_tasks/128-clarify-context-budget-settings-ui.md"
+    branch: "agent/128-clarify-context-budget-settings-ui"
+    worktree: "agent-128-clarify-context-budget-settings-ui"
+    status: "planned"
+    depends_on:
+      - "126-add-ollama-num-ctx-setting"
+      - "127-detect-and-log-local-server-context"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/localLlmSettings.test.tsx"
+      - "frontend/src/test/settingsPage.test.tsx"
+      - "agent_tasks/128-clarify-context-budget-settings-ui.md"
+      - "agent_tasks/queue.yaml"
+
