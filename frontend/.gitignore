@@ -8,3 +8,8 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# The repo-root .gitignore ignores any directory named `lib/` (a Python
+# build-artifact convention). The frontend source library lives at
+# src/lib/, so re-include it here to keep these sources tracked.
+!src/lib/

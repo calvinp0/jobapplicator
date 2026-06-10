@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-/lib/
-/lib64/
+lib/
+lib64/
 parts/
 sdist/
 var/
@@ -301,4 +301,3 @@ candidate_context/settings/*.secret.json
 candidate_context/settings/prompt_overrides/
 
 .agentctl/verifications/
-.agentctl/reviews/
