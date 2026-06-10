@@ -2438,3 +2438,21 @@ tasks:
       - "docs/**"
       - "agent_tasks/121-clean-settings-capture-inbox-reset-and-file-imports.md"
       - "agent_tasks/queue.yaml"
+  - id: "122-add-resume-export-downloads-and-filenames"
+    title: "Add resume export downloads and filenames"
+    file: "agent_tasks/122-add-resume-export-downloads-and-filenames.md"
+    branch: "agent/122-add-resume-export-downloads-and-filenames"
+    worktree: "agent-122-add-resume-export-downloads-and-filenames"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "python -m pytest"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/**"
+      - "agent_tasks/122-add-resume-export-downloads-and-filenames.md"
+      - "agent_tasks/queue.yaml"
