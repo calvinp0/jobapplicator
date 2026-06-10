@@ -142,6 +142,13 @@ agent_name() {
   esac
 }
 
+agent_reviewer_id() {
+  case "$(normalize_agent "$AGENTCTL_AGENT")" in
+    claude) printf 'claude-code\n' ;;
+    codex)  printf 'codex\n' ;;
+  esac
+}
+
 codex_common_args() {
   local args=()
   [[ -n "$CODEX_MODEL" ]] && args+=(--model "$CODEX_MODEL")
@@ -206,6 +213,72 @@ run_agent_interactive() {
       run_codex_interactive "$prompt"
       ;;
   esac
+}
+
+task_commit_message() {
+  local task_file="$1"
+  "$CLAUDE_PYTHON" - "$task_file" <<'PYEOF'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, "r", encoding="utf-8").read()
+
+patterns = [
+    r"Commit locally with:\s*\n\s*```(?:text|bash)?\s*\n(.+?)\n```",
+    r"Commit locally with the message:\s*\n\s*```(?:text|bash)?\s*\n(.+?)\n```",
+    r"Commit locally with message:\s*\n\s*```(?:text|bash)?\s*\n(.+?)\n```",
+    r"Commit message:\s*\n\s*```(?:text|bash)?\s*\n(.+?)\n```",
+    r"## Git commit message\s*\n+\s*```(?:text|bash)?\s*\n(.+?)\n```",
+    r'Commit locally with(?: the message)?:\s*\n\s*"([^"]+)"',
+    r"Commit locally with(?: the message)?:\s*\n\s*`([^`]+)`",
+    r"Commit message:\s*\n\s*([^\n`#][^\n]+)",
+]
+
+for pattern in patterns:
+    match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        continue
+    value = match.group(1).strip()
+    if value.startswith("git commit "):
+        msg_match = re.search(r"-m\s+(['\"])(.*?)\1", value, flags=re.DOTALL)
+        if msg_match:
+            value = msg_match.group(2).strip()
+    value = "\n".join(line.rstrip() for line in value.splitlines()).strip()
+    if value:
+        print(value)
+        sys.exit(0)
+
+sys.exit(1)
+PYEOF
+}
+
+commit_dirty_task_worktree() {
+  local task_id="$1" task_file="$2" wt_path="$3" journal_path="$4"
+  local message
+  if ! message="$(task_commit_message "$task_file")" || [[ -z "$message" ]]; then
+    journal_kv "$journal_path" "auto_commit" "skipped: could not parse task commit message"
+    return 1
+  fi
+
+  printf '  Agent left a dirty worktree after a successful run; committing with task message.\n'
+  printf '  commit message: %s\n' "$message"
+  journal_kv "$journal_path" "auto_commit" "attempt"
+  journal_kv "$journal_path" "auto_commit_message" "$message"
+
+  git -C "$wt_path" add -A
+  if git -C "$wt_path" diff --cached --quiet; then
+    journal_kv "$journal_path" "auto_commit" "skipped: no staged changes"
+    return 1
+  fi
+  git -C "$wt_path" commit -m "$message"
+}
+
+task_worktree_dirty_status() {
+  local wt_path="$1"
+  git -C "$wt_path" status --porcelain \
+    | grep -v '^?? \.agentctl/reviews/' \
+    | grep -v '^?? \.agentctl/verifications/' || true
 }
 
 require_queue() {
@@ -668,8 +741,14 @@ Check the most recent commit(s) on the task branch and assess:
 - Was anything overbuilt beyond what the task asked for?
 - Were unrelated files changed?
 - Is the commit message appropriate and matches what the task required?
-- Did verification actually run? Is the task worktree clean? Does the task
-  branch have at least one commit beyond main?
+- Is the task worktree clean? Does the task branch have at least one commit
+  beyond main?
+- Inspect tests and any available verification evidence. You may run targeted
+  checks if useful, but do not block solely because full verification did not
+  finish inside this review session. The harness runs every task verification
+  command during `scripts/agentctl.sh complete`, records the result in
+  `.agentctl/verifications/`, and routes verification failures through
+  `scripts/agentctl.sh fix`.
 
 You must end with exactly one verdict:
 APPROVE, APPROVE_WITH_NOTES, REQUEST_CHANGES, REJECT, or BLOCKED.
@@ -680,21 +759,25 @@ Verdict semantics:
   APPROVE_WITH_NOTES   The task satisfies the spec. Notes are optional
                        follow-ups and do not block completion.
   REQUEST_CHANGES      The task is close but misses required behavior,
-                       acceptance criteria, verification, scope, or tests.
+                       acceptance criteria, scope, or tests.
                        It must be fixed before completion.
   REJECT               The implementation is wrong enough that it should
                        not be patched casually. The operator should abort,
                        reset, or rewrite the task.
-  BLOCKED              The review could not make a decision because
-                       verification did not run, the task branch is dirty,
-                       the task spec is ambiguous, dependencies are
-                       missing, or the branch has no commit.
+  BLOCKED              The review could not make a decision because the task
+                       branch is dirty, the task spec is ambiguous,
+                       dependencies are missing, required context is
+                       unavailable, or the branch has no commit.
 
 A caveat that violates acceptance criteria is REQUEST_CHANGES, not
 APPROVE_WITH_NOTES.
 A caveat that is purely optional is APPROVE_WITH_NOTES.
-If verification did not run or the branch is dirty, use BLOCKED unless the
+If the branch is dirty or missing its task commit, use BLOCKED unless the
 task explicitly allows that state.
+If full verification did not complete inside the review session, mention
+that in "Verification status", but do not use BLOCKED for that reason alone.
+Use REQUEST_CHANGES for actionable product/test gaps, and APPROVE or
+APPROVE_WITH_NOTES when the implementation otherwise satisfies the task.
 
 Required fixes must be concrete and actionable.
 Optional notes must not block completion.
@@ -707,7 +790,7 @@ Write the artifact in this exact format (front matter + sections):
   task_id: "${task_id}"
   verdict: "<ONE OF: APPROVE | APPROVE_WITH_NOTES | REQUEST_CHANGES | REJECT | BLOCKED>"
   reviewed_at: "<ISO 8601 UTC timestamp, e.g. 2026-05-24T12:34:56Z>"
-  reviewer: "claude-code"
+  reviewer: "$(agent_reviewer_id)"
   ---
 
   # Review: ${task_id}
@@ -735,8 +818,9 @@ Write the artifact in this exact format (front matter + sections):
 
   ## Verification status
 
-  <did the listed verification commands actually run; were they green;
-   was the task worktree clean; did the task branch contain a commit>
+  <what verification evidence was checked; whether full verification remains
+   for complete; whether the task worktree was clean and the task branch
+   contained a commit>
 
 Task file: ${task_file}
 
@@ -2220,7 +2304,7 @@ cmd_review_status() {
 
 # build_fix_prompt <task-id> <task-file> <worktree-path> <main-path> <artifact-path>
 #
-# Build the Claude prompt for `fix`. The prompt explicitly limits the agent
+# Build the agent prompt for `fix`. The prompt explicitly limits the agent
 # to addressing the latest review's `Required fixes`, refuses scope
 # expansion, requires verification, and asks the agent to amend the
 # existing task commit when safe to do so.
@@ -2280,7 +2364,7 @@ EOF
 # build_fix_verification_prompt <task-id> <task-file> <worktree-path> <main-path>
 #                               <state-path> <failing-command> <failure-excerpt>
 #
-# Build the Claude prompt for `fix` when verification failed. The prompt
+# Build the agent prompt for `fix` when verification failed. The prompt
 # instructs the agent to diagnose and repair the failing verification
 # command in the existing worktree, without bypassing or weakening tests.
 build_fix_verification_prompt() {
@@ -2764,6 +2848,70 @@ work_one_task() {
     printf '  (dry-run) would invoke: %s run %s\n' "$0" "$task_id"
     journal_kv "$journal_path" "result" "(dry-run) skipped"
   else
+    if [[ -n "$branch" ]]; then
+      local existing_wt_path
+      existing_wt_path="$(worktree_path "$worktree")"
+      if [[ -n "$existing_wt_path" ]] \
+        && [[ -z "$(task_worktree_dirty_status "$existing_wt_path")" ]] \
+        && branch_has_commits_beyond_main "$branch"; then
+        printf '  Existing clean task commit found; skipping run and continuing to review.\n'
+        journal_kv "$journal_path" "result" "SKIP (existing clean committed work)"
+        journal_kv "$journal_path" "post_run_check" "clean + committed before run"
+        printf '  PASS task branch has committed changes\n'
+      else
+        local run_rc=0
+        "$0" run "$task_id" || run_rc=$?
+        if [[ "$run_rc" -ne 0 ]]; then
+          journal_kv "$journal_path" "result" "FAIL (exit $run_rc)"
+          work_stop "$task_id" "$journal_path" "$worktree" \
+            "task run did not produce a clean committed result (run exit $run_rc)" \
+            "run-failed" \
+            "fix the run failure above, then re-run: scripts/agentctl.sh work $task_id"
+          return 1
+        fi
+        journal_kv "$journal_path" "result" "PASS"
+
+        local wt_path
+        wt_path="$(worktree_path "$worktree")"
+        if [[ -z "$wt_path" ]]; then
+          journal_kv "$journal_path" "post_run_check" "worktree missing"
+          work_stop "$task_id" "$journal_path" "$worktree" \
+            "task worktree '$worktree' missing after run" \
+            "worktree-missing" \
+            "scripts/agentctl.sh sync $task_id"
+          return 1
+        fi
+        if [[ -n "$(task_worktree_dirty_status "$wt_path")" ]]; then
+          journal_kv "$journal_path" "post_run_check" "dirty; attempting harness commit"
+          if ! commit_dirty_task_worktree "$task_id" "$main_wt/$task_file" "$wt_path" "$journal_path"; then
+            work_stop "$task_id" "$journal_path" "$worktree" \
+              "task worktree is dirty after run" \
+              "dirty-after-run" \
+              "cd $wt_path && git status; finish, commit, or clean"
+            return 1
+          fi
+          if [[ -n "$(task_worktree_dirty_status "$wt_path")" ]]; then
+            journal_kv "$journal_path" "post_run_check" "dirty after harness commit"
+            work_stop "$task_id" "$journal_path" "$worktree" \
+              "task worktree is still dirty after harness commit" \
+              "dirty-after-harness-commit" \
+              "cd $wt_path && git status; finish, commit, or clean"
+            return 1
+          fi
+          journal_kv "$journal_path" "auto_commit" "PASS"
+        fi
+        if ! branch_has_commits_beyond_main "$branch"; then
+          journal_kv "$journal_path" "post_run_check" "no-commit"
+          work_stop "$task_id" "$journal_path" "$worktree" \
+            "task branch '$branch' has no commit beyond main after run" \
+            "no-commit-after-run" \
+            "inspect $wt_path; the agent did not commit any work"
+          return 1
+        fi
+        journal_kv "$journal_path" "post_run_check" "clean + committed"
+        printf '  PASS task branch has committed changes\n'
+      fi
+    else
     local run_rc=0
     "$0" run "$task_id" || run_rc=$?
     if [[ "$run_rc" -ne 0 ]]; then
@@ -2776,36 +2924,7 @@ work_one_task() {
     fi
     journal_kv "$journal_path" "result" "PASS"
 
-    if [[ -n "$branch" ]]; then
-      local wt_path
-      wt_path="$(worktree_path "$worktree")"
-      if [[ -z "$wt_path" ]]; then
-        journal_kv "$journal_path" "post_run_check" "worktree missing"
-        work_stop "$task_id" "$journal_path" "$worktree" \
-          "task worktree '$worktree' missing after run" \
-          "worktree-missing" \
-          "scripts/agentctl.sh sync $task_id"
-        return 1
-      fi
-      if [[ -n "$(git -C "$wt_path" status --porcelain)" ]]; then
-        journal_kv "$journal_path" "post_run_check" "dirty"
-        work_stop "$task_id" "$journal_path" "$worktree" \
-          "task worktree is dirty after run" \
-          "dirty-after-run" \
-          "cd $wt_path && git status; finish, commit, or clean"
-        return 1
-      fi
-      if ! branch_has_commits_beyond_main "$branch"; then
-        journal_kv "$journal_path" "post_run_check" "no-commit"
-        work_stop "$task_id" "$journal_path" "$worktree" \
-          "task branch '$branch' has no commit beyond main after run" \
-          "no-commit-after-run" \
-          "inspect $wt_path; the agent did not commit any work"
-        return 1
-      fi
-      journal_kv "$journal_path" "post_run_check" "clean + committed"
     fi
-    printf '  PASS task branch has committed changes\n'
   fi
 
   # --- Stage 2 + 3: Review (+ auto-fix loop) ------------------------------
@@ -2929,7 +3048,7 @@ work_one_task() {
         if [[ -n "$branch" ]]; then
           local wt_path
           wt_path="$(worktree_path "$worktree")"
-          if [[ -n "$wt_path" && -n "$(git -C "$wt_path" status --porcelain)" ]]; then
+          if [[ -n "$wt_path" && -n "$(task_worktree_dirty_status "$wt_path")" ]]; then
             journal_kv "$journal_path" "post_fix_check" "dirty"
             work_stop "$task_id" "$journal_path" "$worktree" \
               "task worktree is dirty after fix" \
@@ -3142,7 +3261,7 @@ cmd_next() {
       [[ "$line" =~ ^worktree[[:space:]](.+)$ ]] || continue
       wt="${BASH_REMATCH[1]}"
       [[ "$wt" == "$main_wt" ]] && continue
-      if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+      if [[ -n "$(task_worktree_dirty_status "$wt" 2>/dev/null)" ]]; then
         dirty_worktrees+=("$wt")
       fi
     done < <(git -C "$main_wt" worktree list --porcelain 2>/dev/null || true)
