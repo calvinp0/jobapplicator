@@ -531,6 +531,12 @@ function LocalLlmCard() {
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [timeoutSeconds, setTimeoutSeconds] = useState(60);
+  const [contextWindowTokens, setContextWindowTokens] = useState(8192);
+  const [reservedOutputTokens, setReservedOutputTokens] = useState(1200);
+  const [maxInputTokens, setMaxInputTokens] = useState(6500);
+  const [allowCompression, setAllowCompression] = useState(true);
+  const [allowFallback, setAllowFallback] = useState(true);
+  const [abortOnOverBudget, setAbortOnOverBudget] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [allowedTasks, setAllowedTasks] = useState<Record<string, boolean>>({});
 
@@ -552,6 +558,12 @@ function LocalLlmCard() {
     setBaseUrl(data.base_url);
     setModel(data.model);
     setTimeoutSeconds(data.timeout_seconds);
+    setContextWindowTokens(data.context_window_tokens ?? 8192);
+    setReservedOutputTokens(data.reserved_output_tokens ?? 1200);
+    setMaxInputTokens(data.max_input_tokens ?? 6500);
+    setAllowCompression(data.allow_compression ?? true);
+    setAllowFallback(data.allow_fallback ?? true);
+    setAbortOnOverBudget(data.abort_on_over_budget ?? false);
     setAllowedTasks(data.allowed_tasks);
     setApiKey("");
   }
@@ -580,6 +592,21 @@ function LocalLlmCard() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const computedMax = contextWindowTokens - reservedOutputTokens;
+    if (computedMax <= 0) {
+      setSaveError(
+        "Reserved output tokens must be smaller than context window tokens.",
+      );
+      setSaveSuccess(null);
+      return;
+    }
+    if (maxInputTokens <= 0 || maxInputTokens > computedMax) {
+      setSaveError(
+        "Max input tokens must be positive and no larger than context minus reserved output.",
+      );
+      setSaveSuccess(null);
+      return;
+    }
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(null);
@@ -590,6 +617,12 @@ function LocalLlmCard() {
         base_url: baseUrl,
         model,
         timeout_seconds: timeoutSeconds,
+        context_window_tokens: contextWindowTokens,
+        reserved_output_tokens: reservedOutputTokens,
+        max_input_tokens: maxInputTokens,
+        allow_compression: allowCompression,
+        allow_fallback: allowFallback,
+        abort_on_over_budget: abortOnOverBudget,
         allowed_tasks: allowedTasks,
         api_key: apiKey ? apiKey : null,
         preserve_existing_key: !apiKey,
@@ -613,6 +646,9 @@ function LocalLlmCard() {
         base_url: baseUrl,
         model,
         timeout_seconds: timeoutSeconds,
+        context_window_tokens: contextWindowTokens,
+        reserved_output_tokens: reservedOutputTokens,
+        max_input_tokens: maxInputTokens,
         provider,
         api_key: apiKey ? apiKey : null,
         preserve_existing_key: !apiKey,
@@ -633,6 +669,8 @@ function LocalLlmCard() {
   const configurableTasks = (settings?.task_policy ?? []).filter(
     (t) => t.configurable,
   );
+  const usableBudget = Math.max(0, maxInputTokens);
+  const smallContext = contextWindowTokens < 4096;
 
   return (
     <section className="settings-card" data-testid="local-llm-card">
@@ -644,6 +682,11 @@ function LocalLlmCard() {
         Local LLM support is experimental. High-risk outputs such as final
         resume tailoring and claim audits should use Claude Code unless you
         review carefully.
+      </p>
+      <p className="settings-helper">
+        Local models have limited context windows. JobApplicator will estimate
+        prompt size before each local call and will compress, fall back, or
+        abort rather than silently truncate inputs.
       </p>
 
       {loadError ? (
@@ -718,6 +761,101 @@ function LocalLlmCard() {
               }}
             />
           </label>
+
+          <label className="field">
+            <span>Context window tokens</span>
+            <input
+              type="number"
+              min={512}
+              value={contextWindowTokens}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setContextWindowTokens(next);
+                setMaxInputTokens(Math.max(0, next - reservedOutputTokens));
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <label className="field">
+            <span>Reserved output tokens</span>
+            <input
+              type="number"
+              min={1}
+              value={reservedOutputTokens}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setReservedOutputTokens(next);
+                setMaxInputTokens(Math.max(0, contextWindowTokens - next));
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <label className="field">
+            <span>Max input tokens</span>
+            <input
+              type="number"
+              min={1}
+              value={maxInputTokens}
+              onChange={(e) => {
+                setMaxInputTokens(Number(e.target.value));
+                clearFeedback();
+              }}
+            />
+          </label>
+
+          <dl className="run-meta">
+            <dt>Configured context</dt>
+            <dd>{contextWindowTokens} tokens</dd>
+            <dt>Usable input budget</dt>
+            <dd>{usableBudget} tokens</dd>
+          </dl>
+
+          {smallContext ? (
+            <p role="alert" className="error">
+              This context window is small. Local LLM will only be used for
+              compact preflight tasks. Large evidence-heavy tasks will use
+              deterministic fallback or Claude Code.
+            </p>
+          ) : null}
+
+          <fieldset className="field">
+            <legend>Over-budget handling</legend>
+            <label className="field-inline">
+              <input
+                type="checkbox"
+                checked={allowCompression}
+                onChange={(e) => {
+                  setAllowCompression(e.target.checked);
+                  clearFeedback();
+                }}
+              />
+              <span>Allow deterministic compression</span>
+            </label>
+            <label className="field-inline">
+              <input
+                type="checkbox"
+                checked={allowFallback}
+                onChange={(e) => {
+                  setAllowFallback(e.target.checked);
+                  clearFeedback();
+                }}
+              />
+              <span>Allow deterministic fallback</span>
+            </label>
+            <label className="field-inline">
+              <input
+                type="checkbox"
+                checked={abortOnOverBudget}
+                onChange={(e) => {
+                  setAbortOnOverBudget(e.target.checked);
+                  clearFeedback();
+                }}
+              />
+              <span>Abort local task when still over budget</span>
+            </label>
+          </fieldset>
 
           <label className="field">
             <span>

@@ -15,6 +15,7 @@ review.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -25,6 +26,7 @@ from .. import local_llm
 
 
 router = APIRouter(prefix="/llm/local", tags=["local-llm"])
+logger = logging.getLogger(__name__)
 
 
 # ---- Test connection -------------------------------------------------
@@ -41,6 +43,9 @@ class LocalLLMTestRequest(BaseModel):
     base_url: str | None = None
     model: str | None = None
     timeout_seconds: int | None = None
+    context_window_tokens: int | None = None
+    reserved_output_tokens: int | None = None
+    max_input_tokens: int | None = None
     api_key: str | None = None
     provider: str | None = None
     preserve_existing_key: bool = True
@@ -53,6 +58,8 @@ class LocalLLMTestResult(BaseModel):
     provider: str
     latency_ms: int | None = None
     error: str | None = None
+    context_window_tokens: int
+    max_input_tokens: int
 
 
 @router.post("/test-connection", response_model=LocalLLMTestResult)
@@ -73,6 +80,17 @@ def test_local_llm_connection(
         overrides["timeout_seconds"] = payload.timeout_seconds
     if payload.provider is not None:
         overrides["provider"] = payload.provider.strip()
+    if payload.context_window_tokens is not None:
+        overrides["context_window_tokens"] = payload.context_window_tokens
+    if payload.reserved_output_tokens is not None:
+        overrides["reserved_output_tokens"] = payload.reserved_output_tokens
+    if payload.max_input_tokens is not None:
+        overrides["max_input_tokens"] = payload.max_input_tokens
+    elif (
+        payload.context_window_tokens is not None
+        or payload.reserved_output_tokens is not None
+    ):
+        overrides["max_input_tokens"] = None
     incoming_key = (payload.api_key or "").strip()
     if incoming_key:
         overrides["api_key"] = incoming_key
@@ -80,11 +98,16 @@ def test_local_llm_connection(
         overrides["api_key"] = None
 
     config = replace(config, **overrides)
+    budget = config.context_budget
 
     client = local_llm.LocalLLMClient(config)
     result = client.test_connection()
     if result.ok:
-        message = "Connected — model responded."
+        message = (
+            "Connected — model responded. "
+            f"Configured context window: {budget.context_window_tokens} tokens. "
+            f"Usable input budget: {budget.max_input_tokens} tokens."
+        )
     else:
         message = "Connection failed."
     return LocalLLMTestResult(
@@ -94,13 +117,12 @@ def test_local_llm_connection(
         provider=result.provider,
         latency_ms=result.latency_ms,
         error=result.error,
+        context_window_tokens=budget.context_window_tokens,
+        max_input_tokens=budget.max_input_tokens,
     )
 
 
 # ---- Experimental resume suggestions ---------------------------------
-
-_MAX_INPUT_CHARS = 8000
-
 
 class SuggestResumeEditsRequest(BaseModel):
     job_description: str = Field(..., min_length=1)
@@ -141,8 +163,16 @@ def suggest_resume_edits(
             ),
         )
 
-    job = payload.job_description[:_MAX_INPUT_CHARS]
-    resume = payload.resume_excerpt[:_MAX_INPUT_CHARS]
+    job, job_compressed = _compact_text_for_resume_suggestions(
+        payload.job_description, max_chars=4000
+    )
+    resume, resume_compressed = _compact_text_for_resume_suggestions(
+        payload.resume_excerpt, max_chars=4000
+    )
+    if job_compressed or resume_compressed:
+        logger.info(
+            "jobapply: deterministic compression used for local resume_suggestions input"
+        )
     system = (
         "You are an assistant that proposes small, evidence-grounded resume "
         "edits. Only suggest changes supported by the candidate's existing "
@@ -187,3 +217,19 @@ def suggest_resume_edits(
         suggestions=suggestions,
         error=result.error,
     )
+
+
+def _compact_text_for_resume_suggestions(
+    text: str, *, max_chars: int
+) -> tuple[str, bool]:
+    """Named deterministic compression for experimental suggestion inputs."""
+    normalized = "\n".join(line.rstrip() for line in text.splitlines()).strip()
+    if len(normalized) <= max_chars:
+        return normalized, False
+    head = normalized[: max_chars // 2].rsplit("\n", 1)[0]
+    tail = normalized[-(max_chars // 2) :].split("\n", 1)[-1]
+    return (
+        f"{head}\n\n"
+        "[deterministic compression: middle omitted for local LLM budget]\n\n"
+        f"{tail}"
+    ).strip(), True

@@ -16,6 +16,7 @@ live server is needed.
 
 from __future__ import annotations
 
+import sys
 import urllib.error
 
 
@@ -25,6 +26,32 @@ def _completion(content: str, model: str = "llama3.1:8b") -> dict:
         "model": model,
         "choices": [{"message": {"role": "assistant", "content": content}}],
     }
+
+
+def _load_local_llm_with_temp_db(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        "JOBAPPLY_DATABASE_URL", f"sqlite:///{tmp_path / 'local-llm.db'}"
+    )
+    for mod_name in [
+        "app.routers.local_llm",
+        "app.routers.settings",
+        "app.routers",
+        "app.local_llm",
+        "app.models",
+        "app.db",
+        "app",
+    ]:
+        sys.modules.pop(mod_name, None)
+
+    from app import models  # noqa: F401  (registers tables)
+    from app.db import Base, engine, ensure_runtime_columns
+
+    Base.metadata.create_all(bind=engine)
+    ensure_runtime_columns()
+
+    import app.local_llm as local_llm
+
+    return local_llm
 
 
 # ---- settings persistence --------------------------------------------
@@ -38,6 +65,12 @@ def test_local_llm_settings_save_and_load(client):
     assert body["enabled"] is False
     assert body["base_url"] == "http://localhost:11434/v1"
     assert body["model"] == "llama3.1:8b"
+    assert body["context_window_tokens"] == 8192
+    assert body["reserved_output_tokens"] == 1200
+    assert body["max_input_tokens"] == 6500
+    assert body["allow_compression"] is True
+    assert body["allow_fallback"] is True
+    assert body["abort_on_over_budget"] is False
     assert body["allowed_tasks"]["resume_tailoring"] is False
 
     updated = client.put(
@@ -48,6 +81,12 @@ def test_local_llm_settings_save_and_load(client):
             "base_url": "http://localhost:1234/v1",
             "model": "qwen2.5-coder:14b",
             "timeout_seconds": 30,
+            "context_window_tokens": 4096,
+            "reserved_output_tokens": 512,
+            "max_input_tokens": 3000,
+            "allow_compression": False,
+            "allow_fallback": False,
+            "abort_on_over_budget": True,
             "allowed_tasks": {"ats_keywords": True, "resume_tailoring": False},
         },
     )
@@ -59,6 +98,54 @@ def test_local_llm_settings_save_and_load(client):
     assert fetched["base_url"] == "http://localhost:1234/v1"
     assert fetched["model"] == "qwen2.5-coder:14b"
     assert fetched["timeout_seconds"] == 30
+    assert fetched["context_window_tokens"] == 4096
+    assert fetched["reserved_output_tokens"] == 512
+    assert fetched["max_input_tokens"] == 3000
+    assert fetched["allow_compression"] is False
+    assert fetched["allow_fallback"] is False
+    assert fetched["abort_on_over_budget"] is True
+
+
+def test_local_llm_settings_rejects_impossible_budget(client):
+    resp = client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "context_window_tokens": 1024,
+            "reserved_output_tokens": 1200,
+            "max_input_tokens": 100,
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "reserved_output_tokens" in resp.json()["detail"]
+
+
+def test_local_llm_settings_save_computes_omitted_max_input_tokens(
+    monkeypatch, tmp_path
+):
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+
+    config = local_llm.save_config(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        timeout_seconds=local_llm.DEFAULT_TIMEOUT_SECONDS,
+        allowed_tasks={},
+        context_window_tokens=2048,
+        reserved_output_tokens=512,
+        max_input_tokens=None,
+    )
+    assert config.context_window_tokens == 2048
+    assert config.reserved_output_tokens == 512
+    assert config.max_input_tokens == 1536
+
+    stored = local_llm.get_settings_view()
+    assert stored["context_window_tokens"] == 2048
+    assert stored["reserved_output_tokens"] == 512
+    assert stored["max_input_tokens"] == 1536
 
 
 def test_local_llm_settings_rejects_bad_base_url(client):
@@ -143,7 +230,37 @@ def test_test_connection_success(client, monkeypatch):
     body = resp.json()
     assert body["ok"] is True
     assert "model responded" in body["message"].lower()
+    assert "configured context window: 8192 tokens" in body["message"].lower()
+    assert "usable input budget: 6500 tokens" in body["message"].lower()
+    assert body["context_window_tokens"] == 8192
+    assert body["max_input_tokens"] == 6500
     assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+
+
+def test_test_connection_computes_omitted_max_input_tokens_for_budget_overrides(
+    monkeypatch, tmp_path
+):
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+    from app.routers.local_llm import LocalLLMTestRequest, test_local_llm_connection
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    result = test_local_llm_connection(
+        LocalLLMTestRequest(
+            base_url="http://localhost:11434/v1",
+            model="llama3.1:8b",
+            context_window_tokens=2048,
+            reserved_output_tokens=512,
+        )
+    )
+    assert result.ok is True
+    assert "configured context window: 2048 tokens" in result.message.lower()
+    assert "usable input budget: 1536 tokens" in result.message.lower()
+    assert result.context_window_tokens == 2048
+    assert result.max_input_tokens == 1536
 
 
 def test_test_connection_timeout(client, monkeypatch):
@@ -215,6 +332,34 @@ def test_client_formats_openai_compatible_request(client, monkeypatch):
     assert captured["payload"]["response_format"] == {"type": "json_object"}
     assert captured["headers"]["Authorization"] == "Bearer tok"
     assert captured["timeout"] == 42
+
+
+def test_client_refuses_over_budget_prompt_before_http(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("over-budget prompt must not be sent")
+
+    monkeypatch.setattr(local_llm, "_post_json", boom)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        context_window_tokens=128,
+        reserved_output_tokens=32,
+        max_input_tokens=20,
+        allow_compression=False,
+        allow_fallback=False,
+        abort_on_over_budget=True,
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "x" * 1000}],
+        task="ats_keywords",
+    )
+
+    assert result.ok is False
+    assert "over budget" in (result.error or "")
+    assert result.context is not None
+    assert result.context["over_budget"] is True
 
 
 # ---- task policy ------------------------------------------------------

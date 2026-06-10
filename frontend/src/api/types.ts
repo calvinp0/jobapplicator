@@ -707,6 +707,12 @@ export interface LocalLlmSettings {
   model: string;
   timeout_seconds: number;
   allowed_tasks: Record<string, boolean>;
+  context_window_tokens: number;
+  reserved_output_tokens: number;
+  max_input_tokens: number;
+  allow_compression: boolean;
+  allow_fallback: boolean;
+  abort_on_over_budget: boolean;
   has_api_key: boolean;
   api_key_preview: string;
   updated_at: string | null;
@@ -720,6 +726,12 @@ export interface LocalLlmSettingsUpdate {
   model: string;
   timeout_seconds: number;
   allowed_tasks: Record<string, boolean>;
+  context_window_tokens: number;
+  reserved_output_tokens: number;
+  max_input_tokens?: number | null;
+  allow_compression: boolean;
+  allow_fallback: boolean;
+  abort_on_over_budget: boolean;
   api_key?: string | null;
   preserve_existing_key?: boolean;
 }
@@ -731,12 +743,17 @@ export interface LocalLlmTestResult {
   provider: string;
   latency_ms: number | null;
   error: string | null;
+  context_window_tokens: number;
+  max_input_tokens: number;
 }
 
 export interface LocalLlmTestRequest {
   base_url?: string | null;
   model?: string | null;
   timeout_seconds?: number | null;
+  context_window_tokens?: number | null;
+  reserved_output_tokens?: number | null;
+  max_input_tokens?: number | null;
   api_key?: string | null;
   provider?: string | null;
   preserve_existing_key?: boolean;

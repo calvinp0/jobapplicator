@@ -85,6 +85,18 @@ def _disabled_config() -> local_llm.LocalLLMConfig:
     return local_llm.LocalLLMConfig(enabled=False)
 
 
+def _long_jd() -> str:
+    repeated = "\n".join(
+        f"- Requirement {i}: Build Python machine learning systems with AWS and SQL."
+        for i in range(500)
+    )
+    boilerplate = "\n".join(
+        f"Equal opportunity boilerplate paragraph {i}. Cookie policy text."
+        for i in range(300)
+    )
+    return f"{FIXTURE_JD}\n\n## Requirements\n{repeated}\n\n## Legal\n{boilerplate}"
+
+
 # ---- deterministic extractors ----------------------------------------
 
 
@@ -284,6 +296,12 @@ def test_run_preflight_local_provider_validates_json(tmp_path, monkeypatch):
         assert task["provider"] == "local_openai_compatible"
         assert task["status"] == "succeeded"
         assert not task.get("fallback_used")
+        assert task["context"]["context_window_tokens"] == 8192
+        assert task["context"]["max_input_tokens"] == 6500
+        assert task["context"]["estimated_input_tokens_initial"] > 0
+        assert task["context"]["estimated_input_tokens_final"] > 0
+        assert task["context"]["compression_used"] is False
+        assert task["context"]["fallback_used"] is False
     # The local job_summary content (not the deterministic one) was written.
     summary = json.loads(
         (run_dir / "input" / "preflight" / "job_summary.json").read_text()
@@ -338,6 +356,126 @@ def test_run_preflight_local_disabled_uses_deterministic(tmp_path, monkeypatch):
     result = preflight.run_preflight(run_dir, config=_disabled_config())
     assert result.provider == preflight.DETERMINISTIC_PROVIDER
     assert result.fallback_used is False
+
+
+def test_local_preflight_uses_deterministic_compression_when_enabled(
+    tmp_path, monkeypatch
+):
+    captured_payloads: list[dict] = []
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured_payloads.append(payload)
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path, jd=_long_jd())
+    logs: list[str] = []
+    cfg = local_llm.LocalLLMConfig(
+        enabled=True,
+        context_window_tokens=1400,
+        reserved_output_tokens=400,
+        max_input_tokens=1000,
+        allow_compression=True,
+        allow_fallback=True,
+    )
+
+    preflight.run_preflight(run_dir, config=cfg, on_log=logs.append)
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    assert captured_payloads
+    assert "Equal opportunity boilerplate" not in str(captured_payloads)
+    first_context = manifest["tasks"][0]["context"]
+    assert first_context["compression_used"] is True
+    assert first_context["estimated_input_tokens_initial"] > first_context[
+        "estimated_input_tokens_final"
+    ]
+    assert first_context["over_budget"] is False
+    joined_logs = "\n".join(logs)
+    assert "local LLM input over budget" in joined_logs
+    assert "compressed input to" in joined_logs
+    assert "local LLM budget check passed" in joined_logs
+
+
+def test_local_preflight_falls_back_when_still_over_budget(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("over-budget local prompt must not be sent")
+
+    monkeypatch.setattr(local_llm, "_post_json", boom)
+    run_dir = _make_run_dir(tmp_path, jd=_long_jd())
+    logs: list[str] = []
+    cfg = local_llm.LocalLLMConfig(
+        enabled=True,
+        context_window_tokens=80,
+        reserved_output_tokens=20,
+        max_input_tokens=40,
+        allow_compression=True,
+        allow_fallback=True,
+    )
+
+    result = preflight.run_preflight(run_dir, config=cfg, on_log=logs.append)
+
+    assert result.fallback_used is True
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    assert manifest["fallback_used"] is True
+    for task in manifest["tasks"]:
+        assert task["provider"] == preflight.DETERMINISTIC_PROVIDER
+        assert task["status"] == preflight.STATUS_FALLBACK
+        assert task["fallback_used"] is True
+        assert task["context"]["fallback_used"] is True
+    assert "using deterministic ats_keyword_extraction extractor" in "\n".join(logs)
+
+
+def test_local_preflight_over_budget_without_safeguards_fails_task(tmp_path):
+    run_dir = _make_run_dir(tmp_path, jd=_long_jd())
+    cfg = local_llm.LocalLLMConfig(
+        enabled=True,
+        context_window_tokens=80,
+        reserved_output_tokens=20,
+        max_input_tokens=40,
+        allow_compression=False,
+        allow_fallback=False,
+        abort_on_over_budget=False,
+    )
+
+    with pytest.raises(preflight.PreflightError, match="over budget"):
+        preflight.run_preflight(run_dir, config=cfg)
+
+
+def test_local_preflight_prompts_do_not_include_evidence_file_bodies(
+    tmp_path, monkeypatch
+):
+    payloads: list[dict] = []
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        payloads.append(payload)
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+    input_dir = run_dir / "input"
+    (input_dir / "evidence_bank.md").write_text(
+        "SECRET FULL EVIDENCE BODY", encoding="utf-8"
+    )
+    sources_dir = input_dir / "evidence_sources"
+    sources_dir.mkdir()
+    (sources_dir / "001_secret.md").write_text(
+        "SECRET SOURCE BODY", encoding="utf-8"
+    )
+    (input_dir / "evidence_sources_index.md").write_text(
+        "# Evidence Sources\n\n## 1. Secret\n- Staged path: input/evidence_sources/001_secret.md\n",
+        encoding="utf-8",
+    )
+
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    prompt_text = str(payloads)
+    assert "SECRET FULL EVIDENCE BODY" not in prompt_text
+    assert "SECRET SOURCE BODY" not in prompt_text
+    assert "input/evidence_sources/001_secret.md" in prompt_text
 
 
 def test_run_preflight_emits_log_and_progress_callbacks(tmp_path):

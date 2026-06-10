@@ -98,6 +98,12 @@ class LocalLLMSettingsRead(BaseModel):
     model: str
     timeout_seconds: int
     allowed_tasks: dict[str, bool]
+    context_window_tokens: int
+    reserved_output_tokens: int
+    max_input_tokens: int
+    allow_compression: bool
+    allow_fallback: bool
+    abort_on_over_budget: bool
     has_api_key: bool
     api_key_preview: str
     updated_at: str | None
@@ -117,6 +123,12 @@ class LocalLLMSettingsUpdate(BaseModel):
     model: str = Field(..., min_length=1)
     timeout_seconds: int = local_llm.DEFAULT_TIMEOUT_SECONDS
     allowed_tasks: dict[str, bool] = Field(default_factory=dict)
+    context_window_tokens: int = local_llm.DEFAULT_CONTEXT_WINDOW_TOKENS
+    reserved_output_tokens: int = local_llm.DEFAULT_RESERVED_OUTPUT_TOKENS
+    max_input_tokens: int | None = None
+    allow_compression: bool = local_llm.DEFAULT_ALLOW_COMPRESSION
+    allow_fallback: bool = local_llm.DEFAULT_ALLOW_FALLBACK
+    abort_on_over_budget: bool = local_llm.DEFAULT_ABORT_ON_OVER_BUDGET
     api_key: str | None = None
     preserve_existing_key: bool = False
 
@@ -138,6 +150,12 @@ def update_local_llm_settings(
             model=payload.model,
             timeout_seconds=payload.timeout_seconds,
             allowed_tasks=payload.allowed_tasks,
+            context_window_tokens=payload.context_window_tokens,
+            reserved_output_tokens=payload.reserved_output_tokens,
+            max_input_tokens=payload.max_input_tokens,
+            allow_compression=payload.allow_compression,
+            allow_fallback=payload.allow_fallback,
+            abort_on_over_budget=payload.abort_on_over_budget,
             api_key=payload.api_key,
             preserve_existing_key=payload.preserve_existing_key,
         )
