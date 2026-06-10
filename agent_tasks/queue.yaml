@@ -2585,7 +2585,7 @@ tasks:
     file: "agent_tasks/129-add-provider-trace-to-application-runs.md"
     branch: "agent/129-add-provider-trace-to-application-runs"
     worktree: "agent-129-add-provider-trace-to-application-runs"
-    status: "ready"
+    status: "done"
     depends_on:
       - "126-add-ollama-num-ctx-setting"
       - "127-detect-and-log-local-server-context"
