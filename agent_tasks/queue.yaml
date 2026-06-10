@@ -2521,7 +2521,7 @@ tasks:
     file: "agent_tasks/126-add-ollama-num-ctx-setting.md"
     branch: "agent/126-add-ollama-num-ctx-setting"
     worktree: "agent-126-add-ollama-num-ctx-setting"
-    status: "ready"
+    status: "done"
     depends_on:
       - "125-add-local-llm-context-budget-safeguards"
     verification:
@@ -2541,7 +2541,7 @@ tasks:
     file: "agent_tasks/127-detect-and-log-local-server-context.md"
     branch: "agent/127-detect-and-log-local-server-context"
     worktree: "agent-127-detect-and-log-local-server-context"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "126-add-ollama-num-ctx-setting"
     verification:
