@@ -46,6 +46,7 @@ class LocalLLMTestRequest(BaseModel):
     context_window_tokens: int | None = None
     reserved_output_tokens: int | None = None
     max_input_tokens: int | None = None
+    num_ctx: int | None = None
     api_key: str | None = None
     provider: str | None = None
     preserve_existing_key: bool = True
@@ -60,6 +61,13 @@ class LocalLLMTestResult(BaseModel):
     error: str | None = None
     context_window_tokens: int
     max_input_tokens: int
+    # Server-context detection (task 127). ``server_reported_context_tokens``
+    # is the model server's own context length when it could be read (Ollama
+    # only); ``context_verified`` is true only when that read succeeded;
+    # ``context_warning`` explains why the context could not be verified.
+    server_reported_context_tokens: int | None = None
+    context_verified: bool = False
+    context_warning: str | None = None
 
 
 @router.post("/test-connection", response_model=LocalLLMTestResult)
@@ -91,6 +99,8 @@ def test_local_llm_connection(
         or payload.reserved_output_tokens is not None
     ):
         overrides["max_input_tokens"] = None
+    if payload.num_ctx is not None:
+        overrides["num_ctx"] = payload.num_ctx
     incoming_key = (payload.api_key or "").strip()
     if incoming_key:
         overrides["api_key"] = incoming_key
@@ -102,12 +112,23 @@ def test_local_llm_connection(
 
     client = local_llm.LocalLLMClient(config)
     result = client.test_connection()
+
+    # Best-effort: ask the server what context it is actually running. This
+    # never raises — an unreachable or OpenAI-compatible server degrades to
+    # ``context_verified = False`` with an explanatory warning.
+    detection = local_llm.detect_server_context(config)
+
     if result.ok:
         message = (
             "Connected — model responded. "
             f"Configured context window: {budget.context_window_tokens} tokens. "
             f"Usable input budget: {budget.max_input_tokens} tokens."
         )
+        if detection.context_verified:
+            message += (
+                " Server-reported context: "
+                f"{detection.server_reported_context_tokens} tokens."
+            )
     else:
         message = "Connection failed."
     return LocalLLMTestResult(
@@ -119,6 +140,11 @@ def test_local_llm_connection(
         error=result.error,
         context_window_tokens=budget.context_window_tokens,
         max_input_tokens=budget.max_input_tokens,
+        server_reported_context_tokens=detection.server_reported_context_tokens,
+        context_verified=detection.context_verified,
+        context_warning=(
+            None if detection.context_verified else detection.note
+        ),
     )
 
 

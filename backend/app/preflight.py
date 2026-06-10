@@ -258,6 +258,38 @@ def run_preflight(
         + (primary_provider if intended_local else DETERMINISTIC_PROVIDER)
     )
 
+    # Best-effort server-context detection for local runs (task 127). The
+    # result is recorded once at the manifest top level so every local run
+    # carries an auditable record of the context it assumed vs. the context
+    # the server actually reports. Detection never raises and never fails
+    # preflight: an unreachable or OpenAI-compatible server simply degrades to
+    # ``context_verified = False``.
+    context_summary: Optional[dict[str, Any]] = None
+    if intended_local:
+        detection = local_llm.detect_server_context(
+            cfg, timeout=min(float(cfg.timeout_seconds), 10.0)
+        )
+        context_summary = {
+            "assumed_context_tokens": cfg.context_window_tokens,
+            "server_reported_context_tokens": (
+                detection.server_reported_context_tokens
+            ),
+            "context_verified": detection.context_verified,
+            "note": detection.note,
+        }
+        if cfg.num_ctx is not None:
+            context_summary["requested_num_ctx"] = cfg.num_ctx
+        log(
+            "preflight context: assumed "
+            f"{cfg.context_window_tokens} tokens; "
+            + (
+                "server reports "
+                f"{detection.server_reported_context_tokens} tokens"
+                if detection.context_verified
+                else "server context unverified"
+            )
+        )
+
     results: list[PreflightTaskResult] = []
     artifact_paths: dict[str, Path] = {}
 
@@ -338,6 +370,8 @@ def run_preflight(
     }
     if fallback_used and fallback_reason:
         manifest["fallback_reason"] = fallback_reason
+    if context_summary is not None:
+        manifest["context"] = context_summary
 
     manifest_path = preflight_dir / PREFLIGHT_MANIFEST_FILENAME
     _write_json(manifest_path, manifest)
@@ -484,12 +518,21 @@ def _prepare_local_messages(
         "context_window_tokens": initial.context_window_tokens,
         "reserved_output_tokens": initial.reserved_output_tokens,
         "max_input_tokens": initial.max_input_tokens,
+        # The context window JobApplicator budgeted this task against (task
+        # 127). Same value as ``context_window_tokens`` today, recorded under
+        # an explicit name so every task entry carries an auditable record of
+        # the assumed context — even if the budget plumbing changes later.
+        "effective_assumed_context_tokens": cfg.context_window_tokens,
         "estimated_input_tokens_initial": initial.estimated_input_tokens,
         "estimated_input_tokens_final": initial.estimated_input_tokens,
         "compression_used": False,
         "fallback_used": False,
         "over_budget": initial.over_budget,
     }
+    # The Ollama server context requested for this run, when configured (task
+    # 126/127). Recorded for audit only; it does not change the budget.
+    if cfg.num_ctx is not None:
+        context_info["requested_num_ctx"] = cfg.num_ctx
     if not initial.over_budget:
         log("jobapply: local LLM budget check passed")
         return messages, context_info, None
@@ -1053,6 +1096,16 @@ def render_preflight_summary(
     lines.append(f"- Fallback used: {manifest.get('fallback_used')}")
     if manifest.get("fallback_reason"):
         lines.append(f"- Fallback reason: {manifest['fallback_reason']}")
+    context = manifest.get("context")
+    if isinstance(context, dict):
+        assumed = context.get("assumed_context_tokens")
+        server = context.get("server_reported_context_tokens")
+        verified = context.get("context_verified")
+        lines.append(f"- Assumed context: {assumed} tokens")
+        if verified:
+            lines.append(f"- Server-reported context: {server} tokens (verified)")
+        else:
+            lines.append("- Server-reported context: unverified")
     lines.append("")
     lines.append("## Tasks")
     for task in manifest.get("tasks", []):

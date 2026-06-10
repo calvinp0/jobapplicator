@@ -134,8 +134,41 @@ the connection result plus configured budget information:
 - An error/timeout message (connection refused, timeout, HTTP error, or a
   malformed response).
 
-The test uses the values currently in the form, so you can verify unsaved
-edits before saving.
+The test uses the values currently in the form (including an unsaved
+`num_ctx`), so you can verify unsaved edits before saving.
+
+### Server-context detection (task 127)
+
+The configured context budget is JobApplicator's *assumption* about the
+model's context window. The connection test also makes a best-effort attempt
+to read the context the model **server is actually running**, so the gap
+between the two is observable. The result adds three fields to the test
+response:
+
+- `server_reported_context_tokens` — the server's own context length for the
+  model (`int`), or `null` when it could not be read.
+- `context_verified` — `true` only when the server actually reported a context
+  length.
+- `context_warning` — a short explanation, present only when the context could
+  **not** be verified.
+
+Only the **Ollama-native** provider exposes this: the backend queries Ollama's
+native `/api/show` endpoint (derived from the configured base URL by stripping
+a trailing `/v1`) and reads the model's reported context length. When it
+succeeds the success message appends `Server-reported context: N tokens.` and
+`context_verified` is `true`.
+
+For the **OpenAI-compatible** provider there is no portable way to read the
+server's context window, so detection always returns `context_verified = false`
+with a `context_warning` explaining that *an OpenAI-compatible endpoint does
+not expose its context window, so JobApplicator cannot verify that the
+server's real context matches the configured budget*. A network error, an
+unreachable Ollama server, or a missing metadata field degrade the same way —
+detection never raises and never blocks the connection test.
+
+Detection is **reporting only**: a detected context is never auto-applied to
+the budget. You stay in control of the **Context window tokens** budget; the
+detection result just tells you whether your assumption matches reality.
 
 ## Schema validation and fallback
 
@@ -204,22 +237,32 @@ Routing per task uses the policy above:
 
 The manifest records the provider/model that produced each artifact and
 whether a fallback occurred. For local-provider attempts it also records
-context-budget checks:
+context-budget checks, the effective assumed context per task, and a top-level
+summary of the assumed vs. server-reported context for the run (task 127):
 
 ```json
 {
   "created_at": "2026-06-10T12:00:00Z",
-  "provider": "local_openai_compatible",
+  "provider": "local_ollama",
   "model": "llama3.1:8b",
   "fallback_used": false,
+  "context": {
+    "assumed_context_tokens": 8192,
+    "server_reported_context_tokens": 131072,
+    "context_verified": true,
+    "requested_num_ctx": 16384,
+    "note": "Ollama reports a context length of 131072 tokens for model llama3.1:8b. Requested num_ctx is 16384."
+  },
   "tasks": [
-    {"name": "ats_keyword_extraction", "provider": "local_openai_compatible",
+    {"name": "ats_keyword_extraction", "provider": "local_ollama",
      "model": "llama3.1:8b", "status": "succeeded",
      "output": "input/preflight/ats_keywords.json",
      "context": {
        "context_window_tokens": 8192,
        "reserved_output_tokens": 1200,
        "max_input_tokens": 6500,
+       "effective_assumed_context_tokens": 8192,
+       "requested_num_ctx": 16384,
        "estimated_input_tokens_initial": 9320,
        "estimated_input_tokens_final": 5810,
        "compression_used": true,
@@ -229,6 +272,18 @@ context-budget checks:
   ]
 }
 ```
+
+The top-level `context` summary is present only when the run intends the local
+provider. `server_reported_context_tokens` / `context_verified` come from the
+same best-effort detection as the connection test: only the Ollama-native
+provider reports a context length (via `/api/show`); an OpenAI-compatible or
+unreachable server records `context_verified = false`. Detection is
+best-effort and reporting only — a detection failure records
+`context_verified = false` and **never fails preflight**, and a detected
+context is never auto-applied to the budget. The per-task
+`effective_assumed_context_tokens` records the context window each local task
+budgeted against, and `requested_num_ctx` appears when an Ollama `num_ctx` is
+configured.
 
 When the local provider is unavailable the manifest records
 `"provider": "deterministic"` (and `"fallback_used": true` with a

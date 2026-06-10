@@ -726,3 +726,197 @@ def test_suggest_resume_edits_returns_suggestions(client, monkeypatch):
     assert body["model"] == "llama3.1:8b"
     assert body["schema_valid"] is True
     assert len(body["suggestions"]) == 1
+
+
+# ---- server-context detection (task 127) -----------------------------
+
+
+def _ollama_show(context_length: int, arch: str = "llama") -> dict:
+    """A minimal Ollama native ``/api/show`` response body."""
+    return {
+        "model_info": {
+            "general.architecture": arch,
+            f"{arch}.context_length": context_length,
+            f"{arch}.embedding_length": 4096,
+        },
+        "details": {"family": arch},
+    }
+
+
+def test_detect_server_context_ollama_success(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        captured["payload"] = payload
+        return _ollama_show(131072)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.detect_server_context(config)
+
+    # The /v1 suffix is stripped to reach the native metadata endpoint.
+    assert captured["url"] == "http://localhost:11434/api/show"
+    assert captured["payload"] == {"model": "llama3.1:8b"}
+    assert result.context_verified is True
+    assert result.server_reported_context_tokens == 131072
+    assert "131072" in result.note
+
+
+def test_detect_server_context_ollama_failure_degrades(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    # Must never raise; degrades to unverified with an explanatory note.
+    result = local_llm.detect_server_context(config)
+    assert result.context_verified is False
+    assert result.server_reported_context_tokens is None
+    assert result.note
+
+
+def test_detect_server_context_ollama_missing_context_length_degrades(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # A well-formed response that simply lacks any context_length key.
+        return {"model_info": {"general.architecture": "llama"}, "details": {}}
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.detect_server_context(config)
+    assert result.context_verified is False
+    assert result.server_reported_context_tokens is None
+
+
+def test_detect_server_context_openai_compatible_cannot_verify(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("openai-compatible detection must not hit the network")
+
+    monkeypatch.setattr(local_llm, "_post_json", boom)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:8000/v1",
+        model="mistral-small",
+    )
+    result = local_llm.detect_server_context(config)
+    assert result.context_verified is False
+    assert result.server_reported_context_tokens is None
+    assert "cannot verify" in result.note.lower()
+
+
+def test_test_connection_reports_server_context_for_ollama(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        if url.endswith("/api/show"):
+            return _ollama_show(8192)
+        return _completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["context_verified"] is True
+    assert body["server_reported_context_tokens"] == 8192
+    assert body["context_warning"] is None
+    assert "server-reported context: 8192 tokens" in body["message"].lower()
+
+
+def test_test_connection_warns_when_context_unverified(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # The chat test succeeds; detection is not attempted for the
+        # OpenAI-compatible provider, so the context stays unverified.
+        return _completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "http://localhost:8000/v1",
+            "model": "mistral-small",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["context_verified"] is False
+    assert body["server_reported_context_tokens"] is None
+    assert body["context_warning"]
+    assert "cannot verify" in body["context_warning"].lower()
+
+
+def test_test_connection_accepts_num_ctx_override(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        if url.endswith("/api/show"):
+            return _ollama_show(16384)
+        captured["chat_url"] = url
+        captured["chat_payload"] = payload
+        return _ollama_completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "num_ctx": 16384,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    # The num_ctx override routed the chat test to the native surface and was
+    # sent on the request, mirroring a saved Ollama num_ctx.
+    assert captured["chat_url"] == "http://localhost:11434/api/chat"
+    assert captured["chat_payload"]["options"]["num_ctx"] == 16384
+    assert body["context_verified"] is True
+    assert body["server_reported_context_tokens"] == 16384

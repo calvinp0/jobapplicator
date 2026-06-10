@@ -263,6 +263,12 @@ entry includes a `context` object with:
 - `context_window_tokens`
 - `reserved_output_tokens`
 - `max_input_tokens`
+- `effective_assumed_context_tokens` — the context window JobApplicator
+  budgeted this task against (task 127). Records the assumed context for audit
+  even if the budget plumbing changes later.
+- `requested_num_ctx` — only present when an Ollama `num_ctx` is configured;
+  the server context length requested for the run (task 126/127). Recorded for
+  audit; it does not change the budget.
 - `estimated_input_tokens_initial`
 - `estimated_input_tokens_final`
 - `compression_used`
@@ -272,6 +278,28 @@ entry includes a `context` object with:
 If a local input remains too large and deterministic fallback is allowed, the
 task entry records `status = "fallback"`, `provider = "deterministic"`, and a
 clear `fallback_reason`. Local LLM prompts must never be silently truncated.
+
+When the run intends the local provider, the manifest also carries a single
+top-level `context` summary recording the run's assumed context and what the
+model server actually reports (task 127):
+
+- `assumed_context_tokens` — the context window JobApplicator budgeted against
+  for the run (`context_window_tokens`).
+- `server_reported_context_tokens` — the model server's own context length
+  when it could be read (`int`), else `null`. Only the Ollama-native provider
+  exposes this (via its native `/api/show` endpoint).
+- `context_verified` — `true` only when the server actually reported a context
+  length. An OpenAI-compatible server, an unreachable server, or a missing
+  metadata field all leave this `false`.
+- `requested_num_ctx` — only present when an Ollama `num_ctx` is configured.
+- `note` — a short human-readable explanation (e.g. why the context could not
+  be verified).
+
+Server-context detection is best-effort and **reporting only**: a detection
+failure records `context_verified = false` and never fails preflight, and a
+detected context is never auto-applied to the budget — the user stays in
+control of the budget. Deterministic-only runs (the local provider is not the
+intended primary) omit the top-level `context` summary entirely.
 
 ### `revision_feedback.md`
 
@@ -359,10 +387,13 @@ Artifacts:
   look**, written before any evidence is read; it must never claim that
   evidence exists.
 - `preflight_manifest.json` — `created_at`, top-level `provider`/`model`,
-  `fallback_used` (and `fallback_reason` when a local task degraded), and a
-  `tasks` array recording per-task `name`/`provider`/`model`/`status`/`output`.
-  A `provider` of `deterministic` means the heuristic extractor produced the
-  artifact.
+  `fallback_used` (and `fallback_reason` when a local task degraded), a
+  `tasks` array recording per-task `name`/`provider`/`model`/`status`/`output`,
+  and — for local runs — a top-level `context` summary of the assumed vs.
+  server-reported context (`assumed_context_tokens`,
+  `server_reported_context_tokens`, `context_verified`). A `provider` of
+  `deterministic` means the heuristic extractor produced the artifact. See
+  *`preflight/preflight_manifest.json`* above for the full context schema.
 - `preflight_summary.md` — optional human-readable projection of the
   manifest.
 
