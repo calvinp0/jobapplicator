@@ -38,8 +38,10 @@ until you both enable the subsystem *and* toggle the specific task on.
 
 | Task | Risk | Local default | Notes |
 |------|------|---------------|-------|
-| Job description summarization (`job_summary`) | low | on | Allowed when enabled. |
-| ATS keyword extraction (`ats_keywords`) | low | on | Allowed when enabled. |
+| Job summary (`job_summary`) | low | on | Allowed when enabled. Preflight task. |
+| ATS keyword extraction (`ats_keywords`) | low | on | Allowed when enabled. Preflight task. |
+| Role requirement extraction (`role_requirements`) | low | on | Allowed when enabled. Preflight task (task 124). |
+| Evidence gap planning (`evidence_gap_plan`) | low | on | Allowed when enabled. Preflight task (task 124); conservative — names where to look, never claims evidence exists. |
 | Email classification (`email_classification`) | low | on | Allowed when enabled. |
 | Resume suggestions (`resume_suggestions`) | experimental | off | Requires explicit opt-in. |
 | Full resume tailoring (`resume_tailoring`) | high | off | Claude Code default; local only if explicitly enabled. |
@@ -146,11 +148,59 @@ these constraints and on strict JSON, so they are kept off these paths by
 default. Use local LLMs to iterate cheaply on summaries and keyword
 extraction; keep Claude Code for the outputs that ship.
 
-## Current integration status
+## Preflight analysis pipeline (task 124)
 
-The app does not yet run ATS keyword extraction or job-description
-summarization as separate steps outside the single Claude tailoring prompt.
-The provider config, task policy, client, connection test, and the
-experimental suggestions endpoint are in place and ready for those steps to
-be wired in by a future task — without weakening the tailoring guarantees
-above.
+The low-risk preflight tasks are wired into the tailoring run as a
+**provider-routed preflight analysis pipeline** that runs *before* the main
+Claude Code tailoring prompt. The worker (`backend/app/claude_worker.py`)
+calls `app.preflight.run_preflight` after staging inputs and before
+launching Claude. Each run gets an `input/preflight/` directory containing:
+
+```text
+input/preflight/job_summary.json        # company/title/location/summary
+input/preflight/ats_keywords.json       # classified ATS keywords + groups
+input/preflight/role_requirements.json  # requirements + responsibilities
+input/preflight/evidence_gap_plan.json  # where to look (a plan, not evidence)
+input/preflight/preflight_manifest.json # provider/model/status per task
+input/preflight/preflight_summary.md    # optional human-readable projection
+```
+
+Routing per task uses the policy above:
+
+- `job_summary`, `ats_keyword_extraction`, `role_requirements`, and
+  `evidence_gap_plan` may run on the local provider when the subsystem is
+  enabled and the task is toggled on.
+- Otherwise — or on any local connection/JSON failure — a **deterministic**
+  extractor (regex/headings/JD-text parsing in `app.preflight`) produces the
+  same artifacts. Preflight therefore never requires a local LLM.
+- `resume_tailoring`, `claim_audit`, and `recruiter_review` are **not**
+  preflight tasks; they remain on Claude Code in the main tailoring run.
+
+The manifest records the provider/model that produced each artifact and
+whether a fallback occurred:
+
+```json
+{
+  "created_at": "2026-06-10T12:00:00Z",
+  "provider": "local_openai_compatible",
+  "model": "llama3.1:8b",
+  "fallback_used": false,
+  "tasks": [
+    {"name": "ats_keyword_extraction", "provider": "local_openai_compatible",
+     "model": "llama3.1:8b", "status": "succeeded",
+     "output": "input/preflight/ats_keywords.json"}
+  ]
+}
+```
+
+When the local provider is unavailable the manifest records
+`"provider": "deterministic"` (and `"fallback_used": true` with a
+`fallback_reason` when local was attempted first).
+
+Preflight is **advisory and best-effort**: it never fails the tailoring run.
+The main prompt treats the artifacts as a starting point only — the
+truthfulness/evidence contract still governs the final resume, the ATS audit
+starts from `ats_keywords.json`, and if preflight conflicts with the job
+description, the job description wins. The `evidence_gap_plan.json` only
+suggests where to look; it never asserts that evidence exists. See
+`docs/contracts/claude_run_directory.md` for the per-artifact schemas.

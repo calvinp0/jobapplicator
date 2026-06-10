@@ -51,6 +51,43 @@ input/master_resume_extracted.md
 input/master_resume_extraction_error.md
 ```
 
+Also read the preflight analysis artifacts, if present:
+
+```text
+input/preflight/job_summary.json
+input/preflight/ats_keywords.json
+input/preflight/role_requirements.json
+input/preflight/evidence_gap_plan.json
+input/preflight/preflight_manifest.json
+```
+
+### Preflight analysis (advisory)
+
+A provider-routed preflight step runs before this prompt and writes
+structured analysis of the job description under `input/preflight/`. These
+artifacts are **advisory inputs only** — they exist to speed up your work,
+not to override your judgment:
+
+- Treat them as a starting point, never as ground truth. The
+  Truthfulness and Evidence Rules below still dominate everything here.
+- If preflight conflicts with `input/job_description.md`, the
+  **job description wins** — re-read the JD and prefer it.
+- `input/preflight/ats_keywords.json` is the starting keyword list for
+  the ATS Keyword Strategy / ATS Audit. Validate and extend it against
+  the job description rather than trusting it blindly.
+- `input/preflight/evidence_gap_plan.json` is a *plan* of where to look
+  for supporting evidence — it does **not** assert that any evidence
+  exists. If it implies evidence you cannot actually find in the staged
+  files, ignore that implication and surface the gap in
+  `output/claim_audit.md`.
+- `input/preflight/preflight_manifest.json` records which provider/model
+  produced each artifact (local LLM or a deterministic extractor). A
+  deterministic provider means the keyword/requirement lists are
+  heuristic and likely incomplete — lean more on the JD.
+- Preflight artifacts may be missing entirely (preflight is best-effort).
+  Their absence is not an error; proceed exactly as you would without
+  them.
+
 Always read `input/evidence_sources_index.md` before tailoring. The index
 lists every selected evidence source for this run with its type, format,
 source (database or filesystem), and the staged file path under
@@ -119,6 +156,12 @@ revision feedback asked for it, not because it would strengthen the
 draft.
 
 ## ATS Keyword Strategy
+
+If `input/preflight/ats_keywords.json` is present, use it as the starting
+keyword list — its `keywords`, `groups.required`, `groups.preferred`,
+`groups.tools`, and `groups.domains` are your initial extraction. Then
+verify and extend it against the job description directly (preflight may be
+deterministic and incomplete). If preflight is absent, extract from scratch.
 
 Before drafting, analyze the job description and extract:
 

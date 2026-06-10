@@ -2120,3 +2120,95 @@ def test_invoke_run_with_tailored_resume_json_passes_validation(
         "output/tailored_resume.json"
     ) in log_text
     assert "jobapply: validating structured resume JSON" in log_text
+
+# ---- preflight analysis integration (task 124) ----------------------
+
+
+PREFLIGHT_FILES = (
+    "job_summary.json",
+    "ats_keywords.json",
+    "role_requirements.json",
+    "evidence_gap_plan.json",
+    "preflight_manifest.json",
+)
+
+
+def test_invoke_run_writes_preflight_before_claude(client, tmp_path, monkeypatch):
+    """Every tailoring run gets an input/preflight/ directory with the full
+    artifact set, written before Claude launches. With local LLM disabled
+    (the default) the manifest records the deterministic provider."""
+    import json
+
+    run = _seed_run(client, tmp_path, monkeypatch)
+    # The fake Claude records whether the preflight manifest already exists
+    # in its cwd at launch time, proving preflight ran first.
+    extra = (
+        'pf = cwd / "input" / "preflight" / "preflight_manifest.json"\n'
+        '        (cwd / "preflight_present_at_launch.txt").write_text(\n'
+        '            str(pf.is_file()), encoding="utf-8")\n'
+    )
+    binary = _write_fake_binary(tmp_path, exit_code=0, extra_body=extra)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    run_dir = Path(resp.json()["run_dir"])
+
+    preflight_dir = run_dir / "input" / "preflight"
+    for name in PREFLIGHT_FILES:
+        path = preflight_dir / name
+        assert path.is_file(), f"missing preflight artifact: {name}"
+        json.loads(path.read_text(encoding="utf-8"))  # parses
+
+    # Preflight existed before Claude launched.
+    marker = run_dir / "preflight_present_at_launch.txt"
+    assert marker.is_file()
+    assert marker.read_text(encoding="utf-8").strip() == "True"
+
+    manifest = json.loads(
+        (preflight_dir / "preflight_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["provider"] == "deterministic"
+    assert manifest["fallback_used"] is False
+
+
+def test_invoke_run_logs_preflight_provider_and_artifact_paths(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    run_dir = Path(resp.json()["run_dir"])
+
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert "jobapply: running preflight analysis" in log_text
+    assert "jobapply: preflight provider: deterministic" in log_text
+    assert "jobapply: wrote input/preflight/ats_keywords.json" in log_text
+    assert "jobapply: wrote input/preflight/preflight_manifest.json" in log_text
+
+    # User-facing progress events are appended too.
+    progress_text = (run_dir / "progress" / "progress.log").read_text(
+        encoding="utf-8"
+    )
+    assert "Running preflight job analysis" in progress_text
+    assert "Extracting ATS keywords" in progress_text
+    assert "Writing preflight analysis" in progress_text
+
+
+def test_invoke_run_preflight_artifacts_staged_inside_run_directory_only(
+    client, tmp_path, monkeypatch
+):
+    run = _seed_run(client, tmp_path, monkeypatch)
+    binary = _write_fake_binary(tmp_path, exit_code=0)
+    monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
+
+    resp = client.post(f"/runs/{run['id']}/invoke")
+    assert resp.status_code == 200, resp.text
+    run_dir = Path(resp.json()["run_dir"]).resolve()
+
+    preflight_dir = run_dir / "input" / "preflight"
+    for path in preflight_dir.iterdir():
+        assert path.resolve().is_relative_to(run_dir)

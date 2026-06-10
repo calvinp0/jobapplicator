@@ -506,8 +506,10 @@ function LlmProviderCard() {
 // Human labels for the toggleable local-LLM tasks. Order is driven by the
 // backend's task_policy so high-risk tasks render last.
 const LOCAL_TASK_LABELS: Record<string, string> = {
-  job_summary: "Job description summarization",
+  job_summary: "Job summary",
   ats_keywords: "ATS keyword extraction",
+  role_requirements: "Role requirement extraction",
+  evidence_gap_plan: "Evidence gap planning",
   email_classification: "Email classification",
   resume_suggestions: "Resume suggestions (experimental)",
   resume_tailoring: "Full resume tailoring (experimental)",

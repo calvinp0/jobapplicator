@@ -1,0 +1,417 @@
+"""Tests for the provider-routed preflight analysis pipeline (task 124).
+
+Covers:
+
+- the deterministic extractors for all four artifacts (job summary, ATS
+  keywords, role requirements, evidence gap plan);
+- ``run_preflight`` writing the full artifact set + manifest with the
+  deterministic provider when local LLM is disabled;
+- the local-provider path: valid JSON validates and is recorded as local;
+  invalid JSON triggers one repair attempt then falls back to the
+  deterministic extractor, with the manifest recording the degradation;
+- the schema validators;
+- the staged-in-run-directory boundary.
+
+The local LLM network boundary (``app.local_llm._post_json``) is
+monkeypatched so no live server is needed.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app import local_llm, preflight
+
+
+FIXTURE_JD = """# Scientific Machine Learning Engineer — Example Aero Labs
+
+- **Source platform:** linkedin
+- **Location:** Remote
+
+## Description
+
+Example Aero Labs is building next-generation simulation tools.
+
+## Requirements
+- Experience building machine learning models for scientific data.
+- Strong Python engineering skills.
+- Experience with PyTorch.
+
+## Preferred
+- Cloud deployment experience with AWS.
+
+## Responsibilities
+- Develop production ML pipelines.
+- Collaborate with researchers.
+"""
+
+
+PREFLIGHT_FILES = (
+    "job_summary.json",
+    "ats_keywords.json",
+    "role_requirements.json",
+    "evidence_gap_plan.json",
+    "preflight_manifest.json",
+)
+
+
+def _make_run_dir(tmp_path: Path, jd: str = FIXTURE_JD) -> Path:
+    """Stage a minimal run directory with a JD and evidence index."""
+    run_dir = tmp_path / "run"
+    input_dir = run_dir / "input"
+    input_dir.mkdir(parents=True)
+    (input_dir / "job_description.md").write_text(jd, encoding="utf-8")
+    (input_dir / "evidence_sources_index.md").write_text(
+        "# Evidence Sources\n\n(none provided)\n", encoding="utf-8"
+    )
+    return run_dir
+
+
+def _completion(content: str, model: str = "llama3.1:8b") -> dict:
+    return {
+        "model": model,
+        "choices": [{"message": {"role": "assistant", "content": content}}],
+    }
+
+
+def _enabled_config() -> local_llm.LocalLLMConfig:
+    return local_llm.LocalLLMConfig(enabled=True)
+
+
+def _disabled_config() -> local_llm.LocalLLMConfig:
+    return local_llm.LocalLLMConfig(enabled=False)
+
+
+# ---- deterministic extractors ----------------------------------------
+
+
+def test_deterministic_job_summary_extracts_company_and_title():
+    summary = preflight.deterministic_job_summary(FIXTURE_JD)
+    assert summary["company"] == "Example Aero Labs"
+    assert summary["job_title"] == "Scientific Machine Learning Engineer"
+    assert summary["location"] == "Remote"
+    assert summary["source"] == "input/job_description.md"
+    # Unknown fields are null, not invented.
+    assert summary["role_family"] is None
+    data, reason = preflight.validate_job_summary(summary)
+    assert reason is None and data is not None
+
+
+def test_deterministic_ats_keywords_classifies_kinds_and_categories():
+    ats = preflight.deterministic_ats_keywords(FIXTURE_JD)
+    groups = ats["groups"]
+    # required (from the Requirements section), preferred (Preferred section),
+    # tools and domains are all populated from the JD.
+    assert "Python" in groups["required"]
+    assert "PyTorch" in groups["tools"]
+    assert "AWS" in groups["preferred"]
+    assert any("Machine Learning" in d for d in groups["domains"])
+    # Every keyword carries a valid category + priority and an evidence snippet.
+    for kw in ats["keywords"]:
+        assert kw["category"] in preflight.KEYWORD_CATEGORIES
+        assert kw["priority"] in preflight.KEYWORD_PRIORITIES
+        assert kw["evidence"]
+    data, reason = preflight.validate_ats_keywords(ats)
+    assert reason is None and data is not None
+
+
+def test_deterministic_role_requirements_extracts_reqs_and_responsibilities():
+    rr = preflight.deterministic_role_requirements(FIXTURE_JD)
+    reqs = rr["requirements"]
+    resps = rr["responsibilities"]
+    assert len(reqs) >= 3
+    assert all(r["id"].startswith("req_") for r in reqs)
+    assert all(r["source_quote"] for r in reqs)
+    # The Preferred bullet is captured as a preferred-importance requirement.
+    assert any(r["importance"] == "preferred" for r in reqs)
+    assert any("production ML pipelines" in r["responsibility"] for r in resps)
+    data, reason = preflight.validate_role_requirements(rr)
+    assert reason is None and data is not None
+
+
+def test_deterministic_evidence_gap_plan_references_files_without_claiming():
+    rr = preflight.deterministic_role_requirements(FIXTURE_JD)
+    files = ["input/evidence_sources_index.md", "input/evidence_bank.md"]
+    plan = preflight.deterministic_evidence_gap_plan(rr, files)
+    assert plan["likely_evidence_targets"]
+    for target in plan["likely_evidence_targets"]:
+        # It names candidate files to check, drawn only from the staged list.
+        assert set(target["candidate_evidence_files_to_check"]).issubset(set(files))
+        # It is a plan, not an evidence confirmation.
+        assert "not yet audited" in target["notes"].lower()
+    data, reason = preflight.validate_evidence_gap_plan(plan)
+    assert reason is None and data is not None
+
+
+# ---- run_preflight: deterministic fallback ---------------------------
+
+
+def test_run_preflight_writes_all_artifacts_deterministically(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    result = preflight.run_preflight(run_dir, config=_disabled_config())
+
+    preflight_dir = run_dir / "input" / "preflight"
+    for name in PREFLIGHT_FILES:
+        path = preflight_dir / name
+        assert path.is_file(), f"missing artifact: {name}"
+        json.loads(path.read_text(encoding="utf-8"))  # parses
+
+    assert result.provider == preflight.DETERMINISTIC_PROVIDER
+    assert result.fallback_used is False
+
+
+def test_run_preflight_manifest_records_provider_model_status_output(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_disabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    data, reason = preflight.validate_manifest(manifest)
+    assert reason is None and data is not None
+    assert manifest["provider"] == preflight.DETERMINISTIC_PROVIDER
+    assert manifest["fallback_used"] is False
+    names = {t["name"] for t in manifest["tasks"]}
+    assert names == {
+        "job_summary",
+        "ats_keyword_extraction",
+        "role_requirements",
+        "evidence_gap_plan",
+    }
+    for task in manifest["tasks"]:
+        assert task["status"] == "succeeded"
+        assert task["provider"] == preflight.DETERMINISTIC_PROVIDER
+        assert task["output"].startswith("input/preflight/")
+
+
+def test_run_preflight_artifacts_staged_inside_run_directory_only(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    result = preflight.run_preflight(run_dir, config=_disabled_config())
+    run_dir = run_dir.resolve()
+    for path in result.artifact_paths.values():
+        assert path.resolve().is_relative_to(run_dir)
+        assert (run_dir / "input" / "preflight") in path.resolve().parents or (
+            path.resolve().parent == run_dir / "input" / "preflight"
+        )
+
+
+# ---- run_preflight: local provider path ------------------------------
+
+
+def _fake_local_post_valid(url, payload, *, headers=None, timeout=60.0):
+    """Return task-appropriate valid JSON based on the prompt content."""
+    content = " ".join(m["content"] for m in payload["messages"]).lower()
+    if "ats keyword" in content:
+        body = {
+            "target_company": "Example Aero Labs",
+            "target_job_title": "SciML Engineer",
+            "keywords": [
+                {
+                    "keyword": "Python",
+                    "category": "required",
+                    "kind": "tool",
+                    "evidence": "Python",
+                    "priority": "high",
+                }
+            ],
+            "groups": {
+                "required": ["Python"],
+                "preferred": [],
+                "tools": ["Python"],
+                "domains": [],
+                "responsibilities": [],
+            },
+        }
+    elif "role requirements" in content:
+        body = {
+            "requirements": [
+                {
+                    "id": "req_001",
+                    "requirement": "Build ML models",
+                    "category": "technical",
+                    "importance": "required",
+                    "source_quote": "Build ML models",
+                    "keywords": ["Python"],
+                }
+            ],
+            "responsibilities": [],
+            "screening_signals": [],
+        }
+    elif "evidence gap" in content:
+        body = {
+            "likely_evidence_targets": [
+                {
+                    "requirement_id": "req_001",
+                    "requirement": "Build ML models",
+                    "search_terms": ["Python"],
+                    "candidate_evidence_files_to_check": [],
+                    "notes": "check",
+                }
+            ],
+            "known_risks_before_tailoring": [],
+        }
+    else:  # job summary
+        body = {
+            "company": "Example Aero Labs",
+            "job_title": "SciML Engineer",
+            "location": "Remote",
+            "employment_type": None,
+            "seniority": None,
+            "role_family": None,
+            "summary": "A neutral summary of the role.",
+            "source": "input/job_description.md",
+        }
+    return _completion(json.dumps(body))
+
+
+def test_run_preflight_local_provider_validates_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_enabled_config())
+
+    assert result.provider == "local_openai_compatible"
+    assert result.fallback_used is False
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    assert manifest["provider"] == "local_openai_compatible"
+    assert manifest["model"] == "llama3.1:8b"
+    for task in manifest["tasks"]:
+        assert task["provider"] == "local_openai_compatible"
+        assert task["status"] == "succeeded"
+        assert not task.get("fallback_used")
+    # The local job_summary content (not the deterministic one) was written.
+    summary = json.loads(
+        (run_dir / "input" / "preflight" / "job_summary.json").read_text()
+    )
+    assert summary["job_title"] == "SciML Engineer"
+
+
+def test_run_preflight_invalid_local_json_repairs_then_falls_back(
+    tmp_path, monkeypatch
+):
+    calls = {"n": 0}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        calls["n"] += 1
+        return _completion("this is not json at all")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_enabled_config())
+
+    # Each of the four tasks attempted the local call once and a repair retry
+    # once (chat_json's single repair), so at least 2 calls per task.
+    assert calls["n"] >= 8
+    # The run still completes: deterministic fallback produced every artifact.
+    assert result.fallback_used is True
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    # Top-level provider stays the intended local label; fallback is recorded.
+    assert manifest["provider"] == "local_openai_compatible"
+    assert manifest["fallback_used"] is True
+    assert manifest.get("fallback_reason")
+    for task in manifest["tasks"]:
+        assert task["provider"] == preflight.DETERMINISTIC_PROVIDER
+        assert task["fallback_used"] is True
+        assert task["status"] == "succeeded"
+    # The deterministic job summary (parsed from the JD header) was written.
+    summary = json.loads(
+        (run_dir / "input" / "preflight" / "job_summary.json").read_text()
+    )
+    assert summary["company"] == "Example Aero Labs"
+
+
+def test_run_preflight_local_disabled_uses_deterministic(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("local provider must not be called when disabled")
+
+    monkeypatch.setattr(local_llm, "_post_json", boom)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_disabled_config())
+    assert result.provider == preflight.DETERMINISTIC_PROVIDER
+    assert result.fallback_used is False
+
+
+def test_run_preflight_emits_log_and_progress_callbacks(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    logs: list[str] = []
+    progress: list[str] = []
+    preflight.run_preflight(
+        run_dir,
+        config=_disabled_config(),
+        on_log=logs.append,
+        on_progress=progress.append,
+    )
+    joined_logs = "\n".join(logs)
+    assert "running preflight analysis" in joined_logs
+    assert "preflight provider: deterministic" in joined_logs
+    assert "wrote input/preflight/ats_keywords.json" in joined_logs
+    assert "wrote input/preflight/preflight_manifest.json" in joined_logs
+    assert "Running preflight job analysis" in progress
+    assert "Extracting ATS keywords" in progress
+    assert "Writing preflight analysis" in progress
+
+
+# ---- validators ------------------------------------------------------
+
+
+def test_validate_ats_keywords_rejects_bad_category():
+    bad = {
+        "keywords": [{"keyword": "Python", "category": "nonsense"}],
+        "groups": {},
+    }
+    data, reason = preflight.validate_ats_keywords(bad)
+    assert data is None
+    assert "category" in reason
+
+
+def test_validate_role_requirements_requires_ids():
+    bad = {"requirements": [{"requirement": "do things"}]}
+    data, reason = preflight.validate_role_requirements(bad)
+    assert data is None
+    assert "id" in reason
+
+
+def test_validate_manifest_requires_task_keys():
+    bad = {
+        "created_at": "now",
+        "provider": "deterministic",
+        "fallback_used": False,
+        "tasks": [{"name": "job_summary"}],
+    }
+    data, reason = preflight.validate_manifest(bad)
+    assert data is None
+
+
+def test_tailoring_prompt_reads_preflight_artifacts():
+    prompt_path = (
+        Path(__file__).resolve().parents[2]
+        / "runtime_prompts"
+        / "resume_tailoring.md"
+    )
+    text = prompt_path.read_text(encoding="utf-8")
+    for name in PREFLIGHT_FILES:
+        assert f"input/preflight/{name}" in text
+    # Advisory framing + JD-wins precedence are stated.
+    assert "advisory" in text.lower()
+    assert "job description wins" in text.lower()
+    # ATS audit starts from the preflight keyword list.
+    assert "ats_keywords.json" in text
+
+
+def test_preflight_task_policy_includes_new_low_risk_tasks():
+    # The two new preflight tasks are low-risk, configurable, default-on.
+    for task in (local_llm.TASK_ROLE_REQUIREMENTS, local_llm.TASK_EVIDENCE_GAP_PLAN):
+        assert local_llm.TASK_RISK[task] == local_llm.RISK_LOW
+        assert task in local_llm.CONFIGURABLE_TASKS
+        assert local_llm.DEFAULT_ALLOWED_TASKS[task] is True
+        cfg = local_llm.LocalLLMConfig(enabled=True)
+        assert local_llm.local_allowed_for_task(task, cfg) is True

@@ -90,6 +90,18 @@ const TASK_POLICY = [
   { task: "job_summary", risk: "low", configurable: true, default_local: true },
   { task: "ats_keywords", risk: "low", configurable: true, default_local: true },
   {
+    task: "role_requirements",
+    risk: "low",
+    configurable: true,
+    default_local: true,
+  },
+  {
+    task: "evidence_gap_plan",
+    risk: "low",
+    configurable: true,
+    default_local: true,
+  },
+  {
     task: "email_classification",
     risk: "low",
     configurable: true,
@@ -126,6 +138,8 @@ function defaultSettings(overrides = {}) {
     allowed_tasks: {
       job_summary: true,
       ats_keywords: true,
+      role_requirements: true,
+      evidence_gap_plan: true,
       email_classification: true,
       resume_suggestions: false,
       resume_tailoring: false,
@@ -215,6 +229,24 @@ describe("SettingsPage – Local LLM card", () => {
     expect(
       within(card).getAllByText(/high risk — off by default/i).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("shows the local LLM preflight task toggles", async () => {
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    // The four low-risk preflight tasks each render a checkbox, on by default.
+    for (const name of [
+      /job summary/i,
+      /ats keyword extraction/i,
+      /role requirement extraction/i,
+      /evidence gap planning/i,
+    ]) {
+      const checkbox = within(card).getByRole("checkbox", {
+        name,
+      }) as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+    }
   });
 
   it("calls the backend when Test connection is clicked", async () => {

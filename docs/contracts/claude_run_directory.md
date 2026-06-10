@@ -21,7 +21,14 @@ runs/<run_id>/
 │   ├── current_tailored_resume.docx  # optional prior draft DOCX (follow-up runs)
 │   ├── master_resume.docx        # optional source DOCX (any accepted name)
 │   ├── master_resume_extracted.md           # written by the backend when a DOCX is present
-│   └── master_resume_extraction_error.md    # written instead if extraction fails
+│   ├── master_resume_extraction_error.md    # written instead if extraction fails
+│   └── preflight/                  # provider-routed preflight analysis (task 124)
+│       ├── job_summary.json
+│       ├── ats_keywords.json
+│       ├── role_requirements.json
+│       ├── evidence_gap_plan.json
+│       ├── preflight_manifest.json
+│       └── preflight_summary.md    # optional human-readable projection
 ├── output/
 │   ├── tailored_resume.json         # structured resume content; source of truth for the renderer
 │   ├── resume_suggestions.json      # section-level reviewable suggestions (required)
@@ -292,6 +299,61 @@ failed loudly when extraction fails *and* no accepted markdown resume
 (`master_resume.md`, `resume.md`, `base_resume.md`,
 `original_resume.md`) is present in `input/`.
 
+### `preflight/` (provider-routed preflight analysis, task 124)
+
+Before the main tailoring prompt runs, the backend worker executes a
+**provider-routed preflight analysis pipeline** (`backend/app/preflight.py`)
+over `input/job_description.md` and writes structured analysis artifacts
+under `input/preflight/`. These are **advisory inputs** to the tailoring run,
+produced by a lower-risk extraction step that may use the experimental local
+LLM (task 123) or a deterministic fallback. They never replace the
+truthfulness/evidence contract; if preflight conflicts with the job
+description, the job description wins.
+
+Provider routing reuses the Task 123 policy (`app.local_llm`): the
+`job_summary`, `ats_keywords`, `role_requirements`, and `evidence_gap_plan`
+tasks run on the local provider only when the subsystem is enabled and the
+task is toggled on. Otherwise — or on any local connection/JSON failure — a
+deterministic extractor produces the same artifacts. The high-risk tailoring,
+claim-audit, and recruiter-review steps are **not** part of preflight and stay
+on Claude Code in the main run. Preflight is best-effort: a preflight failure
+never fails the tailoring run.
+
+Artifacts:
+
+- `job_summary.json` — `company`, `job_title`, `location`,
+  `employment_type`, `seniority`, `role_family`, `summary`, `source`.
+  Extracted only from the job description; unknown fields are `null`, never
+  invented.
+- `ats_keywords.json` — `target_company`, `target_job_title`, a `keywords`
+  array (each `{keyword, category, kind, evidence, priority}` where
+  `category ∈ {required, preferred, industry, responsibility}` and
+  `priority ∈ {high, medium, low}`), and a `groups` object
+  (`required`/`preferred`/`tools`/`domains`/`responsibilities`). It records
+  what the JD asks for; it does **not** decide whether the candidate has a
+  keyword — that belongs to the tailoring ATS audit.
+- `role_requirements.json` — `requirements` (each with an `id`,
+  `requirement`, `importance`, `source_quote`, `keywords`),
+  `responsibilities`, and `screening_signals`, grounded in the JD.
+- `evidence_gap_plan.json` — `likely_evidence_targets` (each naming
+  `candidate_evidence_files_to_check` drawn from staged evidence index
+  filenames) and `known_risks_before_tailoring`. This is a **plan of where to
+  look**, written before any evidence is read; it must never claim that
+  evidence exists.
+- `preflight_manifest.json` — `created_at`, top-level `provider`/`model`,
+  `fallback_used` (and `fallback_reason` when a local task degraded), and a
+  `tasks` array recording per-task `name`/`provider`/`model`/`status`/`output`.
+  A `provider` of `deterministic` means the heuristic extractor produced the
+  artifact.
+- `preflight_summary.md` — optional human-readable projection of the
+  manifest.
+
+The runtime tailoring prompt (`runtime_prompts/resume_tailoring.md`) reads
+these when present: it uses `ats_keywords.json` as the starting keyword list
+for the ATS audit, treats every artifact as advisory, ignores any implied
+evidence it cannot actually find, and proceeds normally when the artifacts
+are absent.
+
 ## Claude Code Read Boundary
 
 Claude Code may read:
@@ -313,7 +375,15 @@ input/current_tailored_resume.docx
 input/master_resume.docx
 input/master_resume_extracted.md
 input/master_resume_extraction_error.md
+input/preflight/job_summary.json
+input/preflight/ats_keywords.json
+input/preflight/role_requirements.json
+input/preflight/evidence_gap_plan.json
+input/preflight/preflight_manifest.json
 ```
+
+The `input/preflight/*` files are advisory analysis artifacts (see
+*`preflight/`* above); they may be absent, and their absence is not an error.
 
 `input/revision_feedback.md` is only present on follow-up tailoring runs (see ADR-008); when absent, the worker must treat the run as a first-draft tailoring run. The `input/current_tailored_resume.{md,json,docx}` files are staged alongside it on revision runs: the markdown and DOCX are the prior draft to revise, and the optional structured JSON (`current_tailored_resume.json`) carries the prior draft's section/entry ids so suggestions stay stable across revisions.
 

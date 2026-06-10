@@ -70,6 +70,12 @@ DEFAULT_TIMEOUT_SECONDS = 60
 
 TASK_JOB_SUMMARY = "job_summary"
 TASK_ATS_KEYWORDS = "ats_keywords"
+# Task 124 added two more low-risk preflight extraction tasks routed by the
+# same policy: structured role-requirement extraction and an (advisory,
+# JD-only-first-pass) evidence gap plan. Both are bounded classification work
+# that is safe to run locally, so they share the ``low`` risk tier.
+TASK_ROLE_REQUIREMENTS = "role_requirements"
+TASK_EVIDENCE_GAP_PLAN = "evidence_gap_plan"
 TASK_EMAIL_CLASSIFICATION = "email_classification"
 TASK_RESUME_SUGGESTIONS = "resume_suggestions"
 TASK_RESUME_TAILORING = "resume_tailoring"
@@ -86,6 +92,8 @@ RISK_CLAUDE_ONLY = "claude_only"
 TASK_RISK: dict[str, str] = {
     TASK_JOB_SUMMARY: RISK_LOW,
     TASK_ATS_KEYWORDS: RISK_LOW,
+    TASK_ROLE_REQUIREMENTS: RISK_LOW,
+    TASK_EVIDENCE_GAP_PLAN: RISK_LOW,
     TASK_EMAIL_CLASSIFICATION: RISK_LOW,
     TASK_RESUME_SUGGESTIONS: RISK_EXPERIMENTAL,
     TASK_RESUME_TAILORING: RISK_HIGH,
@@ -99,6 +107,8 @@ TASK_RISK: dict[str, str] = {
 CONFIGURABLE_TASKS: tuple[str, ...] = (
     TASK_JOB_SUMMARY,
     TASK_ATS_KEYWORDS,
+    TASK_ROLE_REQUIREMENTS,
+    TASK_EVIDENCE_GAP_PLAN,
     TASK_EMAIL_CLASSIFICATION,
     TASK_RESUME_SUGGESTIONS,
     TASK_RESUME_TAILORING,
@@ -111,6 +121,8 @@ CONFIGURABLE_TASKS: tuple[str, ...] = (
 DEFAULT_ALLOWED_TASKS: dict[str, bool] = {
     TASK_JOB_SUMMARY: True,
     TASK_ATS_KEYWORDS: True,
+    TASK_ROLE_REQUIREMENTS: True,
+    TASK_EVIDENCE_GAP_PLAN: True,
     TASK_EMAIL_CLASSIFICATION: True,
     TASK_RESUME_SUGGESTIONS: False,
     TASK_RESUME_TAILORING: False,

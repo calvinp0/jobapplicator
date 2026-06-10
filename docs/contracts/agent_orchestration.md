@@ -1323,11 +1323,20 @@ the agent that implements queued builder tasks. They are unrelated to the
   output path and is the only flow that produces the run-directory outputs.
 - **Experimental local LLM (task 123).** An opt-in, off-by-default
   subsystem (`backend/app/local_llm.py`) for *low-risk* tasks only —
-  job-description summary, ATS keyword extraction, email classification,
-  and (experimentally) resume suggestions. It speaks an OpenAI-compatible
-  HTTP endpoint (Ollama/vLLM/LM Studio), never drives the `auto` tailoring
-  flow, and never takes over claim auditing or recruiter review. See
-  `docs/llm_providers.md`.
+  job summary, ATS keyword extraction, role-requirement extraction,
+  evidence gap planning, email classification, and (experimentally) resume
+  suggestions. It speaks an OpenAI-compatible HTTP endpoint
+  (Ollama/vLLM/LM Studio), never drives the `auto` tailoring flow, and never
+  takes over claim auditing or recruiter review.
+- **Provider-routed preflight analysis (task 124).** The low-risk extraction
+  tasks above run as a preflight pipeline (`backend/app/preflight.py`) that
+  executes *before* the main Claude Code tailoring prompt and writes advisory
+  structured artifacts under `input/preflight/`. It routes each task to the
+  local LLM when enabled and falls back to a deterministic extractor
+  otherwise, so it never requires a local LLM and never fails the run. Claude
+  Code remains the default for the final resume tailoring, claim audit, and
+  recruiter review. See `docs/llm_providers.md` and
+  `docs/contracts/claude_run_directory.md`.
 
 Neither runtime provider changes the agent-task lifecycle, the worktree
 isolation rules, or the permission strategy documented above.
