@@ -6,10 +6,15 @@ import {
   applyResumeSuggestions,
   getResumeSuggestions,
   getResumeVersion,
+  getRun,
   rejectSuggestion,
   reviseSuggestion,
 } from "../api";
-import type { ResumeSuggestion, ResumeSuggestions } from "../api/types";
+import type {
+  ProviderSummary,
+  ResumeSuggestion,
+  ResumeSuggestions,
+} from "../api/types";
 import { buildPreviewDocument } from "../lib/reviewModel";
 import { ResumeDownloadActions } from "../components/ResumeDownloadActions";
 import { ResumeReviewWorkspace } from "../components/review/ResumeReviewWorkspace";
@@ -35,6 +40,9 @@ export function ResumeReviewPage() {
   // The run that produced this draft — needed for the DOCX download/export
   // actions, which key off the run's ``output/`` artifacts.
   const [runId, setRunId] = useState<string | null>(null);
+  // Provider summary (task 129) for the compact provenance strip.
+  const [providerSummary, setProviderSummary] =
+    useState<ProviderSummary | null>(null);
 
   useEffect(() => {
     if (!versionId) return;
@@ -59,17 +67,26 @@ export function ResumeReviewPage() {
     };
   }, [versionId]);
 
-  // Resolve the originating run so the workspace can offer a DOCX download.
-  // Best-effort: a draft without a backing run simply hides the action.
+  // Resolve the originating run so the workspace can offer a DOCX download
+  // and show the provider provenance strip (task 129). Best-effort: a draft
+  // without a backing run simply hides both.
   useEffect(() => {
     if (!versionId) return;
     let cancelled = false;
     getResumeVersion(versionId)
       .then((version) => {
-        if (!cancelled) setRunId(version.claude_run_id);
+        if (cancelled) return null;
+        setRunId(version.claude_run_id);
+        return version.claude_run_id ? getRun(version.claude_run_id) : null;
+      })
+      .then((run) => {
+        if (!cancelled && run) setProviderSummary(run.provider_summary ?? null);
       })
       .catch(() => {
-        if (!cancelled) setRunId(null);
+        if (!cancelled) {
+          setRunId(null);
+          setProviderSummary(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -233,6 +250,7 @@ export function ResumeReviewPage() {
       downloadActions={
         runId ? <ResumeDownloadActions runId={runId} showExport /> : null
       }
+      providerSummary={providerSummary}
     />
   );
 }

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -153,6 +154,13 @@ class PreflightTaskResult:
     fallback_used: bool = False
     fallback_reason: Optional[str] = None
     context: Optional[dict[str, Any]] = None
+    # Wall-clock timing for the provider trace (task 129). Recorded on the
+    # dataclass only — intentionally kept out of ``manifest_entry`` so the
+    # preflight manifest shape stays stable; the worker reads these to build
+    # ``provider_trace.json``.
+    duration_ms: Optional[int] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
 
     def manifest_entry(self) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -295,6 +303,7 @@ def run_preflight(
 
     # job_summary -------------------------------------------------------
     progress("Summarizing job description")
+    _t0, _started = time.monotonic(), datetime.now(timezone.utc).isoformat()
     data, result = _run_one(
         _SPEC_JOB_SUMMARY,
         cfg,
@@ -305,10 +314,12 @@ def run_preflight(
         validator=validate_job_summary,
         log=log,
     )
+    _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_JOB_SUMMARY.artifact, data, results, result, artifact_paths, log)
 
     # ats_keyword_extraction -------------------------------------------
     progress("Extracting ATS keywords")
+    _t0, _started = time.monotonic(), datetime.now(timezone.utc).isoformat()
     data, result = _run_one(
         _SPEC_ATS_KEYWORDS,
         cfg,
@@ -319,10 +330,12 @@ def run_preflight(
         validator=validate_ats_keywords,
         log=log,
     )
+    _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_ATS_KEYWORDS.artifact, data, results, result, artifact_paths, log)
 
     # role_requirements ------------------------------------------------
     progress("Extracting role requirements")
+    _t0, _started = time.monotonic(), datetime.now(timezone.utc).isoformat()
     data, result = _run_one(
         _SPEC_ROLE_REQUIREMENTS,
         cfg,
@@ -333,11 +346,13 @@ def run_preflight(
         validator=validate_role_requirements,
         log=log,
     )
+    _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_ROLE_REQUIREMENTS.artifact, data, results, result, artifact_paths, log)
     requirements_for_plan = data
 
     # evidence_gap_plan ------------------------------------------------
     progress("Planning evidence gaps")
+    _t0, _started = time.monotonic(), datetime.now(timezone.utc).isoformat()
     data, result = _run_one(
         _SPEC_EVIDENCE_GAP_PLAN,
         cfg,
@@ -350,6 +365,7 @@ def run_preflight(
         validator=validate_evidence_gap_plan,
         log=log,
     )
+    _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_EVIDENCE_GAP_PLAN.artifact, data, results, result, artifact_paths, log)
 
     progress("Writing preflight analysis")
@@ -400,6 +416,15 @@ def run_preflight(
 
 
 # ---- Per-task routing ------------------------------------------------
+
+
+def _stamp_timing(
+    result: PreflightTaskResult, monotonic_start: float, started_at: str
+) -> None:
+    """Record wall-clock timing on a task result for the provider trace."""
+    result.duration_ms = int((time.monotonic() - monotonic_start) * 1000)
+    result.started_at = started_at
+    result.completed_at = datetime.now(timezone.utc).isoformat()
 
 
 def _run_one(

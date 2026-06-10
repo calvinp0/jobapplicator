@@ -637,6 +637,40 @@ def set_run_status(
     _write_metadata(run_dir, metadata)
 
 
+# Key under which the compact provider summary is mirrored into metadata.json
+# (task 129). The full per-step trace lives in ``provider_trace.json``; this
+# is the small one-line summary the run list/detail API echoes.
+PROVIDER_SUMMARY_KEY = "provider_summary"
+
+
+def set_provider_summary(
+    run_dir: Path,
+    summary: dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+) -> None:
+    """Mirror the compact provider summary into metadata.json (task 129)."""
+    metadata = _read_metadata(run_dir)
+    metadata[PROVIDER_SUMMARY_KEY] = summary
+    _stamp_updated_at(metadata, now)
+    _write_metadata(run_dir, metadata)
+
+
+def get_provider_summary(run_dir: Path) -> Optional[dict[str, Any]]:
+    """Return the compact provider summary from metadata.json, if present.
+
+    Best-effort: a run that predates the trace (or whose metadata is
+    missing/unreadable) reports ``None`` so the API can omit the field
+    rather than error.
+    """
+    try:
+        metadata = _read_metadata(run_dir)
+    except (RunDirectoryError, OSError, json.JSONDecodeError):
+        return None
+    summary = metadata.get(PROVIDER_SUMMARY_KEY)
+    return summary if isinstance(summary, dict) else None
+
+
 def _render_revision_feedback(feedback: RevisionFeedbackInput) -> str:
     """Render the contents of ``input/revision_feedback.md`` per ADR-008.
 
