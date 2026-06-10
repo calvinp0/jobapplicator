@@ -2580,33 +2580,24 @@ tasks:
       - "frontend/src/test/settingsPage.test.tsx"
       - "agent_tasks/128-clarify-context-budget-settings-ui.md"
       - "agent_tasks/queue.yaml"
-
   - id: "129-add-provider-trace-to-application-runs"
-    title: Add compact provider trace to application runs
-    status: ready
+    title: "Add compact provider trace to application runs"
+    file: "agent_tasks/129-add-provider-trace-to-application-runs.md"
+    branch: "agent/129-add-provider-trace-to-application-runs"
+    worktree: "agent-129-add-provider-trace-to-application-runs"
+    status: "ready"
     depends_on:
-      - "126"
-      - "127"
-      - "128"
-    priority: medium
-    task_file: agent_tasks/129-add-provider-trace-to-application-runs.md
-    allowed_paths:
-      - backend/**
-      - frontend/**
-      - agent_tasks/129-add-provider-trace-to-application-runs.md
-      - agent_tasks/queue.yaml
-      - docs/**
-    acceptance:
-      - Provider trace events are persisted for application/tailoring runs.
-      - Run APIs expose a compact provider summary and expandable trace details.
-      - Activity Center or run details shows a collapsed-by-default provider trace.
-      - Resume review workspace shows a compact provenance strip.
-      - Local LLM context/provider details are visible behind a details disclosure.
-      - Fallback, compression, warning, and abort states are represented.
-      - API keys and sensitive provider credentials are not exposed.
-      - Existing runs still work when local LLM is disabled.
+      - "126-add-ollama-num-ctx-setting"
+      - "127-detect-and-log-local-server-context"
+      - "128-clarify-context-budget-settings-ui"
     verification:
-      - python -m pytest backend/tests/test_local_llm.py
-      - python -m pytest backend/tests
-      - cd frontend && npm run build
-      - cd frontend && npm test -- --run
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest backend/tests"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/**"
+      - "frontend/**"
+      - "agent_tasks/129-add-provider-trace-to-application-runs.md"
+      - "agent_tasks/queue.yaml"
+      - "docs/**"
