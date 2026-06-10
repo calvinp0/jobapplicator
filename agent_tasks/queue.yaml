@@ -2496,3 +2496,23 @@ tasks:
       - "README_INSTALL.md"
       - "agent_tasks/124-add-provider-routed-preflight-analysis-pipeline.md"
       - "agent_tasks/queue.yaml"
+  - id: "125-add-local-llm-context-budget-safeguards"
+    title: "Add local LLM context budget safeguards"
+    file: "agent_tasks/125-add-local-llm-context-budget-safeguards.md"
+    branch: "agent/125-add-local-llm-context-budget-safeguards"
+    worktree: "agent-125-add-local-llm-context-budget-safeguards"
+    status: "ready"
+    depends_on:
+      - "124-add-provider-routed-preflight-analysis-pipeline"
+    verification:
+      - "python -m pytest"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/app/**"
+      - "backend/tests/**"
+      - "frontend/**"
+      - "docs/**"
+      - "README_INSTALL.md"
+      - "agent_tasks/125-add-local-llm-context-budget-safeguards.md"
+      - "agent_tasks/queue.yaml"
