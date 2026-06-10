@@ -553,3 +553,111 @@ def test_preflight_task_policy_includes_new_low_risk_tasks():
         assert local_llm.DEFAULT_ALLOWED_TASKS[task] is True
         cfg = local_llm.LocalLLMConfig(enabled=True)
         assert local_llm.local_allowed_for_task(task, cfg) is True
+
+
+# ---- effective/assumed context logging (task 127) --------------------
+
+
+def _ollama_show(context_length: int, arch: str = "llama") -> dict:
+    return {
+        "model_info": {
+            "general.architecture": arch,
+            f"{arch}.context_length": context_length,
+        }
+    }
+
+
+def test_run_preflight_records_effective_assumed_context_per_task(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir = _make_run_dir(tmp_path)
+
+    # Default (openai_compatible) enabled config: each local task records the
+    # assumed context it budgeted against.
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest["tasks"]:
+        assert task["context"]["effective_assumed_context_tokens"] == 8192
+        # No num_ctx configured -> the requested_num_ctx key is absent.
+        assert "requested_num_ctx" not in task["context"]
+
+    # Top-level context summary: assumed recorded, but an OpenAI-compatible
+    # server cannot be verified.
+    summary = manifest["context"]
+    assert summary["assumed_context_tokens"] == 8192
+    assert summary["context_verified"] is False
+    assert summary["server_reported_context_tokens"] is None
+    assert summary["note"]
+
+
+def test_run_preflight_records_verified_server_context_for_ollama(
+    tmp_path, monkeypatch
+):
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        if url.endswith("/api/show"):
+            return _ollama_show(16384)
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        num_ctx=16384,
+    )
+    preflight.run_preflight(run_dir, config=config)
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    summary = manifest["context"]
+    assert summary["assumed_context_tokens"] == 8192
+    assert summary["server_reported_context_tokens"] == 16384
+    assert summary["context_verified"] is True
+    assert summary["requested_num_ctx"] == 16384
+    # Per-task records mirror the requested server context.
+    for task in manifest["tasks"]:
+        assert task["context"]["requested_num_ctx"] == 16384
+
+
+def test_run_preflight_context_detection_failure_does_not_fail(tmp_path, monkeypatch):
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        if url.endswith("/api/show"):
+            raise ConnectionError("server down")
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+    )
+    # Detection fails, but preflight still completes and writes the manifest.
+    result = preflight.run_preflight(run_dir, config=config)
+    assert result.fallback_used is False
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    summary = manifest["context"]
+    assert summary["context_verified"] is False
+    assert summary["server_reported_context_tokens"] is None
+    assert summary["assumed_context_tokens"] == 8192
+
+
+def test_run_preflight_deterministic_run_has_no_context_summary(tmp_path):
+    # When the local provider is not the intended primary, there is no
+    # server context to assume/verify, so the manifest omits the summary.
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_disabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    assert "context" not in manifest

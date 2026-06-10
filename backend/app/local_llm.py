@@ -625,6 +625,150 @@ def _extract_content(body: dict[str, Any]) -> Optional[str]:
     return None
 
 
+# ---- Server-context detection (task 127) -----------------------------
+
+
+@dataclass(frozen=True)
+class ServerContextResult:
+    """Outcome of best-effort model-server context detection.
+
+    ``server_reported_context_tokens`` is the running model's context length
+    as reported by the server (or ``None`` when it could not be determined).
+    ``context_verified`` is true only when the server actually reported a
+    context length. ``note`` is a short human-readable explanation suitable
+    for surfacing in the connection-test result or the preflight manifest.
+    """
+
+    server_reported_context_tokens: Optional[int]
+    context_verified: bool
+    note: str
+
+
+def _ollama_show_url(base_url: str) -> str:
+    """The native ``/api/show`` endpoint derived from ``base_url``.
+
+    Mirrors :meth:`LocalLLMClient._ollama_native_chat_url`: Ollama's native
+    metadata API lives at the server root, so a configured
+    ``http://host:11434/v1`` resolves to ``http://host:11434/api/show``.
+    """
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    return f"{base}/api/show"
+
+
+def _extract_ollama_context_length(body: dict[str, Any]) -> Optional[int]:
+    """Find the running model's context length in an ``/api/show`` response.
+
+    Ollama reports model metadata under ``model_info`` with an
+    architecture-prefixed key, e.g. ``llama.context_length`` or
+    ``qwen2.context_length``. We accept any key ending in ``context_length``
+    (and a bare top-level ``context_length`` some servers surface) and coerce
+    the first positive integer value.
+    """
+    candidates: list[Any] = []
+    model_info = body.get("model_info")
+    if isinstance(model_info, dict):
+        for key, value in model_info.items():
+            if isinstance(key, str) and key.endswith("context_length"):
+                candidates.append(value)
+    if "context_length" in body:
+        candidates.append(body["context_length"])
+    for value in candidates:
+        try:
+            ctx = int(value)
+        except (TypeError, ValueError):
+            continue
+        if ctx > 0:
+            return ctx
+    return None
+
+
+def detect_server_context(
+    config: LocalLLMConfig, *, timeout: Optional[float] = None
+) -> ServerContextResult:
+    """Best-effort detection of the model server's running context length.
+
+    Only the Ollama-native provider exposes its context window (via the
+    native ``/api/show`` endpoint). For the OpenAI-compatible provider there
+    is no portable way to read the server's context window, so detection
+    reports ``context_verified = False`` with an explanatory note —
+    JobApplicator cannot verify that the server's real context matches the
+    configured budget. Any network or parse failure degrades the same way.
+
+    This function never raises: callers can record the result without a
+    try/except and the test/preflight paths stay robust against an
+    unreachable or unusual server.
+    """
+    if config.provider != PROVIDER_OLLAMA:
+        return ServerContextResult(
+            server_reported_context_tokens=None,
+            context_verified=False,
+            note=(
+                "An OpenAI-compatible endpoint does not expose its context "
+                "window, so JobApplicator cannot verify that the server's "
+                "real context matches the configured budget."
+            ),
+        )
+
+    url = _ollama_show_url(config.base_url)
+    headers: dict[str, str] = {}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    effective_timeout = (
+        timeout if timeout is not None else config.timeout_seconds
+    )
+
+    try:
+        body = _post_json(
+            url,
+            {"model": config.model},
+            headers=headers,
+            timeout=effective_timeout,
+        )
+    except Exception as exc:  # noqa: BLE001 - detection must never raise
+        return ServerContextResult(
+            server_reported_context_tokens=None,
+            context_verified=False,
+            note=(
+                "Could not read the Ollama server's context length from "
+                f"{url}: {exc}"
+            ),
+        )
+
+    if not isinstance(body, dict):
+        return ServerContextResult(
+            server_reported_context_tokens=None,
+            context_verified=False,
+            note=f"Ollama {url} returned a response that was not a JSON object.",
+        )
+
+    ctx = _extract_ollama_context_length(body)
+    if ctx is None:
+        return ServerContextResult(
+            server_reported_context_tokens=None,
+            context_verified=False,
+            note=(
+                "Ollama did not report a context length for model "
+                f"{config.model!r}; cannot verify the configured budget."
+            ),
+        )
+
+    num_ctx_note = (
+        f" Requested num_ctx is {config.num_ctx}."
+        if config.num_ctx is not None
+        else ""
+    )
+    return ServerContextResult(
+        server_reported_context_tokens=ctx,
+        context_verified=True,
+        note=(
+            f"Ollama reports a context length of {ctx} tokens for model "
+            f"{config.model}.{num_ctx_note}"
+        ),
+    )
+
+
 class LocalLLMClient:
     """A tiny OpenAI-compatible chat-completions client.
 
