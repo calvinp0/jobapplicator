@@ -689,6 +689,59 @@ export interface LlmProviderSetting {
   available: LlmProvider[];
 }
 
+// Experimental local LLM provider (task 123). Separate from the CLI
+// tailoring provider above: this drives only opt-in, low-risk tasks and is
+// never the default for high-risk resume tailoring. The plaintext API key
+// is never sent — only a masked preview and a boolean flag.
+export interface LocalLlmTaskPolicy {
+  task: string;
+  risk: "low" | "experimental" | "high" | "claude_only";
+  configurable: boolean;
+  default_local: boolean;
+}
+
+export interface LocalLlmSettings {
+  enabled: boolean;
+  provider: string;
+  base_url: string;
+  model: string;
+  timeout_seconds: number;
+  allowed_tasks: Record<string, boolean>;
+  has_api_key: boolean;
+  api_key_preview: string;
+  updated_at: string | null;
+  task_policy: LocalLlmTaskPolicy[];
+}
+
+export interface LocalLlmSettingsUpdate {
+  enabled: boolean;
+  provider: string;
+  base_url: string;
+  model: string;
+  timeout_seconds: number;
+  allowed_tasks: Record<string, boolean>;
+  api_key?: string | null;
+  preserve_existing_key?: boolean;
+}
+
+export interface LocalLlmTestResult {
+  ok: boolean;
+  message: string;
+  model: string;
+  provider: string;
+  latency_ms: number | null;
+  error: string | null;
+}
+
+export interface LocalLlmTestRequest {
+  base_url?: string | null;
+  model?: string | null;
+  timeout_seconds?: number | null;
+  api_key?: string | null;
+  provider?: string | null;
+  preserve_existing_key?: boolean;
+}
+
 // Sanitized snapshot of the persisted Gmail OAuth config (task 088).
 // The plaintext client secret is never sent — only a masked preview and
 // a boolean flag.

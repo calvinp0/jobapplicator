@@ -1444,6 +1444,41 @@ button[type="submit"]:disabled,
   font-weight: 500;
 }
 
+/* Inline checkbox row (e.g. the local LLM task toggles, task 123). */
+.field-inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  max-width: 640px;
+}
+
+.field-inline span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--content-fg);
+}
+
+fieldset.field {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+fieldset.field legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--content-fg);
+  padding: 0 var(--space-1);
+}
+
+.local-llm-risk {
+  color: var(--muted-fg);
+  font-weight: 500;
+  font-style: italic;
+}
+
 /* ----- Job detail ----- */
 
 .job-description {

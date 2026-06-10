@@ -67,6 +67,22 @@ vi.mock("../api", () => ({
   getExportSettings: vi.fn(() =>
     Promise.resolve({ path: "candidate_context/exports" }),
   ),
+  getLocalLlmSettings: vi.fn(() =>
+    Promise.resolve({
+      enabled: false,
+      provider: "openai_compatible",
+      base_url: "http://localhost:11434/v1",
+      model: "llama3.1:8b",
+      timeout_seconds: 60,
+      allowed_tasks: {},
+      has_api_key: false,
+      api_key_preview: "",
+      updated_at: null,
+      task_policy: [],
+    }),
+  ),
+  setLocalLlmSettings: vi.fn(),
+  testLocalLlmConnection: vi.fn(),
   ApiError: ApiErrorMock,
 }));
 
