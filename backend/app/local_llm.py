@@ -164,6 +164,13 @@ class LocalLLMConfig:
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS
     max_input_tokens: Optional[int] = DEFAULT_MAX_INPUT_TOKENS
+    # Optional running context length to request from an Ollama server
+    # (``options.num_ctx``). ``None`` means "do not request a specific server
+    # context; leave the server at its own default". This is independent of
+    # ``context_window_tokens``: it configures the *model server*, not
+    # JobApplicator's prompt budget, and only applies to the Ollama-native
+    # provider (task 126).
+    num_ctx: Optional[int] = None
     allow_compression: bool = DEFAULT_ALLOW_COMPRESSION
     allow_fallback: bool = DEFAULT_ALLOW_FALLBACK
     abort_on_over_budget: bool = DEFAULT_ABORT_ON_OVER_BUDGET
@@ -228,6 +235,13 @@ def get_config() -> LocalLLMConfig:
     if raw is None:
         return default_config()
     api_key = raw.get("api_key") or None
+    # ``num_ctx`` is optional: missing, null, or a non-integer value all mean
+    # "leave the server at its own default" (task 126).
+    raw_num_ctx = raw.get("num_ctx")
+    try:
+        num_ctx = int(raw_num_ctx) if raw_num_ctx is not None else None
+    except (TypeError, ValueError):
+        num_ctx = None
     return LocalLLMConfig(
         enabled=bool(raw.get("enabled", False)),
         provider=raw.get("provider") or PROVIDER_OPENAI_COMPATIBLE,
@@ -246,6 +260,7 @@ def get_config() -> LocalLLMConfig:
             if raw.get("max_input_tokens") is not None
             else None
         ),
+        num_ctx=num_ctx,
         allow_compression=bool(
             raw.get("allow_compression", DEFAULT_ALLOW_COMPRESSION)
         ),
@@ -269,6 +284,7 @@ def save_config(
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
     max_input_tokens: Optional[int] = DEFAULT_MAX_INPUT_TOKENS,
+    num_ctx: Optional[int] = None,
     allow_compression: bool = DEFAULT_ALLOW_COMPRESSION,
     allow_fallback: bool = DEFAULT_ALLOW_FALLBACK,
     abort_on_over_budget: bool = DEFAULT_ABORT_ON_OVER_BUDGET,
@@ -318,6 +334,19 @@ def save_config(
     except ValueError as exc:
         raise LocalLLMValidationError(str(exc)) from exc
 
+    # ``num_ctx`` is validated independently of the context budget: it
+    # configures the Ollama server's running context, not JobApplicator's
+    # prompt budget. When present it must be a positive integer (task 126).
+    if num_ctx is not None:
+        try:
+            num_ctx = int(num_ctx)
+        except (TypeError, ValueError) as exc:
+            raise LocalLLMValidationError(
+                "num_ctx must be a positive integer"
+            ) from exc
+        if num_ctx <= 0:
+            raise LocalLLMValidationError("num_ctx must be a positive integer")
+
     # Resolve the API key: an empty incoming key with preserve flag keeps
     # whatever was previously stored.
     incoming_key = (api_key or "").strip() or None
@@ -336,6 +365,7 @@ def save_config(
         "context_window_tokens": budget.context_window_tokens,
         "reserved_output_tokens": budget.reserved_output_tokens,
         "max_input_tokens": budget.max_input_tokens,
+        "num_ctx": num_ctx,
         "allow_compression": bool(allow_compression),
         "allow_fallback": bool(allow_fallback),
         "abort_on_over_budget": bool(abort_on_over_budget),
@@ -362,6 +392,7 @@ def save_config(
         context_window_tokens=budget.context_window_tokens,
         reserved_output_tokens=budget.reserved_output_tokens,
         max_input_tokens=budget.max_input_tokens,
+        num_ctx=num_ctx,
         allow_compression=bool(allow_compression),
         allow_fallback=bool(allow_fallback),
         abort_on_over_budget=bool(abort_on_over_budget),
@@ -418,6 +449,7 @@ def get_settings_view() -> dict[str, Any]:
         "context_window_tokens": budget.context_window_tokens,
         "reserved_output_tokens": budget.reserved_output_tokens,
         "max_input_tokens": budget.max_input_tokens,
+        "num_ctx": config.num_ctx,
         "allow_compression": config.allow_compression,
         "allow_fallback": config.allow_fallback,
         "abort_on_over_budget": config.abort_on_over_budget,
@@ -576,14 +608,21 @@ def _post_json(
 
 
 def _extract_content(body: dict[str, Any]) -> Optional[str]:
+    # OpenAI-compatible shape: choices[0].message.content.
     choices = body.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    if not isinstance(message, dict):
-        return None
-    content = message.get("content")
-    return content if isinstance(content, str) else None
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+    # Ollama native /api/chat shape: top-level message.content (task 126).
+    message = body.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+    return None
 
 
 class LocalLLMClient:
@@ -604,6 +643,19 @@ class LocalLLMClient:
 
     def _chat_url(self) -> str:
         return f"{self.config.base_url.rstrip('/')}/chat/completions"
+
+    def _ollama_native_chat_url(self) -> str:
+        """The native ``/api/chat`` endpoint derived from ``base_url``.
+
+        Ollama's OpenAI-compatible surface lives under ``/v1``; its native
+        chat API is ``/api/chat`` at the server root. Strip a trailing
+        ``/v1`` so a configured ``http://host:11434/v1`` resolves to
+        ``http://host:11434/api/chat``.
+        """
+        base = self.config.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return f"{base}/api/chat"
 
     def chat(
         self,
@@ -632,13 +684,39 @@ class LocalLLMClient:
                 context=budget_check.as_dict(),
             )
 
-        url = self._chat_url()
-        payload: dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
-        }
-        if response_format is not None:
-            payload["response_format"] = response_format
+        # Ollama only honours a custom server context length via
+        # ``options.num_ctx`` on its *native* ``/api/chat`` surface; the
+        # OpenAI-compatible ``/v1/chat/completions`` surface silently ignores
+        # an options block. So when the Ollama-native provider has a num_ctx
+        # configured we route this request to ``/api/chat`` and send the
+        # options block, which makes the server actually run at that context
+        # length. The ``openai_compatible`` provider never sends num_ctx —
+        # there is no per-request way to set it there (task 126).
+        use_ollama_num_ctx = (
+            self.config.provider == PROVIDER_OLLAMA
+            and self.config.num_ctx is not None
+        )
+        if use_ollama_num_ctx:
+            url = self._ollama_native_chat_url()
+            payload: dict[str, Any] = {
+                "model": self.config.model,
+                "messages": messages,
+                "stream": False,
+                "options": {"num_ctx": self.config.num_ctx},
+            }
+            if response_format is not None:
+                # Native /api/chat uses a top-level ``format`` field rather
+                # than OpenAI's ``response_format``; ``"json"`` is the
+                # supported structured-output value.
+                payload["format"] = "json"
+        else:
+            url = self._chat_url()
+            payload = {
+                "model": self.config.model,
+                "messages": messages,
+            }
+            if response_format is not None:
+                payload["response_format"] = response_format
 
         headers: dict[str, str] = {}
         if self.config.api_key:

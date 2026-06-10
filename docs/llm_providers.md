@@ -70,6 +70,15 @@ The Settings page exposes an **LLM Providers** section (separate from the
 - **Max input tokens** — usable input budget. Defaults to the configured
   context window minus reserved output tokens, capped at `6500` in the
   default settings.
+- **Ollama context length (`num_ctx`, optional)** — sets the Ollama model
+  server's running context length. When set and the **provider is Ollama**,
+  the backend sends `options.num_ctx` on Ollama's native `/api/chat` request
+  so the server actually runs at that context length (its OpenAI-compatible
+  `/v1` surface ignores the option, so `num_ctx` is **Ollama-native only** and
+  is never sent for the OpenAI-compatible provider). This is **distinct** from
+  **Context window tokens** above: `num_ctx` configures the model server,
+  while the context-budget fields drive JobApplicator's own prompt budgeting.
+  Leave it unset to use the server's own default.
 - **Over-budget handling** — deterministic compression, deterministic
   fallback, and abort-on-over-budget controls. Local prompts are never
   silently truncated.
