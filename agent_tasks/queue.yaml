@@ -2443,7 +2443,7 @@ tasks:
     file: "agent_tasks/122-add-resume-export-downloads-and-filenames.md"
     branch: "agent/122-add-resume-export-downloads-and-filenames"
     worktree: "agent-122-add-resume-export-downloads-and-filenames"
-    status: "ready"
+    status: "done"
     depends_on: []
     verification:
       - "python -m pytest"
