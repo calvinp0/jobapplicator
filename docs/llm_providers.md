@@ -57,10 +57,18 @@ The Settings page exposes an **LLM Providers** section (separate from the
 **Claude / LLM** CLI-provider selector). Fields:
 
 - **Enable local LLM (experimental)** — master on/off switch (default off).
-- **Provider** — `OpenAI-compatible` or `Ollama` (both speak the same
-  chat-completions shape in this iteration).
-- **Local LLM endpoint** — e.g. `http://localhost:11434/v1` for Ollama's
-  OpenAI-compatible surface, or any OpenAI-compatible base URL.
+- **Provider** — `OpenAI-compatible` or `Ollama`. The two speak **different
+  endpoints**: the OpenAI-compatible provider calls
+  `POST {base_url}/chat/completions`, while the Ollama provider calls Ollama's
+  native `POST {base_url}/api/chat` (task 129).
+- **Local LLM endpoint** — depends on the provider:
+  - **Ollama provider** — the server base URL, e.g. `http://localhost:11434`
+    (the backend calls the native `/api/chat`; a trailing `/v1` is tolerated
+    and stripped).
+  - **OpenAI-compatible provider** — a base URL the backend appends
+    `/chat/completions` to, e.g. `http://localhost:11434/v1`. For Ollama's
+    OpenAI-compatible surface the base URL **must** include `/v1`, otherwise
+    the request 404s.
 - **Model name** — e.g. `llama3.1:8b`, `qwen2.5-coder:14b`, `mistral-small`.
 - **Timeout (seconds)** — default `60`.
 - **Context window tokens** — configured local model context size, default
@@ -71,11 +79,13 @@ The Settings page exposes an **LLM Providers** section (separate from the
   context window minus reserved output tokens, capped at `6500` in the
   default settings.
 - **Ollama context length (`num_ctx`, optional)** — sets the Ollama model
-  server's running context length. When set and the **provider is Ollama**,
-  the backend sends `options.num_ctx` on Ollama's native `/api/chat` request
-  so the server actually runs at that context length (its OpenAI-compatible
-  `/v1` surface ignores the option, so `num_ctx` is **Ollama-native only** and
-  is never sent for the OpenAI-compatible provider). This is **distinct** from
+  server's running context length. The Ollama provider always uses the native
+  `/api/chat` endpoint; when `num_ctx` is set the backend adds an
+  `options.num_ctx` block to that request so the server actually runs at that
+  context length. It is an optional add-on, not what selects the endpoint. The
+  OpenAI-compatible `/v1` surface ignores the option, so `num_ctx` is
+  **Ollama-native only** and is never sent for the OpenAI-compatible provider.
+  This is **distinct** from
   **Context window tokens** above: `num_ctx` configures the model server,
   while the context-budget fields drive JobApplicator's own prompt budgeting.
   Leave it unset to use the server's own default.
@@ -101,21 +111,33 @@ Settings persist in the existing `app_settings` key/value table under the
 
 ## Setting up Ollama / an OpenAI-compatible endpoint
 
-**Ollama** exposes an OpenAI-compatible API at `/v1`:
-
 ```bash
 # Install: https://ollama.com/download
 ollama pull llama3.1:8b
 ollama serve            # serves http://localhost:11434
 ```
 
-Set the endpoint to `http://localhost:11434/v1` and the model to a pulled
-model (e.g. `llama3.1:8b`). No API key is required for a default local
-Ollama install.
+Ollama exposes **two** chat surfaces, and the two providers target different
+ones:
+
+- **Ollama provider (native)** — set the endpoint to the server base URL
+  `http://localhost:11434` (no `/v1`). The backend calls Ollama's native
+  `POST /api/chat`. This is the recommended setup for Ollama and is the only
+  surface that honours `options.num_ctx`.
+- **OpenAI-compatible provider** — Ollama also exposes an OpenAI-compatible
+  API at `/v1`. To use it, select the `OpenAI-compatible` provider and set the
+  endpoint to `http://localhost:11434/v1`; the backend appends
+  `/chat/completions`. The `/v1` suffix is **required** — pointing the
+  OpenAI-compatible provider at a bare `http://localhost:11434` calls
+  `/chat/completions`, which does not exist on Ollama and returns `404`.
+
+Set the model to a pulled model (e.g. `llama3.1:8b`). No API key is required
+for a default local Ollama install.
 
 **Other servers** (vLLM, LM Studio, llama.cpp `server`) generally expose an
-OpenAI-compatible `/v1/chat/completions` endpoint — point the base URL at
-that surface and set a matching model name.
+OpenAI-compatible `/v1/chat/completions` endpoint — use the
+`OpenAI-compatible` provider, point the base URL at that surface, and set a
+matching model name.
 
 ## Testing the connection
 

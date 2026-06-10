@@ -54,9 +54,10 @@ API_KEY_PREVIEW_MASK = "•" * 8  # 8 bullets, matches gmail_settings
 
 # Supported local provider modes. ``openai_compatible`` covers most local
 # servers (vLLM, LM Studio, llama.cpp's server, and Ollama's ``/v1``
-# OpenAI-compatible surface). ``ollama`` is kept as a label so the UI can
-# distinguish a native-Ollama setup; both speak the same chat-completions
-# shape in this iteration.
+# OpenAI-compatible surface); it speaks ``POST {base_url}/chat/completions``.
+# ``ollama`` is the native-Ollama mode and speaks ``POST {base_url}/api/chat``
+# at the server root — the two providers use different endpoints and request
+# shapes (task 129).
 PROVIDER_OPENAI_COMPATIBLE = "openai_compatible"
 PROVIDER_OLLAMA = "ollama"
 SUPPORTED_PROVIDER_MODES = (PROVIDER_OPENAI_COMPATIBLE, PROVIDER_OLLAMA)
@@ -770,12 +771,15 @@ def detect_server_context(
 
 
 class LocalLLMClient:
-    """A tiny OpenAI-compatible chat-completions client.
+    """A tiny local chat client with two provider surfaces.
 
-    Speaks the ``POST {base_url}/chat/completions`` shape used by Ollama's
-    ``/v1`` surface, vLLM, LM Studio, and llama.cpp's server. Errors are
-    returned as a non-OK :class:`LLMCallResult` rather than raised, so
-    callers can fall back to Claude Code cleanly.
+    The ``openai_compatible`` provider speaks ``POST {base_url}/chat/completions``
+    (Ollama's ``/v1`` surface, vLLM, LM Studio, llama.cpp's server). The
+    ``ollama`` provider speaks Ollama's native ``POST {base_url}/api/chat`` at
+    the server root, optionally carrying ``options.num_ctx``. Routing is by
+    provider, not by num_ctx (task 129). Errors are returned as a non-OK
+    :class:`LLMCallResult` rather than raised, so callers can fall back to
+    Claude Code cleanly.
     """
 
     def __init__(self, config: LocalLLMConfig):
@@ -828,26 +832,28 @@ class LocalLLMClient:
                 context=budget_check.as_dict(),
             )
 
-        # Ollama only honours a custom server context length via
-        # ``options.num_ctx`` on its *native* ``/api/chat`` surface; the
-        # OpenAI-compatible ``/v1/chat/completions`` surface silently ignores
-        # an options block. So when the Ollama-native provider has a num_ctx
-        # configured we route this request to ``/api/chat`` and send the
-        # options block, which makes the server actually run at that context
-        # length. The ``openai_compatible`` provider never sends num_ctx —
-        # there is no per-request way to set it there (task 126).
-        use_ollama_num_ctx = (
-            self.config.provider == PROVIDER_OLLAMA
-            and self.config.num_ctx is not None
-        )
-        if use_ollama_num_ctx:
+        # Routing is decided by the *provider*, not by num_ctx. The
+        # Ollama-native provider always speaks its native ``/api/chat`` surface;
+        # that endpoint exists at the server root regardless of whether a base
+        # URL accidentally still carries a ``/v1`` suffix. Routing on num_ctx
+        # (the previous behaviour) sent an Ollama server with no num_ctx
+        # configured to ``/chat/completions``, which only exists under ``/v1``
+        # on Ollama and 404s against a bare ``http://host:11434`` base URL.
+        #
+        # ``options.num_ctx`` is an optional add-on: Ollama only honours a
+        # custom server context length on the native surface, so we attach it
+        # when (and only when) it is configured. The OpenAI-compatible provider
+        # speaks ``/chat/completions`` and never sends num_ctx — there is no
+        # per-request way to set it there (tasks 126, 129).
+        if self.config.provider == PROVIDER_OLLAMA:
             url = self._ollama_native_chat_url()
             payload: dict[str, Any] = {
                 "model": self.config.model,
                 "messages": messages,
                 "stream": False,
-                "options": {"num_ctx": self.config.num_ctx},
             }
+            if self.config.num_ctx is not None:
+                payload["options"] = {"num_ctx": self.config.num_ctx}
             if response_format is not None:
                 # Native /api/chat uses a top-level ``format`` field rather
                 # than OpenAI's ``response_format``; ``"json"`` is the
@@ -886,9 +892,9 @@ class LocalLLMClient:
         except urllib.error.URLError as exc:
             reason = exc.reason
             if isinstance(reason, TimeoutError):
-                msg = f"timeout after {effective_timeout}s"
+                msg = f"timeout after {effective_timeout}s contacting {url}"
             else:
-                msg = f"connection error: {reason}"
+                msg = f"connection error contacting {url}: {reason}"
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
@@ -902,7 +908,7 @@ class LocalLLMClient:
                 provider=self.provider_id,
                 model=self.config.model,
                 task=task,
-                error=f"timeout after {effective_timeout}s",
+                error=f"timeout after {effective_timeout}s contacting {url}",
             )
         except (json.JSONDecodeError, ValueError) as exc:
             return LLMCallResult(

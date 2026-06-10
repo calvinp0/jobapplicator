@@ -750,13 +750,34 @@ function LocalLlmCard() {
             <input
               type="text"
               value={baseUrl}
-              placeholder="http://localhost:11434/v1"
+              placeholder={
+                provider === "ollama"
+                  ? "http://localhost:11434"
+                  : "http://localhost:11434/v1"
+              }
               onChange={(e) => {
                 setBaseUrl(e.target.value);
                 clearFeedback();
               }}
             />
           </label>
+          <p className="settings-helper">
+            {provider === "ollama" ? (
+              <>
+                Ollama provider: use the server base URL like{" "}
+                <code>http://localhost:11434</code>. The backend calls Ollama&apos;s
+                native <code>/api/chat</code> endpoint.
+              </>
+            ) : (
+              <>
+                OpenAI-compatible provider: use a base URL like{" "}
+                <code>http://localhost:11434/v1</code> (the backend appends{" "}
+                <code>/chat/completions</code>). For Ollama&apos;s
+                OpenAI-compatible surface the base URL <strong>must</strong>{" "}
+                include <code>/v1</code>.
+              </>
+            )}
+          </p>
 
           <label className="field">
             <span>Model name</span>

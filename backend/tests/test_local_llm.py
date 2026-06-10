@@ -499,7 +499,7 @@ def test_client_never_sends_num_ctx_for_openai_compatible(client, monkeypatch):
     assert "num_ctx" not in captured["payload"]
 
 
-def test_client_ollama_without_num_ctx_uses_openai_surface(client, monkeypatch):
+def test_client_ollama_without_num_ctx_uses_native_chat(client, monkeypatch):
     import app.local_llm as local_llm
 
     captured: dict = {}
@@ -507,12 +507,14 @@ def test_client_ollama_without_num_ctx_uses_openai_surface(client, monkeypatch):
     def fake_post(url, payload, *, headers=None, timeout=60.0):
         captured["url"] = url
         captured["payload"] = payload
-        return _completion("ok")
+        return _ollama_completion("ok")
 
     monkeypatch.setattr(local_llm, "_post_json", fake_post)
 
-    # Ollama provider but no num_ctx configured: nothing changes — the request
-    # keeps using the existing /v1/chat/completions path with no options block.
+    # Ollama provider with no num_ctx configured still routes to the native
+    # /api/chat surface — routing is by provider, not by num_ctx (task 129).
+    # The options block is omitted because num_ctx is unset, but stream:false
+    # is still sent so the server returns a single response.
     config = local_llm.LocalLLMConfig(
         enabled=True,
         provider=local_llm.PROVIDER_OLLAMA,
@@ -522,8 +524,76 @@ def test_client_ollama_without_num_ctx_uses_openai_surface(client, monkeypatch):
     )
     local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
 
-    assert captured["url"] == "http://localhost:11434/v1/chat/completions"
+    assert captured["url"] == "http://localhost:11434/api/chat"
+    assert captured["payload"]["stream"] is False
     assert "options" not in captured["payload"]
+
+
+def test_client_ollama_bare_base_url_uses_native_chat(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        return _ollama_completion("ok")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # The reported bug: an Ollama base URL with no /v1 suffix used to fall
+    # through to /chat/completions and 404. It must now hit /api/chat, and
+    # must never call /chat/completions.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://100.104.129.123:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert result.ok is True
+    assert captured["url"] == "http://100.104.129.123:11434/api/chat"
+    assert not captured["url"].endswith("/chat/completions")
+
+
+def test_client_ollama_never_calls_chat_completions(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    seen_urls: list[str] = []
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        seen_urls.append(url)
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # Across every Ollama configuration (with/without num_ctx, with/without a
+    # JSON response_format, bare or /v1 base URL), no request may ever target
+    # the OpenAI-compatible /chat/completions path.
+    for num_ctx in (None, 16384):
+        for base_url in (
+            "http://localhost:11434",
+            "http://localhost:11434/v1",
+        ):
+            config = local_llm.LocalLLMConfig(
+                enabled=True,
+                provider=local_llm.PROVIDER_OLLAMA,
+                base_url=base_url,
+                model="llama3.1:8b",
+                num_ctx=num_ctx,
+            )
+            client_obj = local_llm.LocalLLMClient(config)
+            client_obj.chat([{"role": "user", "content": "hi"}])
+            client_obj.chat(
+                [{"role": "user", "content": "hi"}],
+                response_format={"type": "json_object"},
+            )
+
+    assert seen_urls, "expected at least one request"
+    assert all(url.endswith("/api/chat") for url in seen_urls), seen_urls
+    assert all("/chat/completions" not in url for url in seen_urls), seen_urls
 
 
 def test_client_refuses_over_budget_prompt_before_http(client, monkeypatch):
@@ -552,6 +622,53 @@ def test_client_refuses_over_budget_prompt_before_http(client, monkeypatch):
     assert "over budget" in (result.error or "")
     assert result.context is not None
     assert result.context["over_budget"] is True
+
+
+def test_client_http_error_reports_attempted_url(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # An Ollama 404 (the reported bug) must name the endpoint that was hit so
+    # a misconfigured base URL is obvious from the error alone.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://100.104.129.123:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert result.ok is False
+    assert "404" in (result.error or "")
+    assert "http://100.104.129.123:11434/api/chat" in (result.error or "")
+
+
+def test_client_connection_error_reports_attempted_url(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://100.104.129.123:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert result.ok is False
+    assert "http://100.104.129.123:11434/api/chat" in (result.error or "")
 
 
 # ---- task policy ------------------------------------------------------
