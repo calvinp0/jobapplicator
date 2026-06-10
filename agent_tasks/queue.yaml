@@ -2480,7 +2480,7 @@ tasks:
     file: "agent_tasks/124-add-provider-routed-preflight-analysis-pipeline.md"
     branch: "agent/124-add-provider-routed-preflight-analysis-pipeline"
     worktree: "agent-124-add-provider-routed-preflight-analysis-pipeline"
-    status: "ready"
+    status: "done"
     depends_on:
       - "123-add-experimental-local-llm-provider"
     verification:
