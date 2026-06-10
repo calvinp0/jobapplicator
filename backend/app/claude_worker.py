@@ -27,6 +27,7 @@ from .llm_providers import (
     resolve_binary,
 )
 from .models import ClaudeRun
+from .preflight import PreflightError, run_preflight
 from .resume_docx_renderer import (
     RendererError,
     TAILORED_RESUME_DOCX_FILENAME,
@@ -308,6 +309,40 @@ def _extract_master_resume_docx(
             f"{INPUT_DIRNAME}/{EXTRACTION_ERROR_RESUME_FILENAME}",
         )
     return result
+
+
+def _run_preflight_analysis(
+    run_dir: Path, log_path: Path, progress_path: Path
+) -> None:
+    """Run the provider-routed preflight pipeline before launching Claude.
+
+    Writes the structured analysis artifacts under ``input/preflight/`` and
+    emits ``jobapply:`` log lines plus user-facing progress events. Preflight
+    is advisory: it must not fail the tailoring run. Any error is logged and
+    the run proceeds — the manifest (when written) records degradation, and
+    the deterministic fallback is the floor for normal operation.
+    """
+
+    def on_log(msg: str) -> None:
+        _append_progress(log_path, msg)
+
+    def on_progress(msg: str) -> None:
+        _append_progress_line(progress_path, msg)
+
+    try:
+        result = run_preflight(
+            run_dir, on_log=on_log, on_progress=on_progress
+        )
+    except (PreflightError, OSError) as exc:
+        # Best-effort: a preflight failure never blocks tailoring. The main
+        # prompt treats preflight artifacts as optional advisory inputs.
+        _append_progress(log_path, f"preflight analysis degraded: {exc}")
+        return
+    suffix = " (fallback used)" if result.fallback_used else ""
+    _append_progress(
+        log_path,
+        f"preflight analysis complete: provider {result.provider}{suffix}",
+    )
 
 
 def _missing_outputs(run_dir: Path) -> list[str]:
@@ -630,6 +665,12 @@ def invoke_claude_run(
             "failed to extract source resume DOCX and no markdown resume present: "
             f"{extraction.error_message}",
         )
+
+    # Provider-routed preflight analysis (task 124). Runs before the main
+    # tailoring prompt so its structured artifacts (job summary, ATS
+    # keywords, role requirements, evidence gap plan) are available under
+    # input/preflight/ as advisory inputs. Best-effort: never fails the run.
+    _run_preflight_analysis(run_dir, log_path, progress_path)
 
     if is_dry_run():
         _append_progress(log_path, "dry-run mode: skipping Claude subprocess")

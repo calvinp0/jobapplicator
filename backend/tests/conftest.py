@@ -59,6 +59,7 @@ def client() -> Iterator:
         "app.local_reset",
         "app.run_import",
         "app.claude_worker",
+        "app.preflight",
         "app.llm_providers",
         "app.local_llm",
         "app.gmail_client",

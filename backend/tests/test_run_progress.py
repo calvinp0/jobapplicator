@@ -115,7 +115,10 @@ def test_progress_endpoint_returns_user_facing_phase_events(
     resp = client.get(f"/runs/{run['id']}/progress")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["lines"] == list(phases)
+    # Preflight (task 124) appends its own user-facing phase events before
+    # Claude runs, so Claude's phases are the tail of the feed.
+    assert body["lines"][-len(phases):] == list(phases)
+    assert "Running preflight job analysis" in body["lines"]
     assert body["truncated"] is False
     # No worker `jobapply:` prefix on the user-facing feed.
     assert all("jobapply:" not in line for line in body["lines"])
@@ -177,7 +180,8 @@ def test_worker_truncates_progress_file_on_each_invocation(
     assert first.json()["status"] == "completed"
 
     resp1 = client.get(f"/runs/{run['id']}/progress")
-    assert resp1.json()["lines"] == ["Reading job description"]
+    # Claude's phase is the tail of the feed (preflight phases precede it).
+    assert resp1.json()["lines"][-1] == "Reading job description"
 
     # Second invocation writes a different phase. The progress file must be
     # truncated so we never see the first run's line again.
@@ -191,7 +195,10 @@ def test_worker_truncates_progress_file_on_each_invocation(
     second = client.post(f"/runs/{run['id']}/invoke")
     assert second.status_code == 200, second.text
     resp2 = client.get(f"/runs/{run['id']}/progress")
-    assert resp2.json()["lines"] == ["Drafting tailored resume markdown"]
+    lines2 = resp2.json()["lines"]
+    assert lines2[-1] == "Drafting tailored resume markdown"
+    # The first run's Claude phase must not bleed into the truncated feed.
+    assert "Reading job description" not in lines2
 
 
 def test_worker_heartbeat_emits_lines_when_claude_is_silent(
@@ -255,7 +262,10 @@ def test_worker_heartbeat_disabled_with_zero_interval(
     client, tmp_path, monkeypatch
 ):
     """An explicit ``0`` for the heartbeat env disables the thread; a fast
-    fake binary should produce an empty progress file."""
+    fake binary that emits no phases of its own should leave the feed free of
+    heartbeat lines. Preflight (task 124) still contributes its own phase
+    events, so the feed is not empty — but no `Claude Code is running` line
+    appears."""
     run = _seed_run(client, tmp_path, monkeypatch)
     binary = _write_fake_binary(tmp_path, exit_code=0)
     monkeypatch.setenv("JOBAPPLY_CLAUDE_BINARY", str(binary))
@@ -266,7 +276,8 @@ def test_worker_heartbeat_disabled_with_zero_interval(
 
     resp = client.get(f"/runs/{run['id']}/progress")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["lines"] == []
+    lines = resp.json()["lines"]
+    assert all("Claude Code is running" not in line for line in lines), lines
 
 
 def test_dry_run_writes_user_facing_progress_lines(
