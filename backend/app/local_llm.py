@@ -35,6 +35,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .context_budget import (
+    ContextBudget,
+    build_context_budget,
+    check_context_budget,
+)
 from .db import SessionLocal
 from .llm_providers import CLAUDE_CODE_PROVIDER_ID
 from .models import AppSetting
@@ -59,6 +64,12 @@ SUPPORTED_PROVIDER_MODES = (PROVIDER_OPENAI_COMPATIBLE, PROVIDER_OLLAMA)
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_CONTEXT_WINDOW_TOKENS = 8192
+DEFAULT_RESERVED_OUTPUT_TOKENS = 1200
+DEFAULT_MAX_INPUT_TOKENS = 6500
+DEFAULT_ALLOW_COMPRESSION = True
+DEFAULT_ALLOW_FALLBACK = True
+DEFAULT_ABORT_ON_OVER_BUDGET = False
 
 
 # ---- Task policy -----------------------------------------------------
@@ -150,8 +161,22 @@ class LocalLLMConfig:
     allowed_tasks: dict[str, bool] = field(
         default_factory=lambda: dict(DEFAULT_ALLOWED_TASKS)
     )
+    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
+    reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS
+    max_input_tokens: Optional[int] = DEFAULT_MAX_INPUT_TOKENS
+    allow_compression: bool = DEFAULT_ALLOW_COMPRESSION
+    allow_fallback: bool = DEFAULT_ALLOW_FALLBACK
+    abort_on_over_budget: bool = DEFAULT_ABORT_ON_OVER_BUDGET
     api_key: Optional[str] = None
     updated_at: Optional[str] = None
+
+    @property
+    def context_budget(self) -> ContextBudget:
+        return build_context_budget(
+            self.context_window_tokens,
+            self.reserved_output_tokens,
+            self.max_input_tokens,
+        )
 
 
 def default_config() -> LocalLLMConfig:
@@ -210,6 +235,24 @@ def get_config() -> LocalLLMConfig:
         model=raw.get("model") or DEFAULT_MODEL,
         timeout_seconds=int(raw.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS),
         allowed_tasks=_normalize_allowed_tasks(raw.get("allowed_tasks")),
+        context_window_tokens=int(
+            raw.get("context_window_tokens") or DEFAULT_CONTEXT_WINDOW_TOKENS
+        ),
+        reserved_output_tokens=int(
+            raw.get("reserved_output_tokens") or DEFAULT_RESERVED_OUTPUT_TOKENS
+        ),
+        max_input_tokens=(
+            int(raw["max_input_tokens"])
+            if raw.get("max_input_tokens") is not None
+            else None
+        ),
+        allow_compression=bool(
+            raw.get("allow_compression", DEFAULT_ALLOW_COMPRESSION)
+        ),
+        allow_fallback=bool(raw.get("allow_fallback", DEFAULT_ALLOW_FALLBACK)),
+        abort_on_over_budget=bool(
+            raw.get("abort_on_over_budget", DEFAULT_ABORT_ON_OVER_BUDGET)
+        ),
         api_key=api_key,
         updated_at=raw.get("updated_at"),
     )
@@ -223,6 +266,12 @@ def save_config(
     model: str,
     timeout_seconds: int,
     allowed_tasks: dict[str, bool],
+    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
+    reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
+    max_input_tokens: Optional[int] = DEFAULT_MAX_INPUT_TOKENS,
+    allow_compression: bool = DEFAULT_ALLOW_COMPRESSION,
+    allow_fallback: bool = DEFAULT_ALLOW_FALLBACK,
+    abort_on_over_budget: bool = DEFAULT_ABORT_ON_OVER_BUDGET,
     api_key: Optional[str] = None,
     preserve_existing_key: bool = False,
 ) -> LocalLLMConfig:
@@ -260,6 +309,14 @@ def save_config(
         raise LocalLLMValidationError("timeout_seconds must be positive")
 
     normalized_tasks = _normalize_allowed_tasks(allowed_tasks)
+    try:
+        budget = build_context_budget(
+            context_window_tokens,
+            reserved_output_tokens,
+            max_input_tokens,
+        )
+    except ValueError as exc:
+        raise LocalLLMValidationError(str(exc)) from exc
 
     # Resolve the API key: an empty incoming key with preserve flag keeps
     # whatever was previously stored.
@@ -276,6 +333,12 @@ def save_config(
         "model": model,
         "timeout_seconds": timeout_int,
         "allowed_tasks": normalized_tasks,
+        "context_window_tokens": budget.context_window_tokens,
+        "reserved_output_tokens": budget.reserved_output_tokens,
+        "max_input_tokens": budget.max_input_tokens,
+        "allow_compression": bool(allow_compression),
+        "allow_fallback": bool(allow_fallback),
+        "abort_on_over_budget": bool(abort_on_over_budget),
         "api_key": incoming_key,
         "updated_at": updated_at,
     }
@@ -296,6 +359,12 @@ def save_config(
         model=model,
         timeout_seconds=timeout_int,
         allowed_tasks=normalized_tasks,
+        context_window_tokens=budget.context_window_tokens,
+        reserved_output_tokens=budget.reserved_output_tokens,
+        max_input_tokens=budget.max_input_tokens,
+        allow_compression=bool(allow_compression),
+        allow_fallback=bool(allow_fallback),
+        abort_on_over_budget=bool(abort_on_over_budget),
         api_key=incoming_key,
         updated_at=updated_at,
     )
@@ -338,6 +407,7 @@ def get_settings_view() -> dict[str, Any]:
     and a masked preview.
     """
     config = get_config()
+    budget = config.context_budget
     return {
         "enabled": config.enabled,
         "provider": config.provider,
@@ -345,6 +415,12 @@ def get_settings_view() -> dict[str, Any]:
         "model": config.model,
         "timeout_seconds": config.timeout_seconds,
         "allowed_tasks": dict(config.allowed_tasks),
+        "context_window_tokens": budget.context_window_tokens,
+        "reserved_output_tokens": budget.reserved_output_tokens,
+        "max_input_tokens": budget.max_input_tokens,
+        "allow_compression": config.allow_compression,
+        "allow_fallback": config.allow_fallback,
+        "abort_on_over_budget": config.abort_on_over_budget,
         "has_api_key": bool(config.api_key),
         "api_key_preview": API_KEY_PREVIEW_MASK if config.api_key else "",
         "updated_at": config.updated_at,
@@ -455,6 +531,7 @@ class LLMCallResult:
     repaired: bool = False
     error: Optional[str] = None
     latency_ms: Optional[int] = None
+    context: Optional[dict[str, Any]] = None
 
 
 def _log_call(result: LLMCallResult) -> None:
@@ -537,6 +614,24 @@ class LocalLLMClient:
         task: Optional[str] = None,
     ) -> LLMCallResult:
         """Send a chat-completions request and return the result."""
+        prompt_text = "\n\n".join(
+            f"{m.get('role', '')}: {m.get('content', '')}" for m in messages
+        )
+        budget_check = check_context_budget(prompt_text, self.config.context_budget)
+        if budget_check.over_budget:
+            return LLMCallResult(
+                ok=False,
+                provider=self.provider_id,
+                model=self.config.model,
+                task=task,
+                error=(
+                    "local LLM input over budget: estimated "
+                    f"{budget_check.estimated_input_tokens} > "
+                    f"{budget_check.max_input_tokens}; refusing to send prompt"
+                ),
+                context=budget_check.as_dict(),
+            )
+
         url = self._chat_url()
         payload: dict[str, Any] = {
             "model": self.config.model,

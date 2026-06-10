@@ -135,6 +135,12 @@ function defaultSettings(overrides = {}) {
     base_url: "http://localhost:11434/v1",
     model: "llama3.1:8b",
     timeout_seconds: 60,
+    context_window_tokens: 8192,
+    reserved_output_tokens: 1200,
+    max_input_tokens: 6500,
+    allow_compression: true,
+    allow_fallback: true,
+    abort_on_over_budget: false,
     allowed_tasks: {
       job_summary: true,
       ats_keywords: true,
@@ -258,6 +264,8 @@ describe("SettingsPage – Local LLM card", () => {
       provider: "local_openai_compatible",
       latency_ms: 12,
       error: null,
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
     });
 
     renderPage();
@@ -282,6 +290,8 @@ describe("SettingsPage – Local LLM card", () => {
       provider: "local_openai_compatible",
       latency_ms: null,
       error: "timeout after 60s",
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
     });
 
     renderPage();
@@ -341,8 +351,65 @@ describe("SettingsPage – Local LLM card", () => {
     await waitFor(() => expect(setLocalLlmSettingsMock).toHaveBeenCalledTimes(1));
     const payload = setLocalLlmSettingsMock.mock.calls[0][0];
     expect(payload.enabled).toBe(true);
+    expect(payload.context_window_tokens).toBe(8192);
+    expect(payload.reserved_output_tokens).toBe(1200);
+    expect(payload.max_input_tokens).toBe(6500);
     expect(
       await within(card).findByText(/saved\./i),
     ).toBeInTheDocument();
+  });
+
+  it("renders context window and reserved output token fields", async () => {
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    expect(
+      within(card).getByLabelText(/context window tokens/i),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getByLabelText(/reserved output tokens/i),
+    ).toBeInTheDocument();
+  });
+
+  it("displays the usable input budget", async () => {
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    expect(within(card).getByText(/usable input budget/i)).toBeInTheDocument();
+    expect(within(card).getByText(/6500 tokens/i)).toBeInTheDocument();
+  });
+
+  it("shows a local context warning for small context windows", async () => {
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({
+        context_window_tokens: 2048,
+        reserved_output_tokens: 512,
+        max_input_tokens: 1536,
+      }),
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    expect(
+      within(card).getByText(/this context window is small/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a validation error for impossible budget input", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.clear(within(card).getByLabelText(/reserved output tokens/i));
+    await user.type(within(card).getByLabelText(/reserved output tokens/i), "9000");
+    await user.click(within(card).getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await within(card).findByText(
+        /reserved output tokens must be smaller than context window tokens/i,
+      ),
+    ).toBeInTheDocument();
+    expect(setLocalLlmSettingsMock).not.toHaveBeenCalled();
   });
 });

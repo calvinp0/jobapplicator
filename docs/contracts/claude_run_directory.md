@@ -27,7 +27,7 @@ runs/<run_id>/
 │       ├── ats_keywords.json
 │       ├── role_requirements.json
 │       ├── evidence_gap_plan.json
-│       ├── preflight_manifest.json
+│       ├── preflight_manifest.json # includes local LLM context-budget checks
 │       └── preflight_summary.md    # optional human-readable projection
 ├── output/
 │   ├── tailored_resume.json         # structured resume content; source of truth for the renderer
@@ -254,6 +254,24 @@ The snapshot's source is one of:
 The metadata block records which one (`prompt_id`, `prompt_source`,
 `prompt_hash`) so an operator can replay a run with the exact prompt
 that produced it. See "Prompt provenance" under *Metadata* below.
+
+### `preflight/preflight_manifest.json`
+
+When a preflight task attempts the experimental local LLM provider, its task
+entry includes a `context` object with:
+
+- `context_window_tokens`
+- `reserved_output_tokens`
+- `max_input_tokens`
+- `estimated_input_tokens_initial`
+- `estimated_input_tokens_final`
+- `compression_used`
+- `fallback_used`
+- `over_budget`
+
+If a local input remains too large and deterministic fallback is allowed, the
+task entry records `status = "fallback"`, `provider = "deterministic"`, and a
+clear `fallback_reason`. Local LLM prompts must never be silently truncated.
 
 ### `revision_feedback.md`
 

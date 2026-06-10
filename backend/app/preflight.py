@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import local_llm
+from .context_budget import ContextBudgetCheck, check_context_budget
 from .local_llm import (
     LocalLLMClient,
     LocalLLMConfig,
@@ -84,10 +85,7 @@ TASK_NAME_EVIDENCE_GAP_PLAN = "evidence_gap_plan"
 
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
-
-# Bound the text we hand to a local model so a huge JD never blows the
-# context window or leaks unbounded content over HTTP.
-MAX_JD_CHARS = 12_000
+STATUS_FALLBACK = "fallback"
 
 # Keyword category / priority vocabularies (used by validators and the
 # deterministic extractor). Categories follow the task spec.
@@ -154,6 +152,7 @@ class PreflightTaskResult:
     output: str
     fallback_used: bool = False
     fallback_reason: Optional[str] = None
+    context: Optional[dict[str, Any]] = None
 
     def manifest_entry(self) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -167,6 +166,8 @@ class PreflightTaskResult:
             entry["fallback_used"] = True
             if self.fallback_reason:
                 entry["fallback_reason"] = self.fallback_reason
+        if self.context is not None:
+            entry["context"] = self.context
         return entry
 
 
@@ -266,9 +267,11 @@ def run_preflight(
         _SPEC_JOB_SUMMARY,
         cfg,
         client,
-        local_messages=_job_summary_messages(jd_text),
+        local_messages=lambda text: _job_summary_messages(text),
+        source_text=jd_text,
         deterministic=lambda: deterministic_job_summary(jd_text),
         validator=validate_job_summary,
+        log=log,
     )
     _write_artifact(preflight_dir, _SPEC_JOB_SUMMARY.artifact, data, results, result, artifact_paths, log)
 
@@ -278,9 +281,11 @@ def run_preflight(
         _SPEC_ATS_KEYWORDS,
         cfg,
         client,
-        local_messages=_ats_keywords_messages(jd_text),
+        local_messages=lambda text: _ats_keywords_messages(text),
+        source_text=jd_text,
         deterministic=lambda: deterministic_ats_keywords(jd_text),
         validator=validate_ats_keywords,
+        log=log,
     )
     _write_artifact(preflight_dir, _SPEC_ATS_KEYWORDS.artifact, data, results, result, artifact_paths, log)
 
@@ -290,9 +295,11 @@ def run_preflight(
         _SPEC_ROLE_REQUIREMENTS,
         cfg,
         client,
-        local_messages=_role_requirements_messages(jd_text),
+        local_messages=lambda text: _role_requirements_messages(text),
+        source_text=jd_text,
         deterministic=lambda: deterministic_role_requirements(jd_text),
         validator=validate_role_requirements,
+        log=log,
     )
     _write_artifact(preflight_dir, _SPEC_ROLE_REQUIREMENTS.artifact, data, results, result, artifact_paths, log)
     requirements_for_plan = data
@@ -303,11 +310,13 @@ def run_preflight(
         _SPEC_EVIDENCE_GAP_PLAN,
         cfg,
         client,
-        local_messages=_evidence_gap_messages(jd_text, evidence_files),
+        local_messages=lambda text: _evidence_gap_messages(text, evidence_files),
+        source_text=jd_text,
         deterministic=lambda: deterministic_evidence_gap_plan(
             requirements_for_plan, evidence_files
         ),
         validator=validate_evidence_gap_plan,
+        log=log,
     )
     _write_artifact(preflight_dir, _SPEC_EVIDENCE_GAP_PLAN.artifact, data, results, result, artifact_paths, log)
 
@@ -364,9 +373,11 @@ def _run_one(
     cfg: LocalLLMConfig,
     client: Optional[LocalLLMClient],
     *,
-    local_messages: list[dict[str, str]],
+    local_messages: Callable[[str], list[dict[str, str]]],
+    source_text: str,
     deterministic: Callable[[], dict[str, Any]],
     validator: Callable[[Any], tuple[Optional[dict[str, Any]], Optional[str]]],
+    log: Callable[[str], None],
 ) -> tuple[dict[str, Any], PreflightTaskResult]:
     """Resolve one task to (artifact_data, task_result).
 
@@ -378,8 +389,33 @@ def _run_one(
     use_local = client is not None and local_allowed_for_task(spec.policy_task, cfg)
 
     if use_local:
-        call = client.chat_json(
+        messages, context_info, fallback_reason = _prepare_local_messages(
+            spec,
+            cfg,
             local_messages,
+            source_text,
+            log,
+        )
+        if fallback_reason is not None:
+            data = deterministic()
+            valid, det_reason = validator(data)
+            if det_reason is not None or valid is None:
+                raise PreflightError(
+                    f"deterministic {spec.name} produced invalid output: {det_reason}"
+                )
+            return valid, PreflightTaskResult(
+                name=spec.name,
+                provider=DETERMINISTIC_PROVIDER,
+                model=None,
+                status=STATUS_FALLBACK,
+                output=_artifact_relpath(spec.artifact),
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+                context=context_info,
+            )
+
+        call = client.chat_json(
+            messages,
             required_fields=list(spec.required_fields),
             task=spec.policy_task,
         )
@@ -392,6 +428,7 @@ def _run_one(
                     model=call.model,
                     status=STATUS_SUCCEEDED,
                     output=_artifact_relpath(spec.artifact),
+                    context=context_info,
                 )
             fallback_reason = f"local output failed schema validation: {reason}"
         else:
@@ -414,6 +451,7 @@ def _run_one(
             output=_artifact_relpath(spec.artifact),
             fallback_used=True,
             fallback_reason=fallback_reason,
+            context=context_info,
         )
 
     # Deterministic is the intended provider (local disabled/not allowed).
@@ -430,6 +468,81 @@ def _run_one(
         status=STATUS_SUCCEEDED,
         output=_artifact_relpath(spec.artifact),
     )
+
+
+def _prepare_local_messages(
+    spec: _TaskSpec,
+    cfg: LocalLLMConfig,
+    message_builder: Callable[[str], list[dict[str, str]]],
+    source_text: str,
+    log: Callable[[str], None],
+) -> tuple[list[dict[str, str]], dict[str, Any], Optional[str]]:
+    budget = cfg.context_budget
+    messages = message_builder(source_text)
+    initial = _check_messages(messages, cfg=cfg)
+    context_info: dict[str, Any] = {
+        "context_window_tokens": initial.context_window_tokens,
+        "reserved_output_tokens": initial.reserved_output_tokens,
+        "max_input_tokens": initial.max_input_tokens,
+        "estimated_input_tokens_initial": initial.estimated_input_tokens,
+        "estimated_input_tokens_final": initial.estimated_input_tokens,
+        "compression_used": False,
+        "fallback_used": False,
+        "over_budget": initial.over_budget,
+    }
+    if not initial.over_budget:
+        log("jobapply: local LLM budget check passed")
+        return messages, context_info, None
+
+    log(
+        "jobapply: local LLM input over budget for "
+        f"{spec.name}: estimated {initial.estimated_input_tokens} > "
+        f"{initial.max_input_tokens}"
+    )
+
+    final = initial
+    if cfg.allow_compression:
+        compressed = _compress_for_local_task(spec, source_text, budget.max_input_tokens)
+        messages = message_builder(compressed)
+        final = _check_messages(messages, cfg=cfg)
+        context_info.update(
+            {
+                "estimated_input_tokens_final": final.estimated_input_tokens,
+                "compression_used": True,
+                "over_budget": final.over_budget,
+            }
+        )
+        log(
+            "jobapply: compressed input to "
+            f"{final.estimated_input_tokens} estimated tokens"
+        )
+
+    if not final.over_budget:
+        log("jobapply: local LLM budget check passed")
+        return messages, context_info, None
+
+    reason = "local LLM input remained over budget after compression"
+    context_info["fallback_used"] = cfg.allow_fallback
+    if cfg.allow_fallback:
+        log(
+            "jobapply: local LLM input over budget after compression; "
+            f"using deterministic {spec.name} extractor"
+        )
+        return messages, context_info, reason
+    if cfg.abort_on_over_budget:
+        raise PreflightError(reason)
+    raise PreflightError(
+        "local LLM input over budget and neither fallback nor abort is enabled"
+    )
+
+
+def _check_messages(
+    messages: list[dict[str, str]], *, cfg: LocalLLMConfig
+) -> ContextBudgetCheck:
+    prompt = "\n\n".join(
+        f"{m.get('role', '')}: {m.get('content', '')}" for m in messages
+    )
+    return check_context_budget(prompt, cfg.context_budget)
 
 
 def _write_artifact(
@@ -449,11 +562,7 @@ def _write_artifact(
     log(f"wrote {_relpath(path, run_dir)}")
 
 
-# ---- Local LLM prompts (bounded, JSON-only) --------------------------
-
-
-def _bounded(jd_text: str) -> str:
-    return jd_text[:MAX_JD_CHARS]
+# ---- Local LLM prompts (budget-checked, JSON-only) -------------------
 
 
 def _job_summary_messages(jd_text: str) -> list[dict[str, str]]:
@@ -476,7 +585,7 @@ def _job_summary_messages(jd_text: str) -> list[dict[str, str]]:
                 '"employment_type": null, "seniority": null, '
                 '"role_family": null, "summary": "neutral 1-2 sentence '
                 'summary", "source": "input/job_description.md"}\n\n'
-                "JOB POSTING:\n" + _bounded(jd_text)
+                "JOB POSTING:\n" + jd_text
             ),
         },
     ]
@@ -504,7 +613,7 @@ def _ats_keywords_messages(jd_text: str) -> list[dict[str, str]]:
                 '"priority": "high"}], "groups": {"required": [], '
                 '"preferred": [], "tools": [], "domains": [], '
                 '"responsibilities": []}}\n\n'
-                "JOB DESCRIPTION:\n" + _bounded(jd_text)
+                "JOB DESCRIPTION:\n" + jd_text
             ),
         },
     ]
@@ -531,7 +640,7 @@ def _role_requirements_messages(jd_text: str) -> list[dict[str, str]]:
                 '"responsibilities": [{"id": "resp_001", '
                 '"responsibility": "...", "source_quote": "...", '
                 '"keywords": []}], "screening_signals": []}\n\n'
-                "JOB DESCRIPTION:\n" + _bounded(jd_text)
+                "JOB DESCRIPTION:\n" + jd_text
             ),
         },
     ]
@@ -564,10 +673,85 @@ def _evidence_gap_messages(
                 '"source": "job description requirement", '
                 '"severity": "medium"}]}\n\n'
                 "STAGED EVIDENCE FILES:\n" + files_block + "\n\n"
-                "JOB DESCRIPTION:\n" + _bounded(jd_text)
+                "JOB DESCRIPTION:\n" + jd_text
             ),
         },
     ]
+
+
+def _compress_for_local_task(
+    spec: _TaskSpec, text: str, max_input_tokens: int
+) -> str:
+    """Deterministically reduce JD-like input while preserving requirements."""
+    del spec
+    max_chars = max(1200, max_input_tokens * 3)
+    lines = text.splitlines()
+    kept: list[str] = []
+    seen: set[str] = set()
+
+    important_terms = (
+        "requirement",
+        "qualification",
+        "responsibilit",
+        "preferred",
+        "must",
+        "python",
+        "machine learning",
+        "ml",
+        "data",
+        "cloud",
+        "aws",
+        "gcp",
+        "azure",
+        "docker",
+        "kubernetes",
+        "sql",
+        "llm",
+    )
+    boilerplate_terms = (
+        "equal opportunity",
+        "privacy policy",
+        "cookie",
+        "terms of use",
+        "all rights reserved",
+        "we are an equal",
+    )
+
+    def add(line: str) -> None:
+        cleaned = line.rstrip()
+        key = cleaned.strip().lower()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        kept.append(cleaned)
+
+    for line in lines[:40]:
+        add(line)
+    for line in lines:
+        low = line.lower()
+        if any(term in low for term in boilerplate_terms):
+            continue
+        if _heading_text(line) is not None or _bullet_text(line) is not None:
+            add(line)
+            continue
+        if any(term in low for term in important_terms):
+            add(line)
+    for line in lines[-30:]:
+        if any(term in line.lower() for term in boilerplate_terms):
+            continue
+        add(line)
+
+    compact = "\n".join(kept).strip()
+    if len(compact) <= max_chars:
+        return compact
+
+    head = compact[: max_chars // 2].rsplit("\n", 1)[0]
+    tail = compact[-(max_chars // 2) :].split("\n", 1)[-1]
+    return (
+        f"{head}\n\n"
+        "[deterministic compression: middle omitted for local LLM budget]\n\n"
+        f"{tail}"
+    ).strip()
 
 
 # ---- Deterministic extractors ----------------------------------------

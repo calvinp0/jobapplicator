@@ -63,6 +63,16 @@ The Settings page exposes an **LLM Providers** section (separate from the
   OpenAI-compatible surface, or any OpenAI-compatible base URL.
 - **Model name** — e.g. `llama3.1:8b`, `qwen2.5-coder:14b`, `mistral-small`.
 - **Timeout (seconds)** — default `60`.
+- **Context window tokens** — configured local model context size, default
+  `8192`.
+- **Reserved output tokens** — output headroom kept out of the input prompt,
+  default `1200`.
+- **Max input tokens** — usable input budget. Defaults to the configured
+  context window minus reserved output tokens, capped at `6500` in the
+  default settings.
+- **Over-budget handling** — deterministic compression, deterministic
+  fallback, and abort-on-over-budget controls. Local prompts are never
+  silently truncated.
 - **API key (optional)** — only needed if your endpoint requires one. It is
   stored locally in the settings table, masked in the UI, and never returned
   in plaintext.
@@ -100,11 +110,18 @@ that surface and set a matching model name.
 
 ## Testing the connection
 
+Local models often have much smaller effective context windows than Claude
+Code. Before every local call, the backend estimates prompt tokens, reserves
+output headroom, compresses/selects bounded task input when allowed, and then
+falls back or aborts if the prompt still does not fit. The app must not
+silently overfill or truncate a local-model prompt.
+
 In Settings → LLM Providers, click **Test connection**. The backend sends a
 minimal chat-completion request to the configured endpoint/model and reports
-one of:
+the connection result plus configured budget information:
 
-- **Connected — model responded.**
+- **Connected — model responded. Configured context window: 8192 tokens.
+  Usable input budget: 6500 tokens.**
 - An error/timeout message (connection refused, timeout, HTTP error, or a
   malformed response).
 
@@ -177,7 +194,8 @@ Routing per task uses the policy above:
   preflight tasks; they remain on Claude Code in the main tailoring run.
 
 The manifest records the provider/model that produced each artifact and
-whether a fallback occurred:
+whether a fallback occurred. For local-provider attempts it also records
+context-budget checks:
 
 ```json
 {
@@ -188,14 +206,36 @@ whether a fallback occurred:
   "tasks": [
     {"name": "ats_keyword_extraction", "provider": "local_openai_compatible",
      "model": "llama3.1:8b", "status": "succeeded",
-     "output": "input/preflight/ats_keywords.json"}
+     "output": "input/preflight/ats_keywords.json",
+     "context": {
+       "context_window_tokens": 8192,
+       "reserved_output_tokens": 1200,
+       "max_input_tokens": 6500,
+       "estimated_input_tokens_initial": 9320,
+       "estimated_input_tokens_final": 5810,
+       "compression_used": true,
+       "fallback_used": false,
+       "over_budget": false
+     }}
   ]
 }
 ```
 
 When the local provider is unavailable the manifest records
 `"provider": "deterministic"` (and `"fallback_used": true` with a
-`fallback_reason` when local was attempted first).
+`fallback_reason` when local was attempted first). If a local prompt remains
+over budget after deterministic compression and fallback is enabled, the
+individual task is recorded with `"status": "fallback"`,
+`"provider": "deterministic"`, and a context block showing the failed budget
+check.
+
+Local preflight prompt assembly is task-specific and bounded:
+
+- `job_summary`, `ats_keyword_extraction`, and `role_requirements` use only
+  `input/job_description.md` plus `input/job_capture.md` when present.
+- `evidence_gap_plan` uses the job description and staged evidence index/file
+  names. It does not read full evidence bodies, DOCX extracted text, prior
+  resumes, or the full candidate context.
 
 Preflight is **advisory and best-effort**: it never fails the tailoring run.
 The main prompt treats the artifacts as a starting point only — the
