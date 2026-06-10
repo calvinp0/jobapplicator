@@ -138,6 +138,7 @@ function defaultSettings(overrides = {}) {
     context_window_tokens: 8192,
     reserved_output_tokens: 1200,
     max_input_tokens: 6500,
+    num_ctx: null,
     allow_compression: true,
     allow_fallback: true,
     abort_on_over_budget: false,
@@ -266,6 +267,9 @@ describe("SettingsPage – Local LLM card", () => {
       error: null,
       context_window_tokens: 8192,
       max_input_tokens: 6500,
+      server_reported_context_tokens: null,
+      context_verified: false,
+      context_warning: null,
     });
 
     renderPage();
@@ -292,6 +296,9 @@ describe("SettingsPage – Local LLM card", () => {
       error: "timeout after 60s",
       context_window_tokens: 8192,
       max_input_tokens: 6500,
+      server_reported_context_tokens: null,
+      context_verified: false,
+      context_warning: null,
     });
 
     renderPage();
@@ -359,16 +366,36 @@ describe("SettingsPage – Local LLM card", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders context window and reserved output token fields", async () => {
+  it("renders context budget and reserved output token fields", async () => {
     renderPage();
     const card = await waitFor(() => getCard());
 
     expect(
-      within(card).getByLabelText(/context window tokens/i),
+      within(card).getByLabelText(/jobapplicator context budget/i),
     ).toBeInTheDocument();
     expect(
       within(card).getByLabelText(/reserved output tokens/i),
     ).toBeInTheDocument();
+  });
+
+  it("labels the budget control honestly and explains the distinction", async () => {
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    // Renamed away from "Context window tokens" (task 128): the field only
+    // drives JobApplicator's budgeting, not the server's context.
+    expect(
+      within(card).queryByLabelText(/context window tokens/i),
+    ).toBeNull();
+    expect(
+      within(card).getByText(
+        /does not change the running model server/i,
+      ),
+    ).toBeInTheDocument();
+    // The summary uses the same renamed wording.
+    expect(
+      within(card).getAllByText(/jobapplicator context budget/i).length,
+    ).toBeGreaterThan(1);
   });
 
   it("displays the usable input budget", async () => {
@@ -411,5 +438,165 @@ describe("SettingsPage – Local LLM card", () => {
       ),
     ).toBeInTheDocument();
     expect(setLocalLlmSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the num_ctx control only for the Ollama provider", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    // Default provider is openai_compatible: no num_ctx control.
+    expect(
+      within(card).queryByLabelText(/ollama context length/i),
+    ).toBeNull();
+
+    await user.selectOptions(
+      within(card).getByLabelText(/provider/i),
+      "ollama",
+    );
+    expect(
+      within(card).getByLabelText(/ollama context length/i),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(
+      within(card).getByLabelText(/provider/i),
+      "openai_compatible",
+    );
+    expect(
+      within(card).queryByLabelText(/ollama context length/i),
+    ).toBeNull();
+  });
+
+  it("loads a saved num_ctx and sends edits through the API", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", num_ctx: 16384 }),
+    );
+    setLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", num_ctx: 8192 }),
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    const numCtxInput = within(card).getByLabelText(
+      /ollama context length/i,
+    ) as HTMLInputElement;
+    expect(numCtxInput.value).toBe("16384");
+
+    await user.clear(numCtxInput);
+    await user.type(numCtxInput, "8192");
+    await user.click(within(card).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(setLocalLlmSettingsMock).toHaveBeenCalledTimes(1),
+    );
+    expect(setLocalLlmSettingsMock.mock.calls[0][0].num_ctx).toBe(8192);
+  });
+
+  it("treats an empty num_ctx as unset when saving", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", num_ctx: 16384 }),
+    );
+    setLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", num_ctx: null }),
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.clear(within(card).getByLabelText(/ollama context length/i));
+    await user.click(within(card).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(setLocalLlmSettingsMock).toHaveBeenCalledTimes(1),
+    );
+    expect(setLocalLlmSettingsMock.mock.calls[0][0].num_ctx).toBeNull();
+  });
+
+  it("shows the server-reported context after a verified connection test", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", num_ctx: 16384 }),
+    );
+    testLocalLlmConnectionMock.mockResolvedValue({
+      ok: true,
+      message: "Connected — model responded.",
+      model: "llama3.1:8b",
+      provider: "local_ollama",
+      latency_ms: 12,
+      error: null,
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
+      server_reported_context_tokens: 131072,
+      context_verified: true,
+      context_warning: null,
+    });
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /test connection/i }),
+    );
+
+    expect(
+      await within(card).findByTestId("server-context-verified"),
+    ).toHaveTextContent(/server-reported context: 131072 tokens/i);
+    expect(
+      within(card).queryByTestId("server-context-warning"),
+    ).toBeNull();
+    // The current num_ctx edit is passed as a test override.
+    expect(testLocalLlmConnectionMock.mock.calls[0][0].num_ctx).toBe(16384);
+  });
+
+  it("shows the context warning when the test cannot verify the context", async () => {
+    const user = userEvent.setup();
+    testLocalLlmConnectionMock.mockResolvedValue({
+      ok: true,
+      message: "Connected — model responded.",
+      model: "llama3.1:8b",
+      provider: "local_openai_compatible",
+      latency_ms: 12,
+      error: null,
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
+      server_reported_context_tokens: null,
+      context_verified: false,
+      context_warning:
+        "An OpenAI-compatible endpoint does not expose its context window.",
+    });
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /test connection/i }),
+    );
+
+    expect(
+      await within(card).findByTestId("server-context-warning"),
+    ).toHaveTextContent(/does not expose its context window/i);
+    expect(
+      within(card).queryByTestId("server-context-verified"),
+    ).toBeNull();
+  });
+
+  it("shows a static cannot-verify note for OpenAI-compatible endpoints", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    // Default provider is openai_compatible: the note is visible pre-test.
+    expect(
+      within(card).getByTestId("openai-context-note"),
+    ).toHaveTextContent(/cannot verify the server.s real context/i);
+
+    await user.selectOptions(
+      within(card).getByLabelText(/provider/i),
+      "ollama",
+    );
+    expect(within(card).queryByTestId("openai-context-note")).toBeNull();
   });
 });

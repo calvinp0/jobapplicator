@@ -710,6 +710,11 @@ export interface LocalLlmSettings {
   context_window_tokens: number;
   reserved_output_tokens: number;
   max_input_tokens: number;
+  // Optional Ollama server context length (task 126). Distinct from
+  // context_window_tokens: num_ctx configures the model server, while the
+  // context-budget fields only drive JobApplicator's own prompt budgeting.
+  // null means "leave the server at its own default".
+  num_ctx: number | null;
   allow_compression: boolean;
   allow_fallback: boolean;
   abort_on_over_budget: boolean;
@@ -729,6 +734,7 @@ export interface LocalLlmSettingsUpdate {
   context_window_tokens: number;
   reserved_output_tokens: number;
   max_input_tokens?: number | null;
+  num_ctx?: number | null;
   allow_compression: boolean;
   allow_fallback: boolean;
   abort_on_over_budget: boolean;
@@ -745,6 +751,13 @@ export interface LocalLlmTestResult {
   error: string | null;
   context_window_tokens: number;
   max_input_tokens: number;
+  // Server-context detection (task 127). server_reported_context_tokens is
+  // the context the model server says it is running (Ollama-native only);
+  // context_verified is true only when that read succeeded; context_warning
+  // explains why the context could not be verified.
+  server_reported_context_tokens: number | null;
+  context_verified: boolean;
+  context_warning: string | null;
 }
 
 export interface LocalLlmTestRequest {
@@ -754,6 +767,7 @@ export interface LocalLlmTestRequest {
   context_window_tokens?: number | null;
   reserved_output_tokens?: number | null;
   max_input_tokens?: number | null;
+  num_ctx?: number | null;
   api_key?: string | null;
   provider?: string | null;
   preserve_existing_key?: boolean;

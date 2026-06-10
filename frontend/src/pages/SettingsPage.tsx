@@ -534,6 +534,9 @@ function LocalLlmCard() {
   const [contextWindowTokens, setContextWindowTokens] = useState(8192);
   const [reservedOutputTokens, setReservedOutputTokens] = useState(1200);
   const [maxInputTokens, setMaxInputTokens] = useState(6500);
+  // Kept as a string so the input can distinguish "blank = unset (null)"
+  // from an explicit number.
+  const [numCtx, setNumCtx] = useState("");
   const [allowCompression, setAllowCompression] = useState(true);
   const [allowFallback, setAllowFallback] = useState(true);
   const [abortOnOverBudget, setAbortOnOverBudget] = useState(false);
@@ -549,6 +552,9 @@ function LocalLlmCard() {
   const [testResult, setTestResult] = useState<{
     ok: boolean;
     message: string;
+    serverReportedContextTokens: number | null;
+    contextVerified: boolean;
+    contextWarning: string | null;
   } | null>(null);
 
   function applySettings(data: LocalLlmSettings) {
@@ -561,6 +567,7 @@ function LocalLlmCard() {
     setContextWindowTokens(data.context_window_tokens ?? 8192);
     setReservedOutputTokens(data.reserved_output_tokens ?? 1200);
     setMaxInputTokens(data.max_input_tokens ?? 6500);
+    setNumCtx(data.num_ctx != null ? String(data.num_ctx) : "");
     setAllowCompression(data.allow_compression ?? true);
     setAllowFallback(data.allow_fallback ?? true);
     setAbortOnOverBudget(data.abort_on_over_budget ?? false);
@@ -589,6 +596,9 @@ function LocalLlmCard() {
     setSaveError(null);
     setTestResult(null);
   }
+
+  // Blank means "unset": the server keeps its own default context length.
+  const parsedNumCtx = numCtx.trim() === "" ? null : Number(numCtx);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -620,6 +630,7 @@ function LocalLlmCard() {
         context_window_tokens: contextWindowTokens,
         reserved_output_tokens: reservedOutputTokens,
         max_input_tokens: maxInputTokens,
+        num_ctx: parsedNumCtx,
         allow_compression: allowCompression,
         allow_fallback: allowFallback,
         abort_on_over_budget: abortOnOverBudget,
@@ -649,6 +660,7 @@ function LocalLlmCard() {
         context_window_tokens: contextWindowTokens,
         reserved_output_tokens: reservedOutputTokens,
         max_input_tokens: maxInputTokens,
+        num_ctx: parsedNumCtx,
         provider,
         api_key: apiKey ? apiKey : null,
         preserve_existing_key: !apiKey,
@@ -658,9 +670,19 @@ function LocalLlmCard() {
         message: result.ok
           ? result.message
           : result.error || result.message,
+        serverReportedContextTokens:
+          result.server_reported_context_tokens ?? null,
+        contextVerified: Boolean(result.context_verified),
+        contextWarning: result.context_warning ?? null,
       });
     } catch (err: unknown) {
-      setTestResult({ ok: false, message: extractApiDetail(err) });
+      setTestResult({
+        ok: false,
+        message: extractApiDetail(err),
+        serverReportedContextTokens: null,
+        contextVerified: false,
+        contextWarning: null,
+      });
     } finally {
       setIsTesting(false);
     }
@@ -763,7 +785,7 @@ function LocalLlmCard() {
           </label>
 
           <label className="field">
-            <span>Context window tokens</span>
+            <span>JobApplicator context budget</span>
             <input
               type="number"
               min={512}
@@ -776,6 +798,12 @@ function LocalLlmCard() {
               }}
             />
           </label>
+          <p className="settings-helper">
+            This budget only changes how JobApplicator sizes its prompts. It
+            does not change the running model server&apos;s context window —
+            the server keeps its own context unless configured separately
+            (e.g. Ollama <code>num_ctx</code>).
+          </p>
 
           <label className="field">
             <span>Reserved output tokens</span>
@@ -805,8 +833,43 @@ function LocalLlmCard() {
             />
           </label>
 
+          {provider === "ollama" ? (
+            <>
+              <label className="field">
+                <span>Ollama context length (num_ctx, optional)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={numCtx}
+                  placeholder="Leave blank to use the server default"
+                  onChange={(e) => {
+                    setNumCtx(e.target.value);
+                    clearFeedback();
+                  }}
+                />
+              </label>
+              <p className="settings-helper">
+                Sets the Ollama server&apos;s running context length so the
+                model actually runs at that size. Leave blank to keep the
+                server&apos;s own default.
+              </p>
+            </>
+          ) : null}
+
+          {provider === "openai_compatible" ? (
+            <p
+              className="settings-helper"
+              role="note"
+              data-testid="openai-context-note"
+            >
+              An OpenAI-compatible endpoint does not expose its context
+              window, so JobApplicator cannot verify the server&apos;s real
+              context — treat the configured budget as an assumption.
+            </p>
+          ) : null}
+
           <dl className="run-meta">
-            <dt>Configured context</dt>
+            <dt>JobApplicator context budget</dt>
             <dd>{contextWindowTokens} tokens</dd>
             <dt>Usable input budget</dt>
             <dd>{usableBudget} tokens</dd>
@@ -918,6 +981,27 @@ function LocalLlmCard() {
               className={testResult.ok ? "settings-success" : "error"}
             >
               {testResult.message}
+            </p>
+          ) : null}
+          {testResult?.ok &&
+          testResult.contextVerified &&
+          testResult.serverReportedContextTokens != null ? (
+            <p
+              role="status"
+              className="settings-helper"
+              data-testid="server-context-verified"
+            >
+              Server-reported context: {testResult.serverReportedContextTokens}{" "}
+              tokens
+            </p>
+          ) : null}
+          {testResult && !testResult.contextVerified && testResult.contextWarning ? (
+            <p
+              role="alert"
+              className="settings-warning"
+              data-testid="server-context-warning"
+            >
+              {testResult.contextWarning}
             </p>
           ) : null}
 
