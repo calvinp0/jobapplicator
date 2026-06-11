@@ -2744,7 +2744,7 @@ tasks:
     file: "agent_tasks/137-add-ollama-model-pull-endpoint.md"
     branch: "agent/137-add-ollama-model-pull-endpoint"
     worktree: "agent-137-add-ollama-model-pull-endpoint"
-    status: "ready"
+    status: "done"
     depends_on:
       - "136-classify-local-llm-connection-errors"
     verification:
