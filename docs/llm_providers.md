@@ -190,11 +190,38 @@ the connection result plus configured budget information:
 
 - **Connected — model responded. Configured context window: 8192 tokens.
   Usable input budget: 6500 tokens.**
-- An error/timeout message (connection refused, timeout, HTTP error, or a
-  malformed response).
+- A classified failure message (see below).
 
 The test uses the values currently in the form (including an unsaved
 `num_ctx`), so you can verify unsaved edits before saving.
+
+### Classified connection failures (task 136)
+
+Rather than echoing a raw transport error, the test **diagnoses why** it
+failed and surfaces a stable `error_kind` on the response so the UI can show a
+clear, distinct error for each class. The kinds are:
+
+- `none` — success; the model responded.
+- `endpoint_unavailable` — the server could not be reached at all (connection
+  refused, DNS failure, timeout). Check the host/port and that the server is
+  running.
+- `bad_url` — the host is reachable but the endpoint or API surface looks wrong
+  (e.g. a 404 / 405). Check the base URL and the selected provider — for
+  example, pointing the **OpenAI-compatible** provider at a bare
+  `http://host:11434` (missing `/v1`) lands here, as does an **Ollama** base URL
+  that does not expose the native API.
+- `model_not_installed` — the server is reachable and the model is **not**
+  installed on it. This is **Ollama-native only**: the test lists the server's
+  installed models (via `/api/tags`) *before* the chat probe, so a missing
+  model is reported as `Model "<name>" is not installed on this Ollama server.
+  Installed: ...` instead of leaking a raw `HTTP 404` from the chat probe. The
+  OpenAI-compatible surface cannot list models, so a missing model there cannot
+  be detected before the probe.
+- `unexpected` — any other failure, with the underlying detail preserved.
+
+For the **Ollama-native** provider a successful test also returns the
+`installed_models` list (from `/api/tags`); for the OpenAI-compatible provider
+that list is empty because model listing is unsupported on that surface.
 
 ### Server-context detection (task 127)
 
