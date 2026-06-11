@@ -765,6 +765,91 @@ def _post_json(
     return json.loads(body)
 
 
+def _get_json(
+    url: str,
+    *,
+    headers: Optional[dict[str, str]] = None,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    """GET ``url`` and return the parsed JSON response.
+
+    The GET counterpart to :func:`_post_json`. Kept as a module-level
+    function so tests can monkeypatch the network boundary (e.g. Ollama's
+    ``/api/tags``) without a live server.
+    """
+    req = urllib.request.Request(url, method="GET")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        body = resp.read().decode("utf-8")
+    return json.loads(body)
+
+
+# ---- Endpoint error classification (task 135) ------------------------
+
+
+# Stable machine ``kind`` values for :func:`classify_endpoint_error`. They let
+# callers (task 136 diagnostics, the model-listing endpoint) distinguish *why*
+# a local endpoint call failed instead of surfacing a raw transport error.
+ENDPOINT_ERROR_UNAVAILABLE = "endpoint_unavailable"
+ENDPOINT_ERROR_BAD_URL = "bad_url"
+ENDPOINT_ERROR_UNEXPECTED = "unexpected"
+
+# HTTP statuses that indicate the host is reachable but the path / API surface
+# is wrong (e.g. hitting ``/api/tags`` on a non-Ollama server, or a base URL
+# that does not expose the queried endpoint).
+_BAD_URL_HTTP_STATUSES = frozenset({404, 405})
+
+
+def classify_endpoint_error(exc: BaseException, *, base_url: str) -> tuple[str, str]:
+    """Classify why a local endpoint call failed.
+
+    Returns ``(kind, message)`` where ``kind`` is a stable machine value and
+    ``message`` is a human-readable explanation that preserves the underlying
+    detail. ``kind`` is one of:
+
+    - :data:`ENDPOINT_ERROR_UNAVAILABLE` — the server could not be reached at
+      all (connection refused, DNS failure, timeout — any ``URLError``).
+    - :data:`ENDPOINT_ERROR_BAD_URL` — the host is reachable but returned an
+      HTTP status that indicates the path or surface is wrong (404 / 405).
+    - :data:`ENDPOINT_ERROR_UNEXPECTED` — anything else, with the underlying
+      detail preserved.
+
+    Note: ``HTTPError`` is a subclass of ``URLError``, so it must be checked
+    first or every 404 would be misclassified as unavailable.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in _BAD_URL_HTTP_STATUSES:
+            return (
+                ENDPOINT_ERROR_BAD_URL,
+                f"HTTP {exc.code} from {base_url}: {exc.reason}. The host is "
+                "reachable but the URL or API surface looks wrong.",
+            )
+        return (
+            ENDPOINT_ERROR_UNEXPECTED,
+            f"HTTP {exc.code} from {base_url}: {exc.reason}",
+        )
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if isinstance(reason, TimeoutError):
+            detail = "timed out"
+        else:
+            detail = str(reason)
+        return (
+            ENDPOINT_ERROR_UNAVAILABLE,
+            f"Could not reach a local LLM server at {base_url}: {detail}",
+        )
+    if isinstance(exc, TimeoutError):
+        return (
+            ENDPOINT_ERROR_UNAVAILABLE,
+            f"Could not reach a local LLM server at {base_url}: timed out",
+        )
+    return (
+        ENDPOINT_ERROR_UNEXPECTED,
+        f"Unexpected error contacting {base_url}: {exc}",
+    )
+
+
 def _extract_content(body: dict[str, Any]) -> Optional[str]:
     # OpenAI-compatible shape: choices[0].message.content.
     choices = body.get("choices")
@@ -927,6 +1012,52 @@ def detect_server_context(
     )
 
 
+# ---- Installed-model detection (task 135) ----------------------------
+
+
+@dataclass
+class ModelListResult:
+    """Outcome of listing the models installed on a local endpoint.
+
+    ``models`` is the list of installed model names (empty on any failure or
+    on an unsupported surface). ``ok`` is true only when the listing actually
+    succeeded. ``error`` / ``error_kind`` carry a human message and a stable
+    machine ``kind`` (from :func:`classify_endpoint_error`, plus the
+    ``unsupported`` kind for the OpenAI-compatible surface) when it did not.
+    """
+
+    ok: bool
+    provider: str
+    models: list[str] = field(default_factory=list)
+    error: Optional[str] = None
+    error_kind: Optional[str] = None
+
+
+# The OpenAI-compatible surface has no portable installed-model endpoint, so
+# ``list_models`` reports this stable kind rather than a transport error.
+MODEL_LIST_UNSUPPORTED = "unsupported"
+
+
+def _extract_ollama_model_names(body: dict[str, Any]) -> list[str]:
+    """Pull installed model names from an Ollama ``/api/tags`` response.
+
+    Ollama returns ``{"models": [{"name": "llama3.1:8b", ...}, ...]}``. Each
+    entry's ``name`` (falling back to ``model``) is the installed model tag.
+    Anything malformed is skipped rather than raising.
+    """
+    names: list[str] = []
+    models = body.get("models")
+    if isinstance(models, list):
+        for entry in models:
+            if isinstance(entry, dict):
+                name = entry.get("name") or entry.get("model")
+                if isinstance(name, str) and name:
+                    names.append(name)
+            elif isinstance(entry, str) and entry:
+                names.append(entry)
+    return names
+
+
 class LocalLLMClient:
     """A tiny local chat client with two provider surfaces.
 
@@ -961,6 +1092,18 @@ class LocalLLMClient:
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         return f"{base}/api/chat"
+
+    def _ollama_native_tags_url(self) -> str:
+        """The native ``/api/tags`` endpoint derived from ``base_url``.
+
+        Like :meth:`_ollama_native_chat_url`, the installed-model listing lives
+        at the server root, so a configured ``http://host:11434/v1`` resolves
+        to ``http://host:11434/api/tags`` (the ``/v1`` suffix is stripped).
+        """
+        base = self.config.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return f"{base}/api/tags"
 
     def chat(
         self,
@@ -1200,3 +1343,64 @@ class LocalLLMClient:
             task="test_connection",
         )
         return result
+
+    def list_models(self) -> ModelListResult:
+        """List the models installed on the configured endpoint.
+
+        Installed-model detection is **Ollama-native only**: the native
+        ``/api/tags`` endpoint (derived from ``base_url`` by stripping a
+        trailing ``/v1``) reports the installed model tags. For the
+        OpenAI-compatible provider there is no portable model-listing
+        endpoint, so this returns a non-OK result with ``error_kind`` of
+        :data:`MODEL_LIST_UNSUPPORTED` rather than raising.
+
+        Transport errors never raise either: they are classified via
+        :func:`classify_endpoint_error` and returned as a non-OK result so
+        callers (the diagnostics in task 136, the UI in task 138) can act on
+        the ``error_kind`` without a try/except.
+        """
+        if self.config.provider != PROVIDER_OLLAMA:
+            return ModelListResult(
+                ok=False,
+                provider=self.provider_id,
+                error=(
+                    "Listing installed models is only supported for the "
+                    "Ollama-native provider; the OpenAI-compatible surface has "
+                    "no portable model-listing endpoint."
+                ),
+                error_kind=MODEL_LIST_UNSUPPORTED,
+            )
+
+        url = self._ollama_native_tags_url()
+        headers: dict[str, str] = {}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+
+        try:
+            body = _get_json(
+                url,
+                headers=headers,
+                timeout=self.config.effective_timeout_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - classified, never re-raised
+            kind, message = classify_endpoint_error(exc, base_url=url)
+            return ModelListResult(
+                ok=False,
+                provider=self.provider_id,
+                error=message,
+                error_kind=kind,
+            )
+
+        if not isinstance(body, dict):
+            return ModelListResult(
+                ok=False,
+                provider=self.provider_id,
+                error=f"Ollama {url} returned a response that was not a JSON object.",
+                error_kind=ENDPOINT_ERROR_UNEXPECTED,
+            )
+
+        return ModelListResult(
+            ok=True,
+            provider=self.provider_id,
+            models=_extract_ollama_model_names(body),
+        )

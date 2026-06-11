@@ -141,6 +141,8 @@ Settings persist in the existing `app_settings` key/value table under the
 - `PUT /settings/local-llm` — save config (validates URL, model, timeout).
 - `DELETE /settings/local-llm` — reset to defaults.
 - `POST /llm/local/test-connection` — connection test (see below).
+- `GET /llm/local/models` — list installed models (Ollama-native only;
+  see below).
 - `POST /llm/local/suggest-resume-edits` — experimental, bounded resume
   suggestions; refuses unless `resume_suggestions` is enabled.
 
@@ -226,6 +228,39 @@ detection never raises and never blocks the connection test.
 Detection is **reporting only**: a detected context is never auto-applied to
 the budget. You stay in control of the **Context window tokens** budget; the
 detection result just tells you whether your assumption matches reality.
+
+## Listing installed models (Ollama-native only)
+
+`GET /llm/local/models` reports which models are actually installed on the
+configured endpoint, so the UI can offer a picker of real models instead of a
+free-text field.
+
+Installed-model detection is **Ollama-native only**: the backend queries
+Ollama's native `/api/tags` endpoint (derived from the configured base URL by
+stripping a trailing `/v1`, since the native API and the OpenAI-compatible
+`/v1` surface share a host). For the **OpenAI-compatible** provider there is no
+portable model-listing endpoint, so the call returns
+`ok = false`, an empty `models` list, and `error_kind = "unsupported"` (it
+never raises and never hits the network).
+
+The endpoint accepts optional `base_url` / `provider` query overrides — the
+same override rule the connection test uses — so the UI can list models for
+unsaved edits before saving. The response shape is:
+
+```json
+{ "provider": "local_ollama", "ok": true, "models": ["llama3.1:8b", "qwen2.5-coder:14b"], "error": null, "error_kind": null }
+```
+
+On a transport failure the call does not raise; it returns `ok = false` with a
+classified `error_kind`:
+
+- `endpoint_unavailable` — the server could not be reached (connection
+  refused, DNS failure, timeout).
+- `bad_url` — the host is reachable but returned a status indicating the path
+  or API surface is wrong (HTTP 404 / 405).
+- `unexpected` — any other failure, with the underlying detail preserved.
+- `unsupported` — the configured provider is OpenAI-compatible, which has no
+  model-listing endpoint (see above).
 
 ## Schema validation and fallback
 
