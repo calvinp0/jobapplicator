@@ -2607,7 +2607,7 @@ tasks:
     file: "agent_tasks/130-add-local-llm-task-timeout-and-ollama-default.md"
     branch: "agent/130-add-local-llm-task-timeout-and-ollama-default"
     worktree: "agent-130-add-local-llm-task-timeout-and-ollama-default"
-    status: "ready"
+    status: "done"
     depends_on:
       - "127-detect-and-log-local-server-context"
     verification:
@@ -2627,7 +2627,7 @@ tasks:
     file: "agent_tasks/131-add-local-llm-reasoning-controls.md"
     branch: "agent/131-add-local-llm-reasoning-controls"
     worktree: "agent-131-add-local-llm-reasoning-controls"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "130-add-local-llm-task-timeout-and-ollama-default"
     verification:
