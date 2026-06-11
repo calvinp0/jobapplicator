@@ -2647,7 +2647,7 @@ tasks:
     file: "agent_tasks/132-add-preflight-provider-degradation-guardrails.md"
     branch: "agent/132-add-preflight-provider-degradation-guardrails"
     worktree: "agent-132-add-preflight-provider-degradation-guardrails"
-    status: "ready"
+    status: "done"
     depends_on:
       - "131-add-local-llm-reasoning-controls"
     verification:
@@ -2665,7 +2665,7 @@ tasks:
     file: "agent_tasks/133-log-preflight-local-llm-performance-and-fallback.md"
     branch: "agent/133-log-preflight-local-llm-performance-and-fallback"
     worktree: "agent-133-log-preflight-local-llm-performance-and-fallback"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "132-add-preflight-provider-degradation-guardrails"
     verification:
