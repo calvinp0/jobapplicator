@@ -339,8 +339,9 @@ best-effort and reporting only — a detection failure records
 `context_verified = false` and **never fails preflight**, and a detected
 context is never auto-applied to the budget. The per-task
 `effective_assumed_context_tokens` records the context window each local task
-budgeted against, and `requested_num_ctx` appears when an Ollama `num_ctx` is
-configured.
+budgeted against (the smaller preflight default unless the user configured one
+— see *Preflight context budget* below), and `requested_num_ctx` appears when
+an Ollama `num_ctx` is configured.
 
 When the local provider is unavailable the manifest records
 `"provider": "deterministic"` (and `"fallback_used": true` with a
@@ -365,3 +366,42 @@ starts from `ats_keywords.json`, and if preflight conflicts with the job
 description, the job description wins. The `evidence_gap_plan.json` only
 suggests where to look; it never asserts that evidence exists. See
 `docs/contracts/claude_run_directory.md` for the per-artifact schemas.
+
+### Provider-degradation guardrails (task 132)
+
+Each preflight task routes to the local provider independently, so a slow or
+wedged local server would otherwise make *every* eligible task pay a full
+timeout before falling back — a single cold or unresponsive server can add
+several multiples of the timeout to a run. Preflight therefore tracks a small
+**per-run** degraded state:
+
+- The **first** local-LLM timeout in a run marks the provider *degraded*. A
+  degraded provider is still attempted on later tasks (a single cold task can
+  recover), but the state is recorded.
+- After **repeated** timeouts (`LOCAL_SKIP_TIMEOUT_THRESHOLD = 2`) the
+  remaining tasks **skip** the local provider entirely and go straight to the
+  deterministic extractor, recorded with a `fallback_reason` of
+  `"local provider skipped after repeated timeouts"`.
+
+A *timeout* is distinguished from an ordinary schema-validation failure (which
+does **not** degrade the provider). Skipping never raises — the deterministic
+path always produces a valid artifact — so preflight still never fails the run.
+The state is **per run only**: a fresh `run_preflight` starts clean. Only the
+in-memory `PreflightResult` (`local_degraded` / `local_skipped`) and the
+per-task `fallback_reason` carry this today; surfacing it in the manifest /
+run-trace is a follow-up.
+
+### Preflight context budget (task 132)
+
+Preflight prompts are short — a single job description plus a fixed JSON shape —
+and a reasoning model handed a large declared context wastes it for no benefit.
+So preflight budgets against a smaller default context window
+(`PREFLIGHT_DEFAULT_CONTEXT_WINDOW_TOKENS`) than the general local-LLM default
+(`DEFAULT_CONTEXT_WINDOW_TOKENS`, 8192) whenever the user has **not** explicitly
+configured `context_window_tokens`. This is a *default*, never a cap: an
+explicit user-configured context window is always honoured verbatim. The
+over-budget handling (compression / fallback / abort) is unchanged; only the
+default the budgeting starts from is smaller. Preflight also never adds a
+sequential-thinking / chain-of-thought step — each prompt asks for a single
+JSON object and relies on the local-LLM reasoning controls (task 131) to
+suppress model-side thinking.

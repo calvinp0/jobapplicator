@@ -296,8 +296,10 @@ def test_run_preflight_local_provider_validates_json(tmp_path, monkeypatch):
         assert task["provider"] == "local_openai_compatible"
         assert task["status"] == "succeeded"
         assert not task.get("fallback_used")
-        assert task["context"]["context_window_tokens"] == 8192
-        assert task["context"]["max_input_tokens"] == 6500
+        # Preflight budgets against the smaller default window (task 132) when
+        # the user has not explicitly raised context_window_tokens.
+        assert task["context"]["context_window_tokens"] == 4096
+        assert task["context"]["max_input_tokens"] == 2896
         assert task["context"]["estimated_input_tokens_initial"] > 0
         assert task["context"]["estimated_input_tokens_final"] > 0
         assert task["context"]["compression_used"] is False
@@ -581,7 +583,10 @@ def test_run_preflight_records_effective_assumed_context_per_task(
         (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
     )
     for task in manifest["tasks"]:
-        assert task["context"]["effective_assumed_context_tokens"] == 8192
+        # Preflight budgets against the smaller default window (task 132); the
+        # per-task assumed context tracks that effective budget, not the 8192
+        # general default still reported in the top-level summary below.
+        assert task["context"]["effective_assumed_context_tokens"] == 4096
         # No num_ctx configured -> the requested_num_ctx key is absent.
         assert "requested_num_ctx" not in task["context"]
 
@@ -661,3 +666,177 @@ def test_run_preflight_deterministic_run_has_no_context_summary(tmp_path):
         (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
     )
     assert "context" not in manifest
+
+
+# ---- task 132: provider-degradation guardrails -----------------------
+
+
+def test_local_timeout_marks_provider_degraded_but_not_skipped(
+    tmp_path, monkeypatch
+):
+    """A single early timeout degrades the provider; later tasks still try it."""
+    calls = {"n": 0}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        calls["n"] += 1
+        if calls["n"] == 1:  # the first task (job_summary) times out
+            raise TimeoutError("simulated timeout")
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_enabled_config())
+
+    # One timeout: degraded, but below the skip threshold so the provider is
+    # still attempted on later tasks.
+    assert result.local_degraded is True
+    assert result.local_skipped is False
+    assert result.fallback_used is True
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    first = manifest["tasks"][0]
+    assert first["provider"] == preflight.DETERMINISTIC_PROVIDER
+    assert first["fallback_used"] is True
+    assert first["fallback_reason"].startswith("timeout after")
+    # Later tasks recovered on the local provider (not skipped).
+    for task in manifest["tasks"][1:]:
+        assert task["provider"] == "local_openai_compatible"
+        assert task["status"] == "succeeded"
+        assert not task.get("fallback_used")
+
+
+def test_schema_failure_does_not_mark_provider_degraded(tmp_path, monkeypatch):
+    """An ordinary (non-timeout) local failure must not degrade the provider."""
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _completion("this is not json at all")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_enabled_config())
+
+    # Every task fell back on a schema failure, but that is not a timeout.
+    assert result.fallback_used is True
+    assert result.local_degraded is False
+    assert result.local_skipped is False
+
+
+def test_repeated_timeouts_skip_local_provider(tmp_path, monkeypatch):
+    """After the threshold of timeouts, later tasks bypass the local call."""
+    calls = {"n": 0}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        calls["n"] += 1
+        raise TimeoutError("simulated timeout")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_enabled_config())
+
+    # The threshold is 2: the first two tasks each pay a timeout, then the
+    # remaining tasks are skipped without contacting the server.
+    assert calls["n"] == preflight.LOCAL_SKIP_TIMEOUT_THRESHOLD == 2
+    assert result.local_degraded is True
+    assert result.local_skipped is True
+    assert result.fallback_used is True
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    # Every task still produced a valid artifact via the deterministic floor.
+    for filename in PREFLIGHT_FILES:
+        assert (run_dir / "input" / "preflight" / filename).is_file()
+    for task in manifest["tasks"]:
+        assert task["provider"] == preflight.DETERMINISTIC_PROVIDER
+        assert task["fallback_used"] is True
+    # The tasks after the threshold record the explicit skip reason.
+    skipped = [
+        t for t in manifest["tasks"]
+        if t.get("fallback_reason") == preflight.LOCAL_SKIPPED_REASON
+    ]
+    assert len(skipped) == 2  # the 3rd and 4th tasks were skipped
+    for task in skipped:
+        assert task["status"] == preflight.STATUS_FALLBACK
+
+
+def test_degraded_state_is_per_run(tmp_path, monkeypatch):
+    """A fresh run with a healthy client attempts the local provider normally."""
+    # First run: the server always times out -> degraded + skipped.
+    def timeout_post(url, payload, *, headers=None, timeout=60.0):
+        raise TimeoutError("simulated timeout")
+
+    monkeypatch.setattr(local_llm, "_post_json", timeout_post)
+    run_dir_1 = _make_run_dir(tmp_path / "a")
+    first = preflight.run_preflight(run_dir_1, config=_enabled_config())
+    assert first.local_degraded is True
+    assert first.local_skipped is True
+
+    # Second run: a healthy client. State does not carry over.
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir_2 = _make_run_dir(tmp_path / "b")
+    second = preflight.run_preflight(run_dir_2, config=_enabled_config())
+    assert second.local_degraded is False
+    assert second.local_skipped is False
+    assert second.fallback_used is False
+    assert second.provider == "local_openai_compatible"
+
+
+def test_preflight_uses_smaller_default_context_but_honours_explicit(
+    tmp_path, monkeypatch
+):
+    """The smaller default applies only when the user has not set the window."""
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+
+    # Default config: budget against the smaller preflight default window.
+    run_dir_default = _make_run_dir(tmp_path / "default")
+    preflight.run_preflight(run_dir_default, config=_enabled_config())
+    manifest_default = json.loads(
+        (run_dir_default / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest_default["tasks"]:
+        ctx = task["context"]
+        assert ctx["context_window_tokens"] == (
+            preflight.PREFLIGHT_DEFAULT_CONTEXT_WINDOW_TOKENS
+        )
+        assert ctx["context_window_tokens"] < local_llm.DEFAULT_CONTEXT_WINDOW_TOKENS
+
+    # Explicit user-configured window is honoured verbatim, not lowered.
+    run_dir_explicit = _make_run_dir(tmp_path / "explicit")
+    explicit_cfg = local_llm.LocalLLMConfig(enabled=True, context_window_tokens=32768)
+    preflight.run_preflight(run_dir_explicit, config=explicit_cfg)
+    manifest_explicit = json.loads(
+        (run_dir_explicit / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest_explicit["tasks"]:
+        assert task["context"]["context_window_tokens"] == 32768
+
+
+def test_preflight_messages_have_no_reasoning_instruction():
+    """Preflight prompts request a single JSON object, never step-by-step reasoning."""
+    message_sets = [
+        preflight._job_summary_messages(FIXTURE_JD),
+        preflight._ats_keywords_messages(FIXTURE_JD),
+        preflight._role_requirements_messages(FIXTURE_JD),
+        preflight._evidence_gap_messages(FIXTURE_JD, ["input/evidence_sources_index.md"]),
+    ]
+    forbidden = (
+        "think step by step",
+        "step-by-step",
+        "step by step",
+        "chain of thought",
+        "chain-of-thought",
+        "reason through",
+        "show your reasoning",
+        "let's think",
+    )
+    for messages in message_sets:
+        joined = " ".join(m["content"] for m in messages).lower()
+        for phrase in forbidden:
+            assert phrase not in joined, f"unexpected reasoning instruction: {phrase!r}"
+        # Each preflight prompt explicitly asks for a single JSON object only.
+        assert "single json object and nothing else" in joined
