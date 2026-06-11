@@ -99,6 +99,31 @@ The Settings page exposes an **LLM Providers** section (separate from the
   **Context window tokens** above: `num_ctx` configures the model server,
   while the context-budget fields drive JobApplicator's own prompt budgeting.
   Leave it unset to use the server's own default.
+- **Reasoning control (`thinking_mode`)** — how the model's "thinking" /
+  chain-of-thought output is handled. Reasoning-capable local models
+  (DeepSeek-R1, Qwen3, and other Ollama models) emit reasoning — usually
+  wrapped in `<think>...</think>` markers — *before* the JSON object the
+  preflight pipeline expects, which would otherwise make schema validation
+  fail and discard an otherwise usable answer. Modes:
+  - **`strip_thinking`** *(default)* — allow the model to reason but remove the
+    `<think>`/`<thinking>` blocks from the reply **before** JSON parsing, so the
+    structured answer is recovered. Existing users get this without
+    reconfiguring.
+  - **`hide_thinking`** — like `strip_thinking` for parsing, and additionally
+    keeps the reasoning out of the surfaced content so it never reaches
+    persisted artifacts or logs downstream.
+  - **`no_thinking`** — ask the model not to reason at all. For the **Ollama**
+    provider the backend sends the native `think: false` option on the
+    `/api/chat` request; for **OpenAI-compatible** servers (which have no
+    portable disable-reasoning flag) it reinforces *reply with ONLY the JSON
+    object, no reasoning* in the system prompt. A provider-specific reasoning
+    flag is **never** sent to an OpenAI-compatible endpoint.
+
+  Disabling reasoning is **best-effort** — a reasoning-tuned model may emit a
+  `<think>` block anyway — so **stripping is the reliable mechanism**: every
+  structured call strips `<think>`/`<thinking>` blocks before parsing
+  regardless of the selected mode. The default (`strip_thinking`) is safe for
+  every model.
 - **Over-budget handling** — deterministic compression, deterministic
   fallback, and abort-on-over-budget controls. Local prompts are never
   silently truncated.
