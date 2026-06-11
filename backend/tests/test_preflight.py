@@ -840,3 +840,172 @@ def test_preflight_messages_have_no_reasoning_instruction():
             assert phrase not in joined, f"unexpected reasoning instruction: {phrase!r}"
         # Each preflight prompt explicitly asks for a single JSON object only.
         assert "single json object and nothing else" in joined
+
+
+# ---- task 133: local LLM performance + attempted-but-fell-back -------
+
+
+def _timeout_post(url, payload, *, headers=None, timeout=60.0):
+    raise TimeoutError("simulated timeout")
+
+
+def _invalid_json_post(url, payload, *, headers=None, timeout=60.0):
+    return _completion("this is not json at all")
+
+
+def test_local_attempted_task_records_performance(tmp_path, monkeypatch):
+    """A genuinely-attempted local task records prompt tokens, elapsed, timeout."""
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir = _make_run_dir(tmp_path)
+
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest["tasks"]:
+        assert task["local_attempted"] is True
+        perf = task["performance"]
+        # The prompt token estimate reuses the budgeted figure (task 133).
+        assert perf["prompt_token_estimate"] == (
+            task["context"]["estimated_input_tokens_final"]
+        )
+        assert perf["prompt_token_estimate"] > 0
+        # A real call was issued, so elapsed time is recorded.
+        assert isinstance(perf["elapsed_ms"], int)
+        assert perf["elapsed_ms"] >= 0
+        # The default openai-compatible per-call timeout bounded the attempt.
+        assert perf["effective_timeout_seconds"] == 60
+    # Top-level: local was attempted, no fallback, not degraded/skipped.
+    assert manifest["local_attempted"] is True
+    assert manifest["local_degraded"] is False
+    assert manifest["local_skipped"] is False
+    assert manifest["fallback_used"] is False
+    # Manifest still validates with the additive fields.
+    data, reason = preflight.validate_manifest(manifest)
+    assert reason is None and data is not None
+
+
+def test_deterministic_only_task_has_no_performance_fields(tmp_path):
+    """A deterministic-only run gains no misleading attempted/performance fields."""
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_disabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest["tasks"]:
+        assert "local_attempted" not in task
+        assert "performance" not in task
+    # No top-level attempted/degraded signals on a deterministic-only run.
+    assert "local_attempted" not in manifest
+    assert "local_degraded" not in manifest
+    assert "local_skipped" not in manifest
+    data, reason = preflight.validate_manifest(manifest)
+    assert reason is None and data is not None
+
+
+def test_manifest_distinguishes_attempted_from_fallback_on_timeout(
+    tmp_path, monkeypatch
+):
+    """The timeout-degraded path records attempted + degraded distinctly."""
+    calls = {"n": 0}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        calls["n"] += 1
+        if calls["n"] == 1:  # only the first task times out
+            raise TimeoutError("simulated timeout")
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    # Local was attempted; the run fell back; the provider degraded (one
+    # timeout) but did not cross the skip threshold.
+    assert manifest["local_attempted"] is True
+    assert manifest["fallback_used"] is True
+    assert manifest["local_degraded"] is True
+    assert manifest["local_skipped"] is False
+    # The timed-out task still recorded that local was attempted, with the
+    # effective timeout that bounded it (no elapsed time on a timeout).
+    first = manifest["tasks"][0]
+    assert first["provider"] == preflight.DETERMINISTIC_PROVIDER
+    assert first["fallback_used"] is True
+    assert first["local_attempted"] is True
+    assert first["performance"]["effective_timeout_seconds"] == 60
+    assert "elapsed_ms" not in first["performance"]
+    data, reason = preflight.validate_manifest(manifest)
+    assert reason is None and data is not None
+
+
+def test_summary_shows_attempted_but_fell_back(tmp_path, monkeypatch):
+    """render_preflight_summary surfaces the attempted-but-fell-back line."""
+    monkeypatch.setattr(local_llm, "_post_json", _invalid_json_post)
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    summary = (
+        run_dir / "input" / "preflight" / "preflight_summary.md"
+    ).read_text()
+    assert preflight.LOCAL_ATTEMPTED_FELL_BACK_MARKER in summary
+
+
+def test_summary_omits_line_on_clean_local_success(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    summary = (
+        run_dir / "input" / "preflight" / "preflight_summary.md"
+    ).read_text()
+    assert preflight.LOCAL_ATTEMPTED_FELL_BACK_MARKER not in summary
+
+
+def test_summary_omits_line_on_deterministic_only_run(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_disabled_config())
+
+    summary = (
+        run_dir / "input" / "preflight" / "preflight_summary.md"
+    ).read_text()
+    assert preflight.LOCAL_ATTEMPTED_FELL_BACK_MARKER not in summary
+
+
+def test_attempted_but_fell_back_marker_emitted_to_trace(tmp_path, monkeypatch):
+    """The marker line reaches the run trace via the log/progress callbacks."""
+    monkeypatch.setattr(local_llm, "_post_json", _invalid_json_post)
+    run_dir = _make_run_dir(tmp_path)
+    logs: list[str] = []
+    progress: list[str] = []
+
+    preflight.run_preflight(
+        run_dir,
+        config=_enabled_config(),
+        on_log=logs.append,
+        on_progress=progress.append,
+    )
+
+    joined = "\n".join(logs + progress)
+    assert preflight.LOCAL_ATTEMPTED_FELL_BACK_MARKER in joined
+
+
+def test_no_marker_on_clean_local_success(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir = _make_run_dir(tmp_path)
+    logs: list[str] = []
+    progress: list[str] = []
+
+    preflight.run_preflight(
+        run_dir,
+        config=_enabled_config(),
+        on_log=logs.append,
+        on_progress=progress.append,
+    )
+
+    joined = "\n".join(logs + progress)
+    assert preflight.LOCAL_ATTEMPTED_FELL_BACK_MARKER not in joined

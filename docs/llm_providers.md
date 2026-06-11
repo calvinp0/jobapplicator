@@ -303,6 +303,9 @@ summary of the assumed vs. server-reported context for the run (task 127):
   "provider": "local_ollama",
   "model": "llama3.1:8b",
   "fallback_used": false,
+  "local_attempted": true,
+  "local_degraded": false,
+  "local_skipped": false,
   "context": {
     "assumed_context_tokens": 8192,
     "server_reported_context_tokens": 131072,
@@ -314,6 +317,12 @@ summary of the assumed vs. server-reported context for the run (task 127):
     {"name": "ats_keyword_extraction", "provider": "local_ollama",
      "model": "llama3.1:8b", "status": "succeeded",
      "output": "input/preflight/ats_keywords.json",
+     "local_attempted": true,
+     "performance": {
+       "prompt_token_estimate": 5810,
+       "elapsed_ms": 4210,
+       "effective_timeout_seconds": 180
+     },
      "context": {
        "context_window_tokens": 8192,
        "reserved_output_tokens": 1200,
@@ -386,10 +395,39 @@ several multiples of the timeout to a run. Preflight therefore tracks a small
 A *timeout* is distinguished from an ordinary schema-validation failure (which
 does **not** degrade the provider). Skipping never raises — the deterministic
 path always produces a valid artifact — so preflight still never fails the run.
-The state is **per run only**: a fresh `run_preflight` starts clean. Only the
-in-memory `PreflightResult` (`local_degraded` / `local_skipped`) and the
-per-task `fallback_reason` carry this today; surfacing it in the manifest /
-run-trace is a follow-up.
+The state is **per run only**: a fresh `run_preflight` starts clean. It is
+carried by the in-memory `PreflightResult` (`local_degraded` / `local_skipped`),
+the per-task `fallback_reason`, and — for local runs — the top-level
+`local_degraded` / `local_skipped` manifest flags (task 133, below).
+
+### Local LLM performance and attempted-but-fell-back (task 133)
+
+So an operator can audit *how* the local provider behaved (and see clearly when
+it was tried and then degraded), every preflight run records local performance
+and attempt signals in the manifest:
+
+- **Per task that issued a local call** — `local_attempted: true` and a
+  `performance` object with `prompt_token_estimate` (the budgeted
+  `estimated_input_tokens_final`, not recomputed), `elapsed_ms` (the call's
+  measured time; absent on a timeout, which fires before a latency is recorded),
+  and `effective_timeout_seconds` (the per-call timeout that bounded it, from
+  task 130). A task that fell back *before* contacting the server (over budget,
+  or skipped after repeated timeouts) is not "attempted" and records neither
+  field.
+- **Per run (local runs only)** — top-level `local_attempted` (distinct from
+  `fallback_used`: a run can fall back without ever issuing a local call, and a
+  run can attempt local and still fall back), plus `local_degraded` and
+  `local_skipped` from the guardrail state above. A deterministic-only run omits
+  all three so it never gains misleading "attempted" fields.
+
+When the local provider was attempted **and** the run fell back, preflight emits
+a stable `Local LLM attempted but fell back: <reason>` line — noting *degraded*
+or *skipped after repeated timeouts* when applicable — through both the
+`render_preflight_summary` projection (`preflight_summary.md`) and the run's
+trace callbacks (`run.log` / progress stream), so the situation is obvious at a
+glance instead of looking like a run that never tried the local provider. The
+phrasing is fixed (`LOCAL_ATTEMPTED_FELL_BACK_MARKER`) so the run-trace UI can
+key on it.
 
 ### Preflight context budget (task 132)
 
