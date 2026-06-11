@@ -293,4 +293,6 @@ def test_run_preflight_local_provider_surfaces_in_trace(tmp_path, monkeypatch):
         assert event.status == "complete"
         # Timing was stamped by run_preflight.
         assert event.duration_ms is not None
-        assert event.context_budget_tokens == 8192
+        # Preflight budgets against the smaller default window (task 132) when
+        # the user has not explicitly raised context_window_tokens.
+        assert event.context_budget_tokens == 4096

@@ -46,8 +46,14 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import local_llm
-from .context_budget import ContextBudgetCheck, check_context_budget
+from .context_budget import (
+    ContextBudget,
+    ContextBudgetCheck,
+    build_context_budget,
+    check_context_budget,
+)
 from .local_llm import (
+    LLMCallResult,
     LocalLLMClient,
     LocalLLMConfig,
     TASK_ATS_KEYWORDS,
@@ -87,6 +93,31 @@ TASK_NAME_EVIDENCE_GAP_PLAN = "evidence_gap_plan"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 STATUS_FALLBACK = "fallback"
+
+# Provider-degradation guardrails (task 132). A slow or wedged local server
+# otherwise makes *every* eligible preflight task pay a full timeout before
+# falling back, multiplying the wasted wall-clock by the number of tasks. The
+# first local timeout in a run marks the provider degraded; once this many
+# timeouts accumulate the remaining tasks skip the local provider entirely and
+# go straight to the deterministic extractor. The threshold is deliberately
+# small (2) so a single cold task can still recover while a genuinely
+# unresponsive server is abandoned after one extra confirmation.
+LOCAL_SKIP_TIMEOUT_THRESHOLD = 2
+
+# Recorded as the per-task ``fallback_reason`` when a task is routed straight
+# to the deterministic extractor because the local provider was skipped after
+# repeated timeouts.
+LOCAL_SKIPPED_REASON = "local provider skipped after repeated timeouts"
+
+# Default context window preflight budgets against (task 132). Preflight
+# prompts are short — a single job description plus a fixed JSON shape — and a
+# reasoning model handed a large declared context wastes it (and slows down)
+# for no benefit. So preflight budgets against a smaller window than the
+# general local-LLM default (``local_llm.DEFAULT_CONTEXT_WINDOW_TOKENS`` =
+# 8192) whenever the user has not explicitly configured ``context_window_tokens``.
+# This is a *default*, never a cap: an explicit user-configured context window
+# is always honoured verbatim (see ``_preflight_context_budget``).
+PREFLIGHT_DEFAULT_CONTEXT_WINDOW_TOKENS = 4096
 
 # Keyword category / priority vocabularies (used by validators and the
 # deterministic extractor). Categories follow the task spec.
@@ -191,6 +222,35 @@ class PreflightResult:
     tasks: list[PreflightTaskResult] = field(default_factory=list)
     manifest_path: Optional[Path] = None
     artifact_paths: dict[str, Path] = field(default_factory=dict)
+    # Per-run provider-degradation state (task 132), exposed in-memory for the
+    # manifest/run-trace task (133). ``local_degraded`` is set after the first
+    # local timeout; ``local_skipped`` after the repeated-timeout threshold,
+    # once the remaining tasks bypass the local provider entirely.
+    local_degraded: bool = False
+    local_skipped: bool = False
+
+
+@dataclass
+class _ProviderHealth:
+    """Per-run local-provider health tracker (task 132).
+
+    Threaded explicitly through the per-task ``_run_one`` calls — never
+    module-level or process-global — so degradation is scoped to a single
+    ``run_preflight`` invocation and a fresh run always starts clean.
+    """
+
+    timeouts: int = 0
+    degraded: bool = False
+
+    def record_timeout(self) -> None:
+        """Note a local timeout; the first one marks the provider degraded."""
+        self.timeouts += 1
+        self.degraded = True
+
+    @property
+    def skip_local(self) -> bool:
+        """Whether remaining tasks should bypass the local provider."""
+        return self.timeouts >= LOCAL_SKIP_TIMEOUT_THRESHOLD
 
 
 # A spec wiring a manifest task name to its routing policy id, artifact
@@ -301,6 +361,11 @@ def run_preflight(
     results: list[PreflightTaskResult] = []
     artifact_paths: dict[str, Path] = {}
 
+    # Per-run provider-degradation tracker (task 132). Created fresh per call —
+    # never module-level — so degradation is scoped to this run and a fresh
+    # ``run_preflight`` always starts clean.
+    health = _ProviderHealth()
+
     # job_summary -------------------------------------------------------
     progress("Summarizing job description")
     _t0, _started = time.monotonic(), datetime.now(timezone.utc).isoformat()
@@ -313,6 +378,7 @@ def run_preflight(
         deterministic=lambda: deterministic_job_summary(jd_text),
         validator=validate_job_summary,
         log=log,
+        health=health,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_JOB_SUMMARY.artifact, data, results, result, artifact_paths, log)
@@ -329,6 +395,7 @@ def run_preflight(
         deterministic=lambda: deterministic_ats_keywords(jd_text),
         validator=validate_ats_keywords,
         log=log,
+        health=health,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_ATS_KEYWORDS.artifact, data, results, result, artifact_paths, log)
@@ -345,6 +412,7 @@ def run_preflight(
         deterministic=lambda: deterministic_role_requirements(jd_text),
         validator=validate_role_requirements,
         log=log,
+        health=health,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_ROLE_REQUIREMENTS.artifact, data, results, result, artifact_paths, log)
@@ -364,6 +432,7 @@ def run_preflight(
         ),
         validator=validate_evidence_gap_plan,
         log=log,
+        health=health,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_EVIDENCE_GAP_PLAN.artifact, data, results, result, artifact_paths, log)
@@ -412,6 +481,8 @@ def run_preflight(
         tasks=results,
         manifest_path=manifest_path,
         artifact_paths=artifact_paths,
+        local_degraded=health.degraded,
+        local_skipped=health.skip_local,
     )
 
 
@@ -427,6 +498,81 @@ def _stamp_timing(
     result.completed_at = datetime.now(timezone.utc).isoformat()
 
 
+def _is_timeout(call: LLMCallResult) -> bool:
+    """Whether a failed local call timed out (vs. a schema/other failure).
+
+    A timeout is identified from the :class:`LLMCallResult` contract in
+    :mod:`app.local_llm`: the call failed (``ok is False``) and its ``error``
+    is the documented ``"timeout after Ns contacting ..."`` string. Ordinary
+    schema-validation failures keep ``ok`` truthy (or carry a non-timeout
+    error) and therefore do **not** count as a timeout (task 132).
+    """
+    return (
+        not call.ok
+        and isinstance(call.error, str)
+        and call.error.startswith("timeout after")
+    )
+
+
+def _preflight_context_budget(cfg: LocalLLMConfig) -> ContextBudget:
+    """Return the context budget preflight should use (task 132).
+
+    Preflight budgets against a smaller default window than the general
+    local-LLM default when the user has not explicitly configured
+    ``context_window_tokens`` (detected by it still being the library default).
+    An explicit user value — raised *or* lowered — is honoured verbatim; the
+    smaller value is a default, not a cap. When the smaller default is applied,
+    ``max_input_tokens`` is clamped to fit the reduced window so the budget
+    stays valid; the over-budget handling (compression/fallback/abort) is
+    unchanged.
+    """
+    if cfg.context_window_tokens != local_llm.DEFAULT_CONTEXT_WINDOW_TOKENS:
+        # User explicitly set a context window: honour it exactly.
+        return cfg.context_budget
+
+    window = PREFLIGHT_DEFAULT_CONTEXT_WINDOW_TOKENS
+    computed_max = window - cfg.reserved_output_tokens
+    max_input = cfg.max_input_tokens
+    if max_input is None or max_input > computed_max:
+        max_input = computed_max
+    return build_context_budget(window, cfg.reserved_output_tokens, max_input)
+
+
+def _deterministic_result(
+    spec: _TaskSpec,
+    deterministic: Callable[[], dict[str, Any]],
+    validator: Callable[[Any], tuple[Optional[dict[str, Any]], Optional[str]]],
+    *,
+    status: str = STATUS_SUCCEEDED,
+    fallback_used: bool = False,
+    fallback_reason: Optional[str] = None,
+    context: Optional[dict[str, Any]] = None,
+) -> tuple[dict[str, Any], PreflightTaskResult]:
+    """Build (and validate) a deterministic-extractor task result.
+
+    The deterministic output is validated so a bug there surfaces as a failed
+    task rather than a malformed artifact. Shared by every path that resolves a
+    task to the deterministic floor (local disabled, budget fallback, post-call
+    fallback, and the task-132 skip path).
+    """
+    data = deterministic()
+    valid, det_reason = validator(data)
+    if det_reason is not None or valid is None:
+        raise PreflightError(
+            f"deterministic {spec.name} produced invalid output: {det_reason}"
+        )
+    return valid, PreflightTaskResult(
+        name=spec.name,
+        provider=DETERMINISTIC_PROVIDER,
+        model=None,
+        status=status,
+        output=_artifact_relpath(spec.artifact),
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        context=context,
+    )
+
+
 def _run_one(
     spec: _TaskSpec,
     cfg: LocalLLMConfig,
@@ -437,6 +583,7 @@ def _run_one(
     deterministic: Callable[[], dict[str, Any]],
     validator: Callable[[Any], tuple[Optional[dict[str, Any]], Optional[str]]],
     log: Callable[[str], None],
+    health: _ProviderHealth,
 ) -> tuple[dict[str, Any], PreflightTaskResult]:
     """Resolve one task to (artifact_data, task_result).
 
@@ -444,10 +591,32 @@ def _run_one(
     back to the deterministic extractor on any network/schema failure. The
     deterministic output is itself validated so a bug there surfaces as a
     failed task rather than a malformed artifact.
+
+    ``health`` carries the per-run provider-degradation state (task 132): a
+    local timeout marks the provider degraded, and once the run has seen the
+    repeated-timeout threshold the local provider is skipped for this and every
+    later task — routed straight to the deterministic floor. Skipping never
+    raises; the deterministic path already guarantees a valid artifact.
     """
     use_local = client is not None and local_allowed_for_task(spec.policy_task, cfg)
 
     if use_local:
+        # Repeated local timeouts already tripped the skip threshold this run:
+        # bypass the local provider entirely instead of paying another timeout.
+        if health.skip_local:
+            log(
+                f"jobapply: {LOCAL_SKIPPED_REASON}; using deterministic "
+                f"{spec.name} extractor"
+            )
+            return _deterministic_result(
+                spec,
+                deterministic,
+                validator,
+                status=STATUS_FALLBACK,
+                fallback_used=True,
+                fallback_reason=LOCAL_SKIPPED_REASON,
+            )
+
         messages, context_info, fallback_reason = _prepare_local_messages(
             spec,
             cfg,
@@ -456,18 +625,11 @@ def _run_one(
             log,
         )
         if fallback_reason is not None:
-            data = deterministic()
-            valid, det_reason = validator(data)
-            if det_reason is not None or valid is None:
-                raise PreflightError(
-                    f"deterministic {spec.name} produced invalid output: {det_reason}"
-                )
-            return valid, PreflightTaskResult(
-                name=spec.name,
-                provider=DETERMINISTIC_PROVIDER,
-                model=None,
+            return _deterministic_result(
+                spec,
+                deterministic,
+                validator,
                 status=STATUS_FALLBACK,
-                output=_artifact_relpath(spec.artifact),
                 fallback_used=True,
                 fallback_reason=fallback_reason,
                 context=context_info,
@@ -491,42 +653,27 @@ def _run_one(
                 )
             fallback_reason = f"local output failed schema validation: {reason}"
         else:
+            # A timeout degrades the provider for the rest of the run; an
+            # ordinary schema/parse failure does not (task 132).
+            if _is_timeout(call):
+                health.record_timeout()
             fallback_reason = (
                 call.error
                 or "local provider returned an invalid or unparseable response"
             )
         # Fall through to deterministic, recording that local was intended.
-        data = deterministic()
-        valid, det_reason = validator(data)
-        if det_reason is not None or valid is None:
-            raise PreflightError(
-                f"deterministic {spec.name} produced invalid output: {det_reason}"
-            )
-        return valid, PreflightTaskResult(
-            name=spec.name,
-            provider=DETERMINISTIC_PROVIDER,
-            model=None,
+        return _deterministic_result(
+            spec,
+            deterministic,
+            validator,
             status=STATUS_SUCCEEDED,
-            output=_artifact_relpath(spec.artifact),
             fallback_used=True,
             fallback_reason=fallback_reason,
             context=context_info,
         )
 
     # Deterministic is the intended provider (local disabled/not allowed).
-    data = deterministic()
-    valid, det_reason = validator(data)
-    if det_reason is not None or valid is None:
-        raise PreflightError(
-            f"deterministic {spec.name} produced invalid output: {det_reason}"
-        )
-    return valid, PreflightTaskResult(
-        name=spec.name,
-        provider=DETERMINISTIC_PROVIDER,
-        model=None,
-        status=STATUS_SUCCEEDED,
-        output=_artifact_relpath(spec.artifact),
-    )
+    return _deterministic_result(spec, deterministic, validator)
 
 
 def _prepare_local_messages(
@@ -536,18 +683,21 @@ def _prepare_local_messages(
     source_text: str,
     log: Callable[[str], None],
 ) -> tuple[list[dict[str, str]], dict[str, Any], Optional[str]]:
-    budget = cfg.context_budget
+    # Preflight budgets against a smaller default context than the general
+    # local-LLM default unless the user explicitly configured one (task 132).
+    budget = _preflight_context_budget(cfg)
     messages = message_builder(source_text)
-    initial = _check_messages(messages, cfg=cfg)
+    initial = _check_messages(messages, budget=budget)
     context_info: dict[str, Any] = {
         "context_window_tokens": initial.context_window_tokens,
         "reserved_output_tokens": initial.reserved_output_tokens,
         "max_input_tokens": initial.max_input_tokens,
         # The context window JobApplicator budgeted this task against (task
-        # 127). Same value as ``context_window_tokens`` today, recorded under
-        # an explicit name so every task entry carries an auditable record of
-        # the assumed context — even if the budget plumbing changes later.
-        "effective_assumed_context_tokens": cfg.context_window_tokens,
+        # 127). Tracks the effective preflight budget's window (task 132 lowers
+        # the default), recorded under an explicit name so every task entry
+        # carries an auditable record of the assumed context — even if the
+        # budget plumbing changes later.
+        "effective_assumed_context_tokens": budget.context_window_tokens,
         "estimated_input_tokens_initial": initial.estimated_input_tokens,
         "estimated_input_tokens_final": initial.estimated_input_tokens,
         "compression_used": False,
@@ -572,7 +722,7 @@ def _prepare_local_messages(
     if cfg.allow_compression:
         compressed = _compress_for_local_task(spec, source_text, budget.max_input_tokens)
         messages = message_builder(compressed)
-        final = _check_messages(messages, cfg=cfg)
+        final = _check_messages(messages, budget=budget)
         context_info.update(
             {
                 "estimated_input_tokens_final": final.estimated_input_tokens,
@@ -605,12 +755,12 @@ def _prepare_local_messages(
 
 
 def _check_messages(
-    messages: list[dict[str, str]], *, cfg: LocalLLMConfig
+    messages: list[dict[str, str]], *, budget: ContextBudget
 ) -> ContextBudgetCheck:
     prompt = "\n\n".join(
         f"{m.get('role', '')}: {m.get('content', '')}" for m in messages
     )
-    return check_context_budget(prompt, cfg.context_budget)
+    return check_context_budget(prompt, budget)
 
 
 def _write_artifact(
