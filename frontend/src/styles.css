@@ -1487,6 +1487,34 @@ fieldset.field legend {
   gap: 0.5rem;
 }
 
+/* Explicit, confirmation-gated model pull (task 139). */
+.local-llm-pull {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.local-llm-pull-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--card-bg);
+}
+
+.local-llm-pull-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.local-llm-pull-progress progress {
+  width: 100%;
+  max-width: 360px;
+}
+
 /* ----- Job detail ----- */
 
 .job-description {

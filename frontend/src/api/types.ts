@@ -826,6 +826,58 @@ export interface LocalLlmModelsResult {
   error_kind: string | null;
 }
 
+// ---- Explicit model pull (task 137 backend / task 139 UI) ----
+// POST /llm/local/pull installs a model on the configured Ollama server. The
+// request must name the model explicitly (there is no "pull whatever is
+// configured" behaviour) and is Ollama-native only. The response is a
+// newline-delimited JSON (NDJSON) progress stream — one event object per line.
+
+export interface LocalLlmPullRequest {
+  model: string;
+  // Optional overrides mirroring the test-connection rule, so the UI can pull
+  // against unsaved edits. The Ollama-only refusal is evaluated against the
+  // resolved (overridden) provider.
+  provider?: string | null;
+  base_url?: string | null;
+  api_key?: string | null;
+  preserve_existing_key?: boolean;
+}
+
+// The advisory line is always emitted first and restates that the backend
+// cannot verify whether the model will fit the host's disk/VRAM.
+export interface LocalLlmPullAdvisoryEvent {
+  type: "advisory";
+  model: string;
+  provider: string;
+  message: string;
+}
+
+// One progress line per server update. ``status`` is Ollama's progress string
+// (e.g. "pulling manifest", "downloading", "success"); ``completed`` / ``total``
+// are byte counts when the server reports them (null otherwise).
+export interface LocalLlmPullProgressEvent {
+  type: "progress";
+  status: string;
+  completed: number | null;
+  total: number | null;
+  digest: string | null;
+}
+
+// The result line is always emitted last. ``ok`` is false with a populated
+// ``error`` / ``error_kind`` when the pull failed (unknown model, mid-stream
+// connection loss, …); ``error_kind`` reuses the connection-test classification.
+export interface LocalLlmPullResultEvent {
+  type: "result";
+  ok: boolean;
+  error: string | null;
+  error_kind: string | null;
+}
+
+export type LocalLlmPullEvent =
+  | LocalLlmPullAdvisoryEvent
+  | LocalLlmPullProgressEvent
+  | LocalLlmPullResultEvent;
+
 export interface LocalLlmTestRequest {
   base_url?: string | null;
   model?: string | null;
