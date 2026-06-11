@@ -7,6 +7,7 @@ const {
   getLocalLlmSettingsMock,
   setLocalLlmSettingsMock,
   testLocalLlmConnectionMock,
+  listLocalLlmModelsMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -23,6 +24,7 @@ const {
     getLocalLlmSettingsMock: vi.fn(),
     setLocalLlmSettingsMock: vi.fn(),
     testLocalLlmConnectionMock: vi.fn(),
+    listLocalLlmModelsMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -81,6 +83,7 @@ vi.mock("../api", () => ({
   getLocalLlmSettings: getLocalLlmSettingsMock,
   setLocalLlmSettings: setLocalLlmSettingsMock,
   testLocalLlmConnection: testLocalLlmConnectionMock,
+  listLocalLlmModels: listLocalLlmModelsMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -598,5 +601,139 @@ describe("SettingsPage – Local LLM card", () => {
       "ollama",
     );
     expect(within(card).queryByTestId("openai-context-note")).toBeNull();
+  });
+
+  it("lists installed models and the picker updates the model field", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "llama3.1:8b" }),
+    );
+    listLocalLlmModelsMock.mockResolvedValue({
+      provider: "local_ollama",
+      ok: true,
+      models: ["llama3.1:8b", "qwen2.5-coder:14b"],
+      error: null,
+      error_kind: null,
+    });
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /list installed models/i }),
+    );
+
+    const select = (await within(card).findByTestId(
+      "installed-models-select",
+    )) as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "qwen2.5-coder:14b" }))
+      .toBeInTheDocument();
+
+    // The override is passed so listing works on unsaved edits.
+    expect(listLocalLlmModelsMock.mock.calls[0][0]).toMatchObject({
+      provider: "ollama",
+    });
+
+    // Selecting a listed model updates the free-text model field.
+    await user.selectOptions(select, "qwen2.5-coder:14b");
+    expect(
+      (within(card).getByLabelText(/model name/i) as HTMLInputElement).value,
+    ).toBe("qwen2.5-coder:14b");
+  });
+
+  it("shows the unsupported model-listing state for OpenAI-compatible", async () => {
+    const user = userEvent.setup();
+    // Default provider is openai_compatible: a static unsupported note shows.
+    renderPage();
+    const card = await waitFor(() => getCard());
+    expect(
+      within(card).getByTestId("models-unsupported"),
+    ).toHaveTextContent(/model listing is ollama-only/i);
+
+    listLocalLlmModelsMock.mockResolvedValue({
+      provider: "local_openai_compatible",
+      ok: false,
+      models: [],
+      error: "Model listing is not supported for the OpenAI-compatible provider.",
+      error_kind: "unsupported",
+    });
+
+    await user.click(
+      within(card).getByRole("button", { name: /list installed models/i }),
+    );
+
+    expect(
+      await within(card).findByTestId("models-error"),
+    ).toHaveTextContent(/only available for the ollama provider/i);
+    expect(within(card).queryByTestId("installed-models-select")).toBeNull();
+  });
+
+  it("renders a distinct model_not_installed connection failure", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "llama3.1:70b" }),
+    );
+    testLocalLlmConnectionMock.mockResolvedValue({
+      ok: false,
+      message: "Connection failed.",
+      model: "llama3.1:70b",
+      provider: "local_ollama",
+      latency_ms: null,
+      error: 'Model "llama3.1:70b" is not installed on this Ollama server.',
+      error_kind: "model_not_installed",
+      installed_models: ["llama3.1:8b", "qwen2.5-coder:14b"],
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
+      server_reported_context_tokens: null,
+      context_verified: false,
+      context_warning: null,
+    });
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /test connection/i }),
+    );
+
+    const result = await within(card).findByTestId("test-connection-result");
+    expect(result).toHaveAttribute("data-error-kind", "model_not_installed");
+    expect(result).toHaveTextContent(/is not installed on this ollama server/i);
+    expect(result).toHaveTextContent(/llama3\.1:8b, qwen2\.5-coder:14b/i);
+
+    // The installed models surface in the picker so the user can fix it.
+    expect(
+      within(card).getByTestId("installed-models-select"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a distinct endpoint_unavailable connection failure", async () => {
+    const user = userEvent.setup();
+    testLocalLlmConnectionMock.mockResolvedValue({
+      ok: false,
+      message: "Connection failed.",
+      model: "llama3.1:8b",
+      provider: "local_ollama",
+      latency_ms: null,
+      error: "Connection refused",
+      error_kind: "endpoint_unavailable",
+      installed_models: [],
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
+      server_reported_context_tokens: null,
+      context_verified: false,
+      context_warning: null,
+    });
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /test connection/i }),
+    );
+
+    const result = await within(card).findByTestId("test-connection-result");
+    expect(result).toHaveAttribute("data-error-kind", "endpoint_unavailable");
+    expect(result).toHaveTextContent(/could not reach the server/i);
   });
 });
