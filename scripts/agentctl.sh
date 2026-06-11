@@ -189,12 +189,30 @@ run_codex_interactive() {
   "$CODEX_BIN" "${args[@]}" "$prompt"
 }
 
+# claude_worktree_args <worktree-name>
+#
+# Print the --worktree flag to pass to claude, EXCEPT when the target is the
+# main checkout. `claude --worktree main` creates/uses a managed worktree at
+# .claude/worktrees/main (branch worktree-main), which is a *different*
+# checkout from the operator's real main branch — so anything written there
+# (planner output, in-place "main" task edits) is stranded off to the side
+# and never seen by `work`/`complete`, which run against the real main.
+# For the "main" target we therefore omit --worktree and let claude operate
+# in the current directory; callers cd into the real main checkout first.
+claude_worktree_args() {
+  local worktree="$1"
+  [[ "$worktree" == "main" ]] && return 0
+  printf -- '--worktree\n%s\n' "$worktree"
+}
+
 run_agent_exec() {
   local worktree="$1" permission_mode="$2" prompt="$3"
   case "$(normalize_agent "$AGENTCTL_AGENT")" in
     claude)
+      local wt_args=()
+      mapfile -t wt_args < <(claude_worktree_args "$worktree")
       "$CLAUDE_BIN" \
-        --worktree "$worktree" \
+        "${wt_args[@]}" \
         --permission-mode "$permission_mode" \
         -p "$prompt"
       ;;
@@ -208,8 +226,10 @@ run_agent_interactive() {
   local worktree="$1" permission_mode="$2" prompt="$3"
   case "$(normalize_agent "$AGENTCTL_AGENT")" in
     claude)
+      local wt_args=()
+      mapfile -t wt_args < <(claude_worktree_args "$worktree")
       "$CLAUDE_BIN" \
-        --worktree "$worktree" \
+        "${wt_args[@]}" \
         --permission-mode "$permission_mode" \
         "$prompt"
       ;;
@@ -4251,8 +4271,15 @@ Planner directives (follow exactly):
 ${directives}
 ----- END PLANNER DIRECTIVES -----
 
+IMPORTANT — actually create the files. Do not merely describe the plan in
+your final message. Each proposed task MUST result in a new
+agent_tasks/<NNN>-<slug>.md file on disk AND a matching queue.yaml entry. The
+queue.yaml in this checkout is the ONLY source of truth for which tasks exist:
+if a task id is not already in this queue.yaml, it does NOT exist yet and you
+must create it (do not assume tasks from prior conversations are present).
+
 After writing the new task files and queue entries:
-- Do not stage or commit. The operator will review the diff and commit.
+- Do not stage or commit; the harness commits the plan for you after you exit.
 - Print a short summary listing each new task id, title, status, and file path.
 EOF
 }
@@ -4278,8 +4305,10 @@ plan_local() {
   printf '  (planner may edit only agent_tasks/**, docs/contracts/agent_orchestration.md,\n'
   printf '   .agent_plans/**, and .gitignore. See plan --help for the full boundary.)\n\n'
 
-  if ! run_agent_exec \
-      "main" "$CLAUDE_PLAN_PERMISSION_MODE" "$prompt"; then
+  # Run the planner in the real main checkout (no --worktree main shadow), so
+  # its task files and queue edits land where `work` and the operator commit.
+  if ! ( cd "$REPO_ROOT" && run_agent_exec \
+      "main" "$CLAUDE_PLAN_PERMISSION_MODE" "$prompt" ); then
     die "$(agent_name) exited with a non-zero status"
   fi
 
@@ -4302,7 +4331,10 @@ commit_plan_output() {
     docs/contracts/agent_orchestration.md \
     .gitignore 2>/dev/null || true
   if git -C "$REPO_ROOT" diff --cached --quiet; then
-    printf '\nNo plan changes to commit.\n'
+    err "WARNING: the planner produced no task files or queue entries in the"
+    err "main checkout ($REPO_ROOT). Nothing was committed and 'work' will"
+    err "have nothing to run. The planner may have only described a plan"
+    err "instead of writing it. Re-run 'plan' or create the tasks by hand."
     return 0
   fi
   git -C "$REPO_ROOT" commit -m "Plan: $goal" >&2
