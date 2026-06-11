@@ -59,6 +59,13 @@ class LocalLLMTestResult(BaseModel):
     provider: str
     latency_ms: int | None = None
     error: str | None = None
+    # Connection-error classification (task 136). ``error_kind`` is a stable
+    # machine value: ``none`` on success, else ``endpoint_unavailable``,
+    # ``bad_url``, ``model_not_installed``, or ``unexpected``. ``installed_models``
+    # lists the models the server reports installed (Ollama-native only; empty
+    # for the OpenAI-compatible surface, which cannot list models).
+    error_kind: str | None = None
+    installed_models: list[str] = Field(default_factory=list)
     context_window_tokens: int
     max_input_tokens: int
     # Server-context detection (task 127). ``server_reported_context_tokens``
@@ -122,14 +129,18 @@ def test_local_llm_connection(
     budget = config.context_budget
 
     client = local_llm.LocalLLMClient(config)
-    result = client.test_connection()
+    # Diagnose *why* a test fails instead of echoing a raw transport error: for
+    # the Ollama-native provider this lists installed models first (so a missing
+    # model is reported as such, not as a 404) and classifies every failure into
+    # a stable ``error_kind`` (task 136).
+    diagnosis = client.diagnose_connection()
 
     # Best-effort: ask the server what context it is actually running. This
     # never raises — an unreachable or OpenAI-compatible server degrades to
     # ``context_verified = False`` with an explanatory warning.
     detection = local_llm.detect_server_context(config)
 
-    if result.ok:
+    if diagnosis.ok:
         message = (
             "Connected — model responded. "
             f"Configured context window: {budget.context_window_tokens} tokens. "
@@ -141,14 +152,18 @@ def test_local_llm_connection(
                 f"{detection.server_reported_context_tokens} tokens."
             )
     else:
-        message = "Connection failed."
+        # The diagnosis message already reflects the classified failure class
+        # (endpoint unavailable / wrong URL / model not installed).
+        message = diagnosis.message
     return LocalLLMTestResult(
-        ok=result.ok,
+        ok=diagnosis.ok,
         message=message,
-        model=result.model,
-        provider=result.provider,
-        latency_ms=result.latency_ms,
-        error=result.error,
+        model=diagnosis.model,
+        provider=diagnosis.provider,
+        latency_ms=diagnosis.latency_ms,
+        error=diagnosis.error,
+        error_kind=diagnosis.error_kind,
+        installed_models=diagnosis.installed_models,
         context_window_tokens=budget.context_window_tokens,
         max_input_tokens=budget.max_input_tokens,
         server_reported_context_tokens=detection.server_reported_context_tokens,

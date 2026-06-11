@@ -720,6 +720,10 @@ class LLMCallResult:
     fallback_used: bool = False
     repaired: bool = False
     error: Optional[str] = None
+    # Stable transport-failure classification (task 136). Set on a non-OK
+    # result whose failure came from the HTTP boundary; ``None`` on success or
+    # for non-transport failures (e.g. over-budget refusal, schema validation).
+    error_kind: Optional[str] = None
     latency_ms: Optional[int] = None
     context: Optional[dict[str, Any]] = None
 
@@ -794,6 +798,13 @@ def _get_json(
 ENDPOINT_ERROR_UNAVAILABLE = "endpoint_unavailable"
 ENDPOINT_ERROR_BAD_URL = "bad_url"
 ENDPOINT_ERROR_UNEXPECTED = "unexpected"
+
+# Connection-test diagnosis kinds (task 136). The transport kinds above are
+# reused verbatim; these two extend the set for the operational test endpoint:
+# ``model_not_installed`` is derived from the installed-model list (not a
+# transport error), and ``none`` marks a successful test.
+ERROR_KIND_MODEL_NOT_INSTALLED = "model_not_installed"
+ERROR_KIND_NONE = "none"
 
 # HTTP statuses that indicate the host is reachable but the path / API surface
 # is wrong (e.g. hitting ``/api/tags`` on a non-Ollama server, or a base URL
@@ -1058,6 +1069,54 @@ def _extract_ollama_model_names(body: dict[str, Any]) -> list[str]:
     return names
 
 
+# ---- Connection diagnosis (task 136) ---------------------------------
+
+
+@dataclass
+class ConnectionDiagnosis:
+    """Diagnosed outcome of a local LLM connection test.
+
+    Turns an opaque transport failure into an actionable one by distinguishing
+    *why* a test failed via a stable :attr:`error_kind` and, for the
+    Ollama-native provider, reporting the installed model list. ``error_kind``
+    is :data:`ERROR_KIND_NONE` on success, and one of
+    :data:`ENDPOINT_ERROR_UNAVAILABLE`, :data:`ENDPOINT_ERROR_BAD_URL`,
+    :data:`ERROR_KIND_MODEL_NOT_INSTALLED`, or :data:`ENDPOINT_ERROR_UNEXPECTED`
+    on failure. ``message`` is a human-readable line that reflects the kind so
+    the UI can show a clear, distinct error for each class.
+    """
+
+    ok: bool
+    provider: str
+    model: str
+    error_kind: str
+    message: str
+    installed_models: list[str] = field(default_factory=list)
+    latency_ms: Optional[int] = None
+    error: Optional[str] = None
+
+
+def _probe_failure_message(kind: str, detail: Optional[str]) -> str:
+    """A clear, kind-aware message for a failed chat probe.
+
+    The classified ``kind`` prefixes a short explanation; ``detail`` (the chat
+    probe's own error string, which already names the attempted URL) is appended
+    so the underlying cause is preserved.
+    """
+    detail = detail or "no additional detail"
+    if kind == ENDPOINT_ERROR_UNAVAILABLE:
+        return (
+            "Endpoint unavailable — could not reach the local LLM server. "
+            f"{detail}"
+        )
+    if kind == ENDPOINT_ERROR_BAD_URL:
+        return (
+            "Wrong provider URL — the host is reachable but the endpoint or API "
+            f"surface looks wrong. {detail}"
+        )
+    return f"Connection test failed. {detail}"
+
+
 class LocalLLMClient:
     """A tiny local chat client with two provider surfaces.
 
@@ -1209,12 +1268,17 @@ class LocalLLMClient:
                 url, payload, headers=headers, timeout=effective_timeout
             )
         except urllib.error.HTTPError as exc:
+            # Keep the existing human message but attach a classified kind so
+            # the diagnostic test endpoint can tell a wrong URL/surface (404/405)
+            # from an otherwise-unexpected HTTP status (task 136).
+            kind, _ = classify_endpoint_error(exc, base_url=url)
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
                 model=self.config.model,
                 task=task,
                 error=f"HTTP {exc.code} from {url}: {exc.reason}",
+                error_kind=kind,
             )
         except urllib.error.URLError as exc:
             reason = exc.reason
@@ -1228,6 +1292,7 @@ class LocalLLMClient:
                 model=self.config.model,
                 task=task,
                 error=msg,
+                error_kind=ENDPOINT_ERROR_UNAVAILABLE,
             )
         except TimeoutError:
             return LLMCallResult(
@@ -1236,6 +1301,7 @@ class LocalLLMClient:
                 model=self.config.model,
                 task=task,
                 error=f"timeout after {effective_timeout}s contacting {url}",
+                error_kind=ENDPOINT_ERROR_UNAVAILABLE,
             )
         except (json.JSONDecodeError, ValueError) as exc:
             return LLMCallResult(
@@ -1244,6 +1310,7 @@ class LocalLLMClient:
                 model=self.config.model,
                 task=task,
                 error=f"invalid response from {url}: {exc}",
+                error_kind=ENDPOINT_ERROR_UNEXPECTED,
             )
 
         latency_ms = int((time.monotonic() - start) * 1000)
@@ -1403,4 +1470,80 @@ class LocalLLMClient:
             ok=True,
             provider=self.provider_id,
             models=_extract_ollama_model_names(body),
+        )
+
+    def diagnose_connection(self) -> ConnectionDiagnosis:
+        """Run the connection test and classify *why* it failed (task 136).
+
+        For the **Ollama-native** provider this first lists installed models so
+        the result can (a) report them and (b) detect a missing model *before*
+        the chat probe surfaces a raw ``HTTP 404``. The three failure classes
+        are therefore distinguishable:
+
+        - **endpoint unavailable** — the server could not be reached at all;
+        - **wrong provider URL** — reachable host but the path/surface is wrong;
+        - **missing model** — server reachable, configured model not installed.
+
+        For the **OpenAI-compatible** provider model listing is unsupported, so
+        a missing model cannot be detected pre-probe; the chat probe runs and
+        any transport failure is still classified. Never raises.
+        """
+        installed_models: list[str] = []
+        if self.config.provider == PROVIDER_OLLAMA:
+            listing = self.list_models()
+            if not listing.ok:
+                # The /api/tags probe already failed: the server is unreachable
+                # or the URL/surface is wrong. Surface that classified failure
+                # directly rather than letting the chat probe produce a second,
+                # rawer error.
+                return ConnectionDiagnosis(
+                    ok=False,
+                    provider=self.provider_id,
+                    model=self.config.model,
+                    error_kind=listing.error_kind or ENDPOINT_ERROR_UNEXPECTED,
+                    message=listing.error or "Could not list installed models.",
+                    installed_models=[],
+                    error=listing.error,
+                )
+            installed_models = listing.models
+            if self.config.model not in installed_models:
+                installed = (
+                    ", ".join(installed_models) if installed_models else "(none)"
+                )
+                message = (
+                    f'Model "{self.config.model}" is not installed on this '
+                    f"Ollama server. Installed: {installed}."
+                )
+                return ConnectionDiagnosis(
+                    ok=False,
+                    provider=self.provider_id,
+                    model=self.config.model,
+                    error_kind=ERROR_KIND_MODEL_NOT_INSTALLED,
+                    message=message,
+                    installed_models=installed_models,
+                    error=message,
+                )
+
+        result = self.test_connection()
+        if result.ok:
+            return ConnectionDiagnosis(
+                ok=True,
+                provider=result.provider,
+                model=result.model,
+                error_kind=ERROR_KIND_NONE,
+                message="Connected — model responded.",
+                installed_models=installed_models,
+                latency_ms=result.latency_ms,
+            )
+
+        kind = result.error_kind or ENDPOINT_ERROR_UNEXPECTED
+        return ConnectionDiagnosis(
+            ok=False,
+            provider=result.provider,
+            model=result.model,
+            error_kind=kind,
+            message=_probe_failure_message(kind, result.error),
+            installed_models=installed_models,
+            latency_ms=result.latency_ms,
+            error=result.error,
         )

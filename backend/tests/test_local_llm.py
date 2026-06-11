@@ -381,6 +381,8 @@ def test_test_connection_timeout(client, monkeypatch):
     body = resp.json()
     assert body["ok"] is False
     assert "timeout" in (body["error"] or "").lower()
+    # A timeout/unreachable host classifies as endpoint_unavailable (task 136).
+    assert body["error_kind"] == "endpoint_unavailable"
 
 
 def test_test_connection_connection_error(client, monkeypatch):
@@ -396,6 +398,7 @@ def test_test_connection_connection_error(client, monkeypatch):
     body = resp.json()
     assert body["ok"] is False
     assert body["error"]
+    assert body["error_kind"] == "endpoint_unavailable"
 
 
 # ---- client request shape --------------------------------------------
@@ -959,7 +962,12 @@ def test_test_connection_reports_server_context_for_ollama(client, monkeypatch):
             return _ollama_show(8192)
         return _completion("pong")
 
+    def fake_get(url, *, headers=None, timeout=60.0):
+        # The Ollama connection test lists installed models before probing.
+        return _ollama_tags("llama3.1:8b")
+
     monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    monkeypatch.setattr(local_llm, "_get_json", fake_get)
 
     resp = client.post(
         "/llm/local/test-connection",
@@ -972,6 +980,9 @@ def test_test_connection_reports_server_context_for_ollama(client, monkeypatch):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is True
+    # A successful Ollama test reports the installed models and a clean kind.
+    assert body["error_kind"] == "none"
+    assert body["installed_models"] == ["llama3.1:8b"]
     assert body["context_verified"] is True
     assert body["server_reported_context_tokens"] == 8192
     assert body["context_warning"] is None
@@ -1017,7 +1028,11 @@ def test_test_connection_accepts_num_ctx_override(client, monkeypatch):
         captured["chat_payload"] = payload
         return _ollama_completion("pong")
 
+    def fake_get(url, *, headers=None, timeout=60.0):
+        return _ollama_tags("llama3.1:8b")
+
     monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    monkeypatch.setattr(local_llm, "_get_json", fake_get)
 
     resp = client.post(
         "/llm/local/test-connection",
@@ -1209,6 +1224,106 @@ def test_models_endpoint_reports_unsupported_for_openai_compatible(client):
     assert body["provider"] == "local_openai_compatible"
     assert body["models"] == []
     assert body["error_kind"] == "unsupported"
+
+
+# ---- classified connection diagnosis (task 136) ----------------------
+
+
+def test_test_connection_reports_model_not_installed(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_get(url, *, headers=None, timeout=60.0):
+        # The server is reachable and reports two installed models, neither of
+        # which is the configured one.
+        return _ollama_tags("llama3.1:8b", "qwen2.5-coder:14b")
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # The chat probe must never run for a missing model — it would surface
+        # a raw 404. Only best-effort context detection's /api/show may be hit.
+        if url.endswith("/api/show"):
+            return _ollama_show(8192)
+        raise AssertionError(
+            f"chat probe must not run for a missing model: {url}"
+        )
+
+    monkeypatch.setattr(local_llm, "_get_json", fake_get)
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:70b",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error_kind"] == "model_not_installed"
+    # The message names the missing model and the installed list, with no raw
+    # HTTP 404 leaking through.
+    assert "llama3.1:70b" in body["message"]
+    assert "llama3.1:8b" in body["message"]
+    assert "404" not in body["message"]
+    assert body["installed_models"] == ["llama3.1:8b", "qwen2.5-coder:14b"]
+
+
+def test_test_connection_classifies_endpoint_unavailable_for_ollama(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    def unreachable(url, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+
+    def post_unreachable(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(local_llm, "_get_json", unreachable)
+    monkeypatch.setattr(local_llm, "_post_json", post_unreachable)
+
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "llama3.1:8b",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error_kind"] == "endpoint_unavailable"
+    assert body["installed_models"] == []
+
+
+def test_test_connection_classifies_bad_url_for_ollama(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def not_found(url, *, headers=None, timeout=60.0):
+        raise urllib.error.HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    def post_not_found(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    monkeypatch.setattr(local_llm, "_get_json", not_found)
+    monkeypatch.setattr(local_llm, "_post_json", post_not_found)
+
+    # A reachable host whose tags endpoint 404s means the URL/surface is wrong,
+    # not that the server is down — a distinct kind from endpoint_unavailable.
+    resp = client.post(
+        "/llm/local/test-connection",
+        json={
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/wrong",
+            "model": "llama3.1:8b",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error_kind"] == "bad_url"
 
 
 # ---- per-call timeout (task 130) -------------------------------------
