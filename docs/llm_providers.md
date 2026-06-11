@@ -70,7 +70,17 @@ The Settings page exposes an **LLM Providers** section (separate from the
     OpenAI-compatible surface the base URL **must** include `/v1`, otherwise
     the request 404s.
 - **Model name** — e.g. `llama3.1:8b`, `qwen2.5-coder:14b`, `mistral-small`.
-- **Timeout (seconds)** — default `60`.
+- **Timeout (seconds)** — the per-call bound on each outbound local LLM
+  request. Leave it unset to use a **provider-aware default**: the
+  OpenAI-compatible provider uses `60`, while the **Ollama** provider uses
+  `180` (task 130). The longer Ollama default exists because Ollama-native
+  models often pay a large first-token / model-load cost on a cold start, so a
+  freshly loaded model can take well over a minute to answer the first
+  preflight task; a 60s bound would cut that off and silently force the
+  deterministic fallback on every run, making the provider look broken when it
+  is merely cold. An **explicit** timeout you configure always overrides the
+  default and is used verbatim for every provider. The effective value in force
+  is surfaced via `GET /settings/local-llm` (`effective_timeout_seconds`).
 - **Context window tokens** — configured local model context size, default
   `8192`.
 - **Reserved output tokens** — output headroom kept out of the input prompt,

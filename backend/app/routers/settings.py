@@ -96,7 +96,11 @@ class LocalLLMSettingsRead(BaseModel):
     provider: str
     base_url: str
     model: str
-    timeout_seconds: int
+    # ``timeout_seconds`` is the user's explicit choice (``null`` when unset);
+    # ``effective_timeout_seconds`` is the provider-aware value in force for
+    # each local call (Ollama defaults to 180s, others 60s; task 130).
+    timeout_seconds: int | None
+    effective_timeout_seconds: int
     allowed_tasks: dict[str, bool]
     context_window_tokens: int
     reserved_output_tokens: int
@@ -122,7 +126,9 @@ class LocalLLMSettingsUpdate(BaseModel):
     provider: str = local_llm.PROVIDER_OPENAI_COMPATIBLE
     base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
-    timeout_seconds: int = local_llm.DEFAULT_TIMEOUT_SECONDS
+    # Omitted/``null`` means "not explicitly configured": the effective timeout
+    # is then resolved provider-aware (Ollama 180s, others 60s; task 130).
+    timeout_seconds: int | None = None
     allowed_tasks: dict[str, bool] = Field(default_factory=dict)
     context_window_tokens: int = local_llm.DEFAULT_CONTEXT_WINDOW_TOKENS
     reserved_output_tokens: int = local_llm.DEFAULT_RESERVED_OUTPUT_TOKENS

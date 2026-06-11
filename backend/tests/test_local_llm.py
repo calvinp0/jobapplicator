@@ -1037,3 +1037,162 @@ def test_test_connection_accepts_num_ctx_override(client, monkeypatch):
     assert captured["chat_payload"]["options"]["num_ctx"] == 16384
     assert body["context_verified"] is True
     assert body["server_reported_context_tokens"] == 16384
+
+
+# ---- per-call timeout (task 130) -------------------------------------
+
+
+def test_ollama_effective_timeout_defaults_to_180(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["timeout"] = timeout
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # Ollama provider with no explicitly configured timeout: the cold-model
+    # aware 180s default is the per-call bound actually passed to the request.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+    )
+    assert config.timeout_explicitly_set is False
+    assert config.effective_timeout_seconds == 180
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+    assert captured["timeout"] == 180
+
+
+def test_openai_compatible_effective_timeout_defaults_to_60(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["timeout"] = timeout
+        return _completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # OpenAI-compatible provider keeps the 60s default when no explicit timeout
+    # is set — the longer Ollama default is provider-specific.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    assert config.timeout_explicitly_set is False
+    assert config.effective_timeout_seconds == 60
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+    assert captured["timeout"] == 60
+
+
+def test_explicit_timeout_wins_over_ollama_default(monkeypatch, tmp_path):
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["timeout"] = timeout
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # A user-configured timeout is honoured verbatim, even on Ollama where the
+    # default would otherwise be 180s. The stored value persists as an explicit
+    # choice and is the per-call bound passed to the request.
+    config = local_llm.save_config(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+        timeout_seconds=45,
+        allowed_tasks={},
+    )
+    assert config.timeout_explicitly_set is True
+    assert config.effective_timeout_seconds == 45
+    assert local_llm.get_config().effective_timeout_seconds == 45
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+    assert captured["timeout"] == 45
+
+
+def test_save_config_rejects_invalid_timeout(monkeypatch, tmp_path):
+    import pytest
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+
+    # Non-positive timeouts are rejected.
+    for bad in (0, -5):
+        with pytest.raises(local_llm.LocalLLMValidationError):
+            local_llm.save_config(
+                enabled=True,
+                provider=local_llm.PROVIDER_OLLAMA,
+                base_url="http://localhost:11434",
+                model="llama3.1:8b",
+                timeout_seconds=bad,
+                allowed_tasks={},
+            )
+
+    # A non-integer timeout is rejected too.
+    with pytest.raises(local_llm.LocalLLMValidationError):
+        local_llm.save_config(
+            enabled=True,
+            provider=local_llm.PROVIDER_OLLAMA,
+            base_url="http://localhost:11434",
+            model="llama3.1:8b",
+            timeout_seconds="not-an-int",
+            allowed_tasks={},
+        )
+
+
+def test_effective_timeout_round_trips_through_settings(client):
+    # Ollama with no explicit timeout: the stored value is null and the
+    # effective value in force is the 180s Ollama default.
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "llama3.1:8b",
+        },
+    ).raise_for_status()
+    body = client.get("/settings/local-llm").json()
+    assert body["timeout_seconds"] is None
+    assert body["effective_timeout_seconds"] == 180
+
+    # An explicit timeout wins and round-trips through both fields.
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "llama3.1:8b",
+            "timeout_seconds": 90,
+        },
+    ).raise_for_status()
+    body = client.get("/settings/local-llm").json()
+    assert body["timeout_seconds"] == 90
+    assert body["effective_timeout_seconds"] == 90
+
+
+def test_openai_compatible_effective_timeout_round_trips(client):
+    # OpenAI-compatible provider with no explicit timeout: effective stays 60.
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "openai_compatible",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+        },
+    ).raise_for_status()
+    body = client.get("/settings/local-llm").json()
+    assert body["timeout_seconds"] is None
+    assert body["effective_timeout_seconds"] == 60

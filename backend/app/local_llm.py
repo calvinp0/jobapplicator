@@ -65,6 +65,14 @@ SUPPORTED_PROVIDER_MODES = (PROVIDER_OPENAI_COMPATIBLE, PROVIDER_OLLAMA)
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_TIMEOUT_SECONDS = 60
+# Ollama-native models often pay a large first-token / model-load cost on a
+# cold start, so a freshly loaded model can take well over a minute to answer
+# the first preflight task. The 60s default cuts those off and silently forces
+# the deterministic fallback on every run, making the local provider look
+# "broken" when it is merely cold. When the user has *not* explicitly
+# configured a timeout, the Ollama-native provider therefore gets a longer
+# default; an explicit user value always overrides it (task 130).
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 180
 DEFAULT_CONTEXT_WINDOW_TOKENS = 8192
 DEFAULT_RESERVED_OUTPUT_TOKENS = 1200
 DEFAULT_MAX_INPUT_TOKENS = 6500
@@ -159,6 +167,14 @@ class LocalLLMConfig:
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    # Whether ``timeout_seconds`` was explicitly chosen by the user. When
+    # False the effective per-call timeout is resolved provider-aware via
+    # :attr:`effective_timeout_seconds` (Ollama gets 180s; other providers
+    # keep 60s) without baking that default into the stored value. This flag
+    # is persisted *implicitly*: ``timeout_seconds`` is stored as ``null`` in
+    # the settings JSON when unset and as an integer when explicit, so no new
+    # stored field name is introduced (task 130).
+    timeout_explicitly_set: bool = False
     allowed_tasks: dict[str, bool] = field(
         default_factory=lambda: dict(DEFAULT_ALLOWED_TASKS)
     )
@@ -185,6 +201,21 @@ class LocalLLMConfig:
             self.reserved_output_tokens,
             self.max_input_tokens,
         )
+
+    @property
+    def effective_timeout_seconds(self) -> int:
+        """The per-call timeout (seconds) actually applied to a local call.
+
+        An explicit user-configured timeout always wins. Otherwise the
+        Ollama-native provider uses a longer default (180s) to absorb a cold
+        model's first-token / load latency, while the OpenAI-compatible
+        provider keeps the 60s default (task 130).
+        """
+        if self.timeout_explicitly_set:
+            return self.timeout_seconds
+        if self.provider == PROVIDER_OLLAMA:
+            return DEFAULT_OLLAMA_TIMEOUT_SECONDS
+        return self.timeout_seconds
 
 
 def default_config() -> LocalLLMConfig:
@@ -243,12 +274,28 @@ def get_config() -> LocalLLMConfig:
         num_ctx = int(raw_num_ctx) if raw_num_ctx is not None else None
     except (TypeError, ValueError):
         num_ctx = None
+    # ``timeout_seconds`` is optional: a missing, null, or non-integer stored
+    # value means "not explicitly configured", so the effective timeout is
+    # resolved provider-aware at read time. A stored integer is an explicit
+    # user choice that is honoured verbatim (task 130).
+    raw_timeout = raw.get("timeout_seconds")
+    if raw_timeout is None:
+        timeout_seconds = DEFAULT_TIMEOUT_SECONDS
+        timeout_explicitly_set = False
+    else:
+        try:
+            timeout_seconds = int(raw_timeout)
+            timeout_explicitly_set = True
+        except (TypeError, ValueError):
+            timeout_seconds = DEFAULT_TIMEOUT_SECONDS
+            timeout_explicitly_set = False
     return LocalLLMConfig(
         enabled=bool(raw.get("enabled", False)),
         provider=raw.get("provider") or PROVIDER_OPENAI_COMPATIBLE,
         base_url=raw.get("base_url") or DEFAULT_BASE_URL,
         model=raw.get("model") or DEFAULT_MODEL,
-        timeout_seconds=int(raw.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS),
+        timeout_seconds=timeout_seconds,
+        timeout_explicitly_set=timeout_explicitly_set,
         allowed_tasks=_normalize_allowed_tasks(raw.get("allowed_tasks")),
         context_window_tokens=int(
             raw.get("context_window_tokens") or DEFAULT_CONTEXT_WINDOW_TOKENS
@@ -280,7 +327,7 @@ def save_config(
     provider: str,
     base_url: str,
     model: str,
-    timeout_seconds: int,
+    timeout_seconds: Optional[int] = None,
     allowed_tasks: dict[str, bool],
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
@@ -318,12 +365,22 @@ def save_config(
     if not model:
         raise LocalLLMValidationError("model is required")
 
-    try:
-        timeout_int = int(timeout_seconds)
-    except (TypeError, ValueError) as exc:
-        raise LocalLLMValidationError("timeout_seconds must be an integer") from exc
-    if timeout_int <= 0:
-        raise LocalLLMValidationError("timeout_seconds must be positive")
+    # ``timeout_seconds`` is optional: ``None`` records "not explicitly
+    # configured" (stored as null) so the effective timeout is resolved
+    # provider-aware at read time without overwriting the stored value. A
+    # supplied value must be a positive integer and is honoured verbatim for
+    # every provider (task 130).
+    if timeout_seconds is None:
+        timeout_int: Optional[int] = None
+    else:
+        try:
+            timeout_int = int(timeout_seconds)
+        except (TypeError, ValueError) as exc:
+            raise LocalLLMValidationError(
+                "timeout_seconds must be an integer"
+            ) from exc
+        if timeout_int <= 0:
+            raise LocalLLMValidationError("timeout_seconds must be positive")
 
     normalized_tasks = _normalize_allowed_tasks(allowed_tasks)
     try:
@@ -388,7 +445,10 @@ def save_config(
         provider=provider,
         base_url=base_url,
         model=model,
-        timeout_seconds=timeout_int,
+        timeout_seconds=(
+            timeout_int if timeout_int is not None else DEFAULT_TIMEOUT_SECONDS
+        ),
+        timeout_explicitly_set=timeout_int is not None,
         allowed_tasks=normalized_tasks,
         context_window_tokens=budget.context_window_tokens,
         reserved_output_tokens=budget.reserved_output_tokens,
@@ -445,7 +505,13 @@ def get_settings_view() -> dict[str, Any]:
         "provider": config.provider,
         "base_url": config.base_url,
         "model": config.model,
-        "timeout_seconds": config.timeout_seconds,
+        # ``timeout_seconds`` echoes the user's explicit choice (``None`` when
+        # unset); ``effective_timeout_seconds`` is the provider-aware value
+        # actually in force for each local call (task 130).
+        "timeout_seconds": (
+            config.timeout_seconds if config.timeout_explicitly_set else None
+        ),
+        "effective_timeout_seconds": config.effective_timeout_seconds,
         "allowed_tasks": dict(config.allowed_tasks),
         "context_window_tokens": budget.context_window_tokens,
         "reserved_output_tokens": budget.reserved_output_tokens,
@@ -717,7 +783,7 @@ def detect_server_context(
     if config.api_key:
         headers["Authorization"] = f"Bearer {config.api_key}"
     effective_timeout = (
-        timeout if timeout is not None else config.timeout_seconds
+        timeout if timeout is not None else config.effective_timeout_seconds
     )
 
     try:
@@ -872,8 +938,12 @@ class LocalLLMClient:
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
 
+        # An explicit per-call ``timeout`` wins; otherwise use the config's
+        # provider-aware effective timeout (Ollama 180s by default, others
+        # 60s). This resolved value is the per-call bound passed to the
+        # outbound request below (task 130).
         effective_timeout = (
-            timeout if timeout is not None else self.config.timeout_seconds
+            timeout if timeout is not None else self.config.effective_timeout_seconds
         )
 
         start = time.monotonic()
