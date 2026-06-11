@@ -15,11 +15,13 @@ review.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
-from typing import Any
+from typing import Any, Iterator
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import local_llm
@@ -218,6 +220,134 @@ def list_local_llm_models(
         models=result.models,
         error=result.error,
         error_kind=result.error_kind,
+    )
+
+
+# ---- Explicit model pull (task 137) ----------------------------------
+
+
+class LocalLLMPullRequest(BaseModel):
+    """Request body for an explicit, operator-initiated model pull.
+
+    ``model`` is **required** — there is no "pull whatever is configured"
+    behaviour; the caller must name the model to install. Optional
+    ``provider`` / ``base_url`` / ``api_key`` overrides mirror the
+    test-connection rule so the UI can pull against unsaved edits, and the
+    refusal for a non-Ollama provider is evaluated against the resolved
+    (overridden) config.
+    """
+
+    model: str = Field(..., min_length=1)
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    preserve_existing_key: bool = True
+
+
+def _pull_event_stream(
+    client: local_llm.LocalLLMClient, model: str
+) -> Iterator[bytes]:
+    """Yield the newline-delimited JSON (NDJSON) progress stream for a pull.
+
+    The shape is documented in ``docs/llm_providers.md``. Three event types,
+    one JSON object per line:
+
+    - ``{"type": "advisory", "model", "provider", "message"}`` — emitted first;
+      ``message`` is the disk/VRAM-unknown advisory.
+    - ``{"type": "progress", "status", "completed", "total", "digest"}`` — one
+      per streamed progress update from the server.
+    - ``{"type": "result", "ok", "error", "error_kind"}`` — emitted last;
+      summarises whether the pull succeeded.
+
+    This is a sync generator, so Starlette iterates it in a threadpool and the
+    blocking pull never stalls the event loop.
+    """
+    advisory = {
+        "type": "advisory",
+        "model": model,
+        "provider": client.provider_id,
+        "message": local_llm.PULL_DISK_VRAM_ADVISORY,
+    }
+    yield (json.dumps(advisory) + "\n").encode("utf-8")
+
+    error: str | None = None
+    error_kind: str | None = None
+    try:
+        for progress in client.iter_pull_model(model):
+            event = {
+                "type": "progress",
+                "status": progress.status,
+                "completed": progress.completed,
+                "total": progress.total,
+                "digest": progress.digest,
+            }
+            yield (json.dumps(event) + "\n").encode("utf-8")
+            if progress.error and error is None:
+                error = progress.error
+                error_kind = local_llm.ENDPOINT_ERROR_UNEXPECTED
+    except Exception as exc:  # noqa: BLE001 - classified into the result line
+        error_kind, error = local_llm.classify_endpoint_error(
+            exc, base_url=client.config.base_url
+        )
+
+    result = {
+        "type": "result",
+        "ok": error is None,
+        "error": error,
+        "error_kind": error_kind,
+    }
+    yield (json.dumps(result) + "\n").encode("utf-8")
+
+
+@router.post("/pull")
+def pull_local_llm_model(payload: LocalLLMPullRequest) -> StreamingResponse:
+    """Explicitly pull (install) a model on the configured Ollama server.
+
+    This is the **only** path that triggers a model pull — pulling never
+    happens as a side effect of test-connection, preflight, tailoring, or
+    startup. The UI (task 139) is responsible for gating it behind a
+    confirmation dialog.
+
+    The model name is required in the body. Pulling is **Ollama-native only**:
+    the endpoint refuses (HTTP 409) unless the persisted provider is Ollama or
+    an explicit ``provider=ollama`` override is supplied. On the happy path it
+    returns an NDJSON progress stream (see :func:`_pull_event_stream`) whose
+    first line is an advisory that the backend cannot verify the model will fit
+    the host's disk/VRAM.
+    """
+    model = payload.model.strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="A model name is required.")
+
+    config = local_llm.get_config()
+    config = _config_with_overrides(
+        config,
+        LocalLLMTestRequest(
+            base_url=payload.base_url,
+            provider=payload.provider,
+            api_key=payload.api_key,
+            preserve_existing_key=payload.preserve_existing_key,
+        ),
+    )
+    if config.provider != local_llm.PROVIDER_OLLAMA:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Pulling a model is only supported for the Ollama-native "
+                "provider. Select the Ollama provider (or pass "
+                "provider=ollama) to install a model."
+            ),
+        )
+
+    client = local_llm.LocalLLMClient(config)
+    return StreamingResponse(
+        _pull_event_stream(client, model),
+        media_type="application/x-ndjson",
+        headers={
+            # Surface the disk/VRAM advisory on the response itself, so a
+            # client that does not parse the stream still sees the warning.
+            "X-Pull-Advisory": local_llm.PULL_DISK_VRAM_ADVISORY,
+        },
     )
 
 

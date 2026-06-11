@@ -143,6 +143,8 @@ Settings persist in the existing `app_settings` key/value table under the
 - `POST /llm/local/test-connection` — connection test (see below).
 - `GET /llm/local/models` — list installed models (Ollama-native only;
   see below).
+- `POST /llm/local/pull` — explicitly pull (install) a model (Ollama-native
+  only; confirmation-gated in the UI; see below).
 - `POST /llm/local/suggest-resume-edits` — experimental, bounded resume
   suggestions; refuses unless `resume_suggestions` is enabled.
 
@@ -288,6 +290,64 @@ classified `error_kind`:
 - `unexpected` — any other failure, with the underlying detail preserved.
 - `unsupported` — the configured provider is OpenAI-compatible, which has no
   model-listing endpoint (see above).
+
+## Pulling a model (Ollama-native only)
+
+If the connection test reports `model_not_installed` (see above), you can
+install the missing model on demand with `POST /llm/local/pull`. Pulling is an
+**explicit, operator-initiated action** — you must name the model in the
+request body (there is no "pull whatever is configured" behaviour) and the UI
+(task 139) gates it behind a **confirmation dialog**.
+
+> **Pulling never happens automatically.** It is *never* triggered as a side
+> effect of test-connection, the preflight analysis pipeline, resume tailoring,
+> or app startup. The only path that pulls a model is this explicit endpoint.
+
+Pulling is **Ollama-native only**: the backend calls Ollama's native
+`/api/pull` (derived from the configured base URL by stripping a trailing
+`/v1`). For the **OpenAI-compatible** provider there is no portable model-pull
+endpoint, so the request is refused with HTTP `409` (and the underlying client
+returns a clear `error_kind = "unsupported"` result without raising). The
+endpoint also refuses a non-Ollama provider even if the model name is present;
+pass `provider=ollama` (or persist the Ollama provider) to pull. A missing
+model name is refused by request validation (HTTP `422`).
+
+> **Disk/VRAM fit is unknown.** The backend issues the pull to the server but
+> **cannot verify whether the model will fit the host's available disk or
+> VRAM**. A pull may fail partway, fill the disk, or download a model the host
+> cannot actually run. This advisory is carried on every pull response — both
+> as the `X-Pull-Advisory` response header and as the first line of the
+> progress stream.
+
+### Progress stream shape
+
+On the happy path the endpoint returns a streamed `application/x-ndjson`
+response: one JSON object per line, streamed as Ollama reports progress so the
+UI can render a live progress bar. The stream is bounded and runs off the event
+loop (a sync generator iterated in a threadpool). Three event types:
+
+```jsonc
+{"type": "advisory", "model": "qwen2.5-coder:14b", "provider": "local_ollama", "message": "The backend cannot verify ... disk or VRAM ..."}
+{"type": "progress", "status": "downloading", "completed": 1048576, "total": 4194304, "digest": "sha256:..."}
+{"type": "result", "ok": true, "error": null, "error_kind": null}
+```
+
+- The **advisory** line is always emitted first and restates the disk/VRAM
+  caveat above.
+- A **progress** line is emitted per server update. `status` is Ollama's
+  progress string (e.g. `pulling manifest`, `downloading`, `success`);
+  `completed` / `total` are byte counts when the server reports them (`null`
+  otherwise).
+- The **result** line is always emitted last. `ok` is `false` with a populated
+  `error` / `error_kind` when the server reported a pull error (e.g. an unknown
+  model name) or the connection failed mid-stream; `error_kind` reuses the same
+  classification as the connection test (`endpoint_unavailable`, `bad_url`,
+  `unexpected`).
+
+`LocalLLMClient.pull_model(name, on_progress=...)` is the underlying helper: it
+streams the same updates (invoking `on_progress` per `PullProgress`) and
+returns a `ModelPullResult` collecting them, never raising on a transport or
+server-reported error.
 
 ## Schema validation and fallback
 
