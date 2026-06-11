@@ -134,6 +134,15 @@ Every generated `agent_tasks/queue.yaml` entry must include:
 - `blocked` — explicitly blocked on external work. The task file must
   describe the blocker.
 
+`scripts/agentctl.sh work` runs a promotion sweep before selecting a task:
+any `planned` task whose `depends_on` are all `done` is promoted to `ready`
+and the queue update is committed. This means a planner that leaves the head
+of a new pack `planned` (for example because it was authored while a
+dependency was still in flight) self-heals once that dependency lands — the
+operator does not have to hand-edit statuses. Marking the head `ready` when
+its dependencies are already `done` is still preferred, but no longer
+required for `work` to pick it up.
+
 ## Preserving completed history
 
 The planner must not modify any existing queue entry whose status is `done`.
@@ -147,8 +156,11 @@ intact (mark it `blocked` only if it must not be dispatched).
 ## Local vs. Ultraplan modes
 
 - `scripts/agentctl.sh plan "<goal>"` launches Claude Code locally and the
-  planner writes files directly. The operator reviews the diff before
-  committing.
+  planner writes files directly. When the session finishes the harness
+  prints the diff and then commits the planner's output automatically
+  (commit message `Plan: <goal>`), staging only the planner's allowed paths.
+  This hands a ready-to-dispatch pack to `work` with no manual git step; the
+  operator can still amend or revert the commit after review.
 - `scripts/agentctl.sh plan --ultraplan "<goal>"` writes an Ultraplan-ready
   prompt under `.agent_plans/`, but does not invoke Claude Code. The
   operator opens Claude Code, runs `/ultraplan` against the generated

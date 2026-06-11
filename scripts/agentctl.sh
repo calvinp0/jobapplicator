@@ -24,6 +24,9 @@
 #                     auto-fix on REQUEST_CHANGES (capped by
 #                     --max-fix-attempts) -> complete. Writes a journal
 #                     file under .agentctl/journal/ for every invocation.
+#                     First promotes any planned task whose dependencies are
+#                     all done to ready (committing the queue update), so a
+#                     freshly-planned pack dispatches without manual editing.
 #                     Stops on REJECT, BLOCKED, max fix attempts, dirty
 #                     worktree, or any subcommand failure.
 #   sync <task-id>    Ensure task worktree exists and is up to date with main.
@@ -56,7 +59,8 @@
 #                     check. Exits 0 if no FAIL items were reported.
 #   plan "<goal>"     Run a local agent planning session that generates
 #                     scoped task files and queue entries from a high-level
-#                     goal. Does not implement product code.
+#                     goal, then commits them so `work` can dispatch the pack
+#                     directly. Does not implement product code.
 #   plan --ultraplan "<goal>"
 #                     Write an Ultraplan-ready prompt file under .agent_plans/
 #                     and print manual handoff instructions. Does not invoke
@@ -1922,6 +1926,114 @@ for pid in promoted:
 PYEOF
 }
 
+# promote_ready_tasks <dry-run-flag>
+#
+# Promote every task whose status is "planned" and whose dependencies are all
+# "done" to "ready", in a single pass over queue.yaml. Unlike
+# update_queue_statuses this marks no task "done"; it only surfaces planned
+# tasks that are already dispatchable. Used by `work` to self-heal a plan
+# whose head task was left "planned" even though its dependencies are
+# complete, so the queue flows without manual editing.
+#
+# Performs an in-place text edit so YAML comments and quoting are preserved.
+# When <dry-run-flag> is "1" the edits are computed but the file is left
+# untouched. Prints the newly-promoted task ids on stdout (one per line);
+# human-readable transitions are written to stderr.
+promote_ready_tasks() {
+  local dry_run="$1"
+  require_queue
+  require_python_yaml
+  CLAUDE_QUEUE_FILE="$QUEUE_FILE" \
+  CLAUDE_DRY_RUN="$dry_run" \
+    "$CLAUDE_PYTHON" - <<'PYEOF'
+import os, re, sys, yaml
+
+path    = os.environ["CLAUDE_QUEUE_FILE"]
+dry_run = os.environ["CLAUDE_DRY_RUN"] == "1"
+
+with open(path, "r", encoding="utf-8") as fh:
+    data = yaml.safe_load(fh) or {}
+tasks = data.get("tasks") or []
+by_id = {t.get("id"): t for t in tasks}
+
+# A planned task becomes ready once every dependency is already done. We do
+# not chase transitive promotions in one sweep: a planned task that depends
+# on another planned task waits until that dependency completes (at which
+# point `complete` promotes it). This keeps the sweep order-independent.
+new_status = {}
+promoted = []
+for t in tasks:
+    if t.get("status") != "planned":
+        continue
+    deps = t.get("depends_on") or []
+    if all((by_id.get(d) or {}).get("status", "") == "done" for d in deps):
+        pid = t.get("id")
+        promoted.append(pid)
+        new_status[pid] = "ready"
+
+if not promoted:
+    sys.exit(0)
+
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+
+id_pat     = re.compile(r'^\s*-\s*id:\s*["\']?([^"\'#\s]+)["\']?\s*$')
+status_pat = re.compile(r'^(\s*)status:\s*["\']?([^"\'#\s]+)["\']?\s*(#.*)?$')
+
+pending = dict(new_status)
+current_id = None
+out = []
+for line in lines:
+    m_id = id_pat.match(line)
+    if m_id:
+        current_id = m_id.group(1)
+        out.append(line)
+        continue
+    if current_id and current_id in pending:
+        m_st = status_pat.match(line)
+        if m_st:
+            indent, old = m_st.group(1), m_st.group(2)
+            new = pending.pop(current_id)
+            out.append(f'{indent}status: "{new}"\n')
+            sys.stderr.write(f"  {current_id}: {old} -> {new}\n")
+            continue
+    out.append(line)
+
+if pending:
+    for k in pending:
+        sys.stderr.write(
+            f"error: could not find status line for task '{k}' in {path}\n")
+    sys.exit(2)
+
+if not dry_run:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.writelines(out)
+
+for pid in promoted:
+    print(pid)
+PYEOF
+}
+
+# promote_eligible_tasks <dry-run-flag>
+#
+# Run promote_ready_tasks and, when any task was promoted, commit the queue
+# update so the main checkout stays clean (a later `run` aborts on a dirty
+# tree). Under dry-run it reports what would be promoted and mutates nothing.
+# Safe to call when nothing is eligible: it is then a no-op.
+promote_eligible_tasks() {
+  local dry_run="$1" main_wt
+  local -a promoted
+  mapfile -t promoted < <(promote_ready_tasks "$dry_run")
+  [[ "${#promoted[@]}" -gt 0 ]] || return 0
+  if [[ "$dry_run" == "1" ]]; then
+    printf 'would promote to ready: %s\n' "${promoted[*]}"
+    return 0
+  fi
+  printf 'Promoted to ready (dependencies complete): %s\n' "${promoted[*]}"
+  main_wt="$(find_main_worktree 2>/dev/null)" || main_wt="$REPO_ROOT"
+  commit_queue_update "$main_wt"
+}
+
 # print_ready_tasks
 #
 # Print the (possibly empty) list of tasks with status=ready, formatted for
@@ -3212,6 +3324,12 @@ cmd_work() {
   require_queue
   require_python_yaml
 
+  # Self-heal the queue before selecting: promote any planned task whose
+  # dependencies are already done to ready. This lets a freshly-committed
+  # plan flow straight into work even if the planner left its head task
+  # marked planned.
+  promote_eligible_tasks "$dry_run"
+
   if [[ "$until_blocked" -eq 1 ]]; then
     work_loop "$dry_run" "$max_fix_attempts" "$max_tasks"
     return $?
@@ -3274,6 +3392,11 @@ cmd_next() {
     [[ "$status" == "blocked" ]] && queue_blocked_ids+=("$id")
   done < <(yaml_query list)
 
+  # Read-only: which planned tasks would `work` promote to ready? Dry-run so
+  # cmd_next mutates nothing, per its contract.
+  local promotable_ids=()
+  mapfile -t promotable_ids < <(promote_ready_tasks "1" 2>/dev/null)
+
   if [[ "${#request_changes_ids[@]}" -gt 0 ]]; then
     printf 'Tasks with verdict REQUEST_CHANGES:\n'
     for id in "${request_changes_ids[@]}"; do
@@ -3303,6 +3426,13 @@ cmd_next() {
     done
     printf '\n'
   fi
+  if [[ "${#promotable_ids[@]}" -gt 0 ]]; then
+    printf 'Planned tasks ready for promotion (work promotes these to ready):\n'
+    for id in "${promotable_ids[@]}"; do
+      printf '  %s\n' "$id"
+    done
+    printf '\n'
+  fi
 
   if [[ "${#request_changes_ids[@]}" -gt 0 ]]; then
     printf 'Next: scripts/agentctl.sh fix %s\n' "${request_changes_ids[0]}"
@@ -3316,6 +3446,9 @@ cmd_next() {
     printf 'Next: finish, commit, or clean the dirty worktree(s) above.\n'
   elif [[ -n "$ready_id" ]]; then
     printf 'Next: scripts/agentctl.sh work %s\n' "$ready_id"
+  elif [[ "${#promotable_ids[@]}" -gt 0 ]]; then
+    printf 'Next: scripts/agentctl.sh work --until-blocked  (promotes %s and dispatches)\n' \
+      "${promotable_ids[0]}"
   else
     printf 'No ready tasks.\n'
   fi
@@ -3846,6 +3979,17 @@ Usage:
        entries in agent_tasks/queue.yaml. The planner does not implement
        product code and does not mark new tasks as done.
 
+       When the planner finishes, the generated task files and queue
+       entries are committed automatically (message "Plan: <goal>") so the
+       pack is ready for `work` with no manual git step. Only the planner's
+       allowed paths are staged; forbidden paths are never committed. The
+       diff is printed first. Then run:
+
+           scripts/agentctl.sh work --until-blocked
+
+       `work` promotes any planned task whose dependencies are already done
+       to ready before dispatching, so a chained pack flows automatically.
+
   scripts/agentctl.sh plan --ultraplan "<high-level goal>"
        Do not invoke an agent. Instead, write a self-contained
        Ultraplan-ready prompt file under .agent_plans/<timestamp>-ultraplan.md
@@ -4139,8 +4283,31 @@ plan_local() {
     die "$(agent_name) exited with a non-zero status"
   fi
 
-  printf '\nPlanner finished. Review the diff before committing:\n'
+  printf '\nPlanner finished. Generated plan diff:\n'
   git -C "$REPO_ROOT" status --short
+  commit_plan_output "$goal"
+}
+
+# commit_plan_output <goal>
+#
+# Stage and commit the planner's output so `work` can dispatch it without a
+# manual git step. Only the paths the planner is allowed to edit are staged
+# (.agent_plans/** is gitignored and never lands here); forbidden paths are
+# never committed even if something stray was written. No-op when the planner
+# produced no committable change.
+commit_plan_output() {
+  local goal="$1"
+  git -C "$REPO_ROOT" add \
+    agent_tasks \
+    docs/contracts/agent_orchestration.md \
+    .gitignore 2>/dev/null || true
+  if git -C "$REPO_ROOT" diff --cached --quiet; then
+    printf '\nNo plan changes to commit.\n'
+    return 0
+  fi
+  git -C "$REPO_ROOT" commit -m "Plan: $goal" >&2
+  printf '\nPlan committed. Dispatch it with:\n'
+  printf '  scripts/agentctl.sh work --until-blocked\n'
 }
 
 cmd_plan() {
