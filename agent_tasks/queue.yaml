@@ -2706,7 +2706,7 @@ tasks:
     file: "agent_tasks/135-add-ollama-installed-models-detection.md"
     branch: "agent/135-add-ollama-installed-models-detection"
     worktree: "agent-135-add-ollama-installed-models-detection"
-    status: "ready"
+    status: "done"
     depends_on:
       - "131-add-local-llm-reasoning-controls"
     verification:
@@ -2725,7 +2725,7 @@ tasks:
     file: "agent_tasks/136-classify-local-llm-connection-errors.md"
     branch: "agent/136-classify-local-llm-connection-errors"
     worktree: "agent-136-classify-local-llm-connection-errors"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "135-add-ollama-installed-models-detection"
     verification:
