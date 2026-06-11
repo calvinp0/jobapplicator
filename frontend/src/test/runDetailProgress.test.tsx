@@ -294,6 +294,77 @@ describe("RunDetailPage progress-events panel", () => {
     }
   });
 
+  it("surfaces the 'local LLM attempted but fell back' notice when the marker is in the progress feed (task 134)", async () => {
+    getRunMock.mockResolvedValue({ ...baseRun });
+    getRunProgressMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: [
+        "Reading job description",
+        "Local LLM attempted but fell back: local provider timed out (local provider degraded)",
+        "Drafting tailored resume markdown",
+      ],
+      truncated: false,
+    });
+    getRunLogMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: [],
+      truncated: false,
+    });
+
+    renderRunDetail("run-1");
+
+    // The styled, non-error notice appears with the headline and the reason.
+    const notice = await screen.findByTestId("local-fallback-notice");
+    expect(notice).toHaveTextContent(/Local LLM attempted but fell back/);
+    expect(notice).toHaveTextContent(
+      /local provider timed out \(local provider degraded\)/,
+    );
+    // It is a neutral note, not an error alert.
+    expect(notice).not.toHaveClass("error");
+    expect(notice.getAttribute("role")).not.toBe("alert");
+
+    // The raw progress rendering is unchanged — the marker line still shows in
+    // the recent-activity feed alongside the other phases.
+    const recentActivityLabel = screen.getByText(/Recent activity/);
+    const activityPanel = recentActivityLabel.closest("div") as HTMLElement;
+    expect(
+      within(activityPanel).getByText(
+        /Local LLM attempted but fell back: local provider timed out/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(activityPanel).getByText(/Drafting tailored resume markdown/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the fallback notice on a clean run with no marker (task 134)", async () => {
+    getRunMock.mockResolvedValue({ ...baseRun });
+    getRunProgressMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: ["Reading job description", "Drafting tailored resume markdown"],
+      truncated: false,
+    });
+    getRunLogMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: ["jobapply: launching Claude Code"],
+      truncated: false,
+    });
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Drafting tailored resume markdown/),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("local-fallback-notice"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Local LLM attempted but fell back/),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the full technical run.log inside Advanced details so debugging info isn't lost", async () => {
     getRunMock.mockResolvedValue({ ...failedMissingOutputs });
     getRunProgressMock.mockResolvedValue({

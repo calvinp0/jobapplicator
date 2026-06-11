@@ -339,6 +339,27 @@ describe("RunDetailPage default UI", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not render the local-LLM fallback notice when the trace has no marker (task 134)", async () => {
+    // The default stubs return empty log/progress feeds, so a run with no
+    // task-133 marker must not show the notice.
+    getRunMock.mockResolvedValue({ ...failedRun });
+    listResumeVersionsMock.mockResolvedValue([]);
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /resume tailoring run/i,
+        }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("local-fallback-notice"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders summary fields by default and hides provenance behind Advanced details", async () => {
     getRunMock.mockResolvedValue({ ...failedRun });
     listResumeVersionsMock.mockResolvedValue([]);
