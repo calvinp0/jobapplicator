@@ -2784,7 +2784,7 @@ tasks:
     file: "agent_tasks/139-frontend-local-llm-model-pull-action.md"
     branch: "agent/139-frontend-local-llm-model-pull-action"
     worktree: "agent-139-frontend-local-llm-model-pull-action"
-    status: "ready"
+    status: "done"
     depends_on:
       - "137-add-ollama-model-pull-endpoint"
       - "138-frontend-local-llm-model-picker-and-diagnostics"
