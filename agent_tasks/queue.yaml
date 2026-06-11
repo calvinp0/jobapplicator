@@ -2601,3 +2601,201 @@ tasks:
       - "agent_tasks/129-add-provider-trace-to-application-runs.md"
       - "agent_tasks/queue.yaml"
       - "docs/**"
+
+  - id: "130-add-local-llm-task-timeout-and-ollama-default"
+    title: "Make the local LLM per-call timeout configurable with an Ollama-aware default"
+    file: "agent_tasks/130-add-local-llm-task-timeout-and-ollama-default.md"
+    branch: "agent/130-add-local-llm-task-timeout-and-ollama-default"
+    worktree: "agent-130-add-local-llm-task-timeout-and-ollama-default"
+    status: "ready"
+    depends_on:
+      - "127-detect-and-log-local-server-context"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/schemas.py"
+      - "backend/app/routers/settings.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/130-add-local-llm-task-timeout-and-ollama-default.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "131-add-local-llm-reasoning-controls"
+    title: "Add local LLM reasoning controls and strip thinking text before JSON parsing"
+    file: "agent_tasks/131-add-local-llm-reasoning-controls.md"
+    branch: "agent/131-add-local-llm-reasoning-controls"
+    worktree: "agent-131-add-local-llm-reasoning-controls"
+    status: "planned"
+    depends_on:
+      - "130-add-local-llm-task-timeout-and-ollama-default"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/schemas.py"
+      - "backend/app/routers/settings.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/131-add-local-llm-reasoning-controls.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "132-add-preflight-provider-degradation-guardrails"
+    title: "Add preflight provider-degradation guardrails and a smaller default preflight context"
+    file: "agent_tasks/132-add-preflight-provider-degradation-guardrails.md"
+    branch: "agent/132-add-preflight-provider-degradation-guardrails"
+    worktree: "agent-132-add-preflight-provider-degradation-guardrails"
+    status: "planned"
+    depends_on:
+      - "131-add-local-llm-reasoning-controls"
+    verification:
+      - "python -m pytest backend/tests/test_preflight.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/preflight.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/132-add-preflight-provider-degradation-guardrails.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "133-log-preflight-local-llm-performance-and-fallback"
+    title: "Log local LLM performance and surface attempted-but-fell-back in the preflight manifest"
+    file: "agent_tasks/133-log-preflight-local-llm-performance-and-fallback.md"
+    branch: "agent/133-log-preflight-local-llm-performance-and-fallback"
+    worktree: "agent-133-log-preflight-local-llm-performance-and-fallback"
+    status: "planned"
+    depends_on:
+      - "132-add-preflight-provider-degradation-guardrails"
+    verification:
+      - "python -m pytest backend/tests/test_preflight.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/preflight.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "docs/contracts/claude_run_directory.md"
+      - "agent_tasks/133-log-preflight-local-llm-performance-and-fallback.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "134-surface-local-llm-fallback-in-run-trace"
+    title: "Surface local LLM attempted-but-fell-back clearly in the run-trace UI"
+    file: "agent_tasks/134-surface-local-llm-fallback-in-run-trace.md"
+    branch: "agent/134-surface-local-llm-fallback-in-run-trace"
+    worktree: "agent-134-surface-local-llm-fallback-in-run-trace"
+    status: "planned"
+    depends_on:
+      - "133-log-preflight-local-llm-performance-and-fallback"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/RunDetailPage.tsx"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/runDetailLog.test.tsx"
+      - "frontend/src/test/runDetailProgress.test.tsx"
+      - "frontend/src/test/runDetailPage.test.tsx"
+      - "agent_tasks/134-surface-local-llm-fallback-in-run-trace.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "135-add-ollama-installed-models-detection"
+    title: "Detect installed Ollama models via /api/tags"
+    file: "agent_tasks/135-add-ollama-installed-models-detection.md"
+    branch: "agent/135-add-ollama-installed-models-detection"
+    worktree: "agent-135-add-ollama-installed-models-detection"
+    status: "planned"
+    depends_on:
+      - "131-add-local-llm-reasoning-controls"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/routers/local_llm.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/135-add-ollama-installed-models-detection.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "136-classify-local-llm-connection-errors"
+    title: "Classify local LLM connection errors and report missing models"
+    file: "agent_tasks/136-classify-local-llm-connection-errors.md"
+    branch: "agent/136-classify-local-llm-connection-errors"
+    worktree: "agent-136-classify-local-llm-connection-errors"
+    status: "planned"
+    depends_on:
+      - "135-add-ollama-installed-models-detection"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/routers/local_llm.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/136-classify-local-llm-connection-errors.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "137-add-ollama-model-pull-endpoint"
+    title: "Add an explicit, confirmation-gated Ollama model-pull endpoint"
+    file: "agent_tasks/137-add-ollama-model-pull-endpoint.md"
+    branch: "agent/137-add-ollama-model-pull-endpoint"
+    worktree: "agent-137-add-ollama-model-pull-endpoint"
+    status: "planned"
+    depends_on:
+      - "136-classify-local-llm-connection-errors"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/routers/local_llm.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/137-add-ollama-model-pull-endpoint.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "138-frontend-local-llm-model-picker-and-diagnostics"
+    title: "Surface installed models and clear connection diagnostics in Settings"
+    file: "agent_tasks/138-frontend-local-llm-model-picker-and-diagnostics.md"
+    branch: "agent/138-frontend-local-llm-model-picker-and-diagnostics"
+    worktree: "agent-138-frontend-local-llm-model-picker-and-diagnostics"
+    status: "planned"
+    depends_on:
+      - "136-classify-local-llm-connection-errors"
+      - "128-clarify-context-budget-settings-ui"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/localLlmSettings.test.tsx"
+      - "agent_tasks/138-frontend-local-llm-model-picker-and-diagnostics.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "139-frontend-local-llm-model-pull-action"
+    title: "Add a confirmation-gated Pull model action with progress in Settings"
+    file: "agent_tasks/139-frontend-local-llm-model-pull-action.md"
+    branch: "agent/139-frontend-local-llm-model-pull-action"
+    worktree: "agent-139-frontend-local-llm-model-pull-action"
+    status: "planned"
+    depends_on:
+      - "137-add-ollama-model-pull-endpoint"
+      - "138-frontend-local-llm-model-picker-and-diagnostics"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/localLlmSettings.test.tsx"
+      - "agent_tasks/139-frontend-local-llm-model-pull-action.md"
+      - "agent_tasks/queue.yaml"
