@@ -2256,6 +2256,31 @@ fieldset.field legend {
   font-size: 14px;
 }
 
+/* Task 134: "local LLM attempted but fell back" notice. A fallback is an
+   expected, non-fatal outcome (ADR-009), so this reads as neutral/info — not
+   an error — while still being prominent enough to notice at a glance. */
+.local-fallback-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+  margin: var(--space-2) 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--info-soft);
+  color: var(--info-fg);
+  font-size: var(--font-sm);
+}
+
+.local-fallback-notice-title {
+  font-weight: 600;
+}
+
+.local-fallback-notice-reason {
+  color: var(--info-fg);
+  opacity: 0.85;
+}
+
 .import-failure {
   display: flex;
   flex-direction: column;

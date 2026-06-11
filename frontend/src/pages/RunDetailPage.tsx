@@ -34,6 +34,37 @@ export const RUN_LOG_DEFAULT_DISPLAY_LINES = 8;
 const ANSI_ESCAPE_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
 
 /**
+ * The stable marker the preflight backend (task 133) emits into the run trace
+ * (the progress feed and run.log) when the experimental local LLM was
+ * *attempted* and the run then fell back to the deterministic extractor (or
+ * Claude Code). A fallback is an expected, non-fatal outcome (ADR-009: the
+ * local LLM is experimental and opt-in), so the UI surfaces it as an
+ * informational notice, not an error. Matched as a prefix so the trailing
+ * ``: <reason>`` and any ``(local provider degraded/skipped …)`` annotation
+ * can vary without breaking detection.
+ */
+export const LOCAL_LLM_FELL_BACK_MARKER = "Local LLM attempted but fell back";
+
+/**
+ * Scan run-trace lines (progress events and/or raw run.log) for the task-133
+ * "attempted but fell back" marker. Returns the trailing detail (the reason
+ * plus any degraded/skipped annotation, e.g.
+ * ``timeout (local provider degraded)``) when the marker is present, an empty
+ * string when it is present without a reason, or ``null`` when no marker is
+ * found. ``indexOf`` tolerates any ``jobapply:`` prefix the log feed may add.
+ */
+export function detectLocalLlmFellBack(lines: string[]): string | null {
+  for (const raw of lines) {
+    const cleaned = raw.replace(ANSI_ESCAPE_RE, "").trim();
+    const idx = cleaned.indexOf(LOCAL_LLM_FELL_BACK_MARKER);
+    if (idx === -1) continue;
+    const rest = cleaned.slice(idx + LOCAL_LLM_FELL_BACK_MARKER.length);
+    return rest.replace(/^:\s*/, "").trim();
+  }
+  return null;
+}
+
+/**
  * A run is in a terminal state once we should stop live-polling it. The
  * intermediate `completed` state is non-terminal because the frontend
  * still needs to drive the import handshake.
@@ -530,6 +561,15 @@ export function RunDetailPage() {
   const activityTruncated =
     progressLines.length > 0 ? progressTruncated : logTruncated;
 
+  // Detect the task-133 "local LLM attempted but fell back" marker in the
+  // run trace the page already loads (progress feed + raw run.log). When
+  // present we surface a prominent, non-error notice in addition to leaving
+  // the raw trace rendering untouched.
+  const localFallbackDetail = detectLocalLlmFellBack([
+    ...progressLines,
+    ...logLines,
+  ]);
+
   async function handleStartTailoring() {
     if (!runId || !run || run.status !== "created") return;
     setIsInvoking(true);
@@ -621,6 +661,23 @@ export function RunDetailPage() {
         ) : null}
         <span className="tailoring-progress-label">{statusDisplay}</span>
       </div>
+
+      {localFallbackDetail !== null ? (
+        <div
+          className="local-fallback-notice"
+          role="note"
+          data-testid="local-fallback-notice"
+        >
+          <span className="local-fallback-notice-title">
+            Local LLM attempted but fell back
+          </span>
+          {localFallbackDetail ? (
+            <span className="local-fallback-notice-reason">
+              {localFallbackDetail}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       {run.status === "failed" && isMissingOutputsError(run.error_message) ? (
         <p className="tailoring-failure-explanation">

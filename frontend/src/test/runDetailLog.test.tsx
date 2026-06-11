@@ -201,6 +201,27 @@ describe("RunDetailPage recent-activity panel", () => {
     expect(screen.getByText(/marking run failed/)).toBeInTheDocument();
   });
 
+  it("surfaces the 'local LLM attempted but fell back' notice from the run.log feed (task 134)", async () => {
+    getRunMock.mockResolvedValue({ ...baseRun });
+    // No progress lines yet — the marker arrives via the raw run.log feed,
+    // which the page also scans. The backend prefixes worker log lines with
+    // ``jobapply: ``; detection must tolerate that prefix.
+    getRunLogMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: [
+        "jobapply: preparing tailoring inputs",
+        "jobapply: Local LLM attempted but fell back: prompt over budget",
+      ],
+      truncated: false,
+    });
+
+    renderRunDetail("run-1");
+
+    const notice = await screen.findByTestId("local-fallback-notice");
+    expect(notice).toHaveTextContent(/Local LLM attempted but fell back/);
+    expect(notice).toHaveTextContent(/prompt over budget/);
+  });
+
   it("stops polling getRunLog once the run reaches a terminal state", async () => {
     vi.useFakeTimers();
     try {
