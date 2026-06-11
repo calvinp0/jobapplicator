@@ -1700,3 +1700,235 @@ def test_get_config_defaults_unknown_thinking_mode(monkeypatch, tmp_path):
         session.commit()
 
     assert local_llm.get_config().thinking_mode == local_llm.THINKING_MODE_STRIP
+
+
+# ---- explicit model pull (task 137) ----------------------------------
+
+
+def _pull_stream(*lines: dict):
+    """A fake ``_post_json_stream`` returning the given NDJSON progress lines.
+
+    Mirrors the streaming network boundary's signature so it can be dropped in
+    via monkeypatch without a live Ollama server.
+    """
+
+    def fake_stream(url, payload, *, headers=None, timeout=60.0):
+        fake_stream.url = url
+        fake_stream.payload = payload
+        for line in lines:
+            yield line
+
+    return fake_stream
+
+
+def test_pull_model_ollama_streams_progress(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    fake = _pull_stream(
+        {"status": "pulling manifest"},
+        {
+            "status": "downloading",
+            "completed": 50,
+            "total": 100,
+            "digest": "sha256:abc",
+        },
+        {"status": "downloading", "completed": 100, "total": 100},
+        {"status": "success"},
+    )
+    monkeypatch.setattr(local_llm, "_post_json_stream", fake)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+
+    seen: list = []
+    result = local_llm.LocalLLMClient(config).pull_model(
+        "qwen2.5-coder:14b", on_progress=seen.append
+    )
+
+    # The /v1 suffix is stripped to reach the native pull endpoint, and the
+    # requested model name (not the configured one) is what is pulled.
+    assert fake.url == "http://localhost:11434/api/pull"
+    assert fake.payload["name"] == "qwen2.5-coder:14b"
+    assert result.ok is True
+    assert result.error is None
+    assert result.error_kind is None
+    # Every streamed line is surfaced as a structured update, both collected
+    # and pushed to the on_progress callback.
+    assert [u.status for u in result.updates] == [
+        "pulling manifest",
+        "downloading",
+        "downloading",
+        "success",
+    ]
+    assert seen == result.updates
+    assert result.updates[1].completed == 50
+    assert result.updates[1].total == 100
+    assert result.updates[1].digest == "sha256:abc"
+    # The disk/VRAM advisory is always carried on the result.
+    assert "disk" in result.advisory.lower()
+    assert "vram" in result.advisory.lower()
+
+
+def test_pull_model_openai_compatible_is_unsupported_without_network(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("openai-compatible pull must not hit the network")
+
+    monkeypatch.setattr(local_llm, "_post_json_stream", boom)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:8000/v1",
+        model="mistral-small",
+    )
+    result = local_llm.LocalLLMClient(config).pull_model("mistral-small")
+
+    assert result.ok is False
+    assert result.error_kind == local_llm.PULL_UNSUPPORTED
+    assert "ollama" in (result.error or "").lower()
+    assert result.updates == []
+
+
+def test_pull_model_surfaces_server_reported_error(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    # Ollama emits an ``error`` line when, e.g., the model name does not exist.
+    fake = _pull_stream(
+        {"status": "pulling manifest"},
+        {"error": "pull model manifest: file does not exist"},
+    )
+    monkeypatch.setattr(local_llm, "_post_json_stream", fake)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).pull_model("nope:404")
+
+    assert result.ok is False
+    assert "does not exist" in (result.error or "")
+    # The progress already streamed before the error is still preserved.
+    assert result.updates[0].status == "pulling manifest"
+
+
+def test_pull_model_classifies_transport_failure(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def unreachable(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+        yield  # pragma: no cover - marks this function a generator
+
+    monkeypatch.setattr(local_llm, "_post_json_stream", unreachable)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).pull_model("llama3.1:8b")
+
+    assert result.ok is False
+    assert result.error_kind == local_llm.ENDPOINT_ERROR_UNAVAILABLE
+
+
+def test_pull_endpoint_streams_ndjson_progress(client, monkeypatch):
+    import json
+
+    import app.local_llm as local_llm
+
+    fake = _pull_stream(
+        {"status": "pulling manifest"},
+        {"status": "downloading", "completed": 100, "total": 100},
+        {"status": "success"},
+    )
+    monkeypatch.setattr(local_llm, "_post_json_stream", fake)
+
+    resp = client.post(
+        "/llm/local/pull",
+        json={
+            "model": "qwen2.5-coder:14b",
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/v1",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    # The disk/VRAM advisory is also surfaced on the response header.
+    assert "disk" in resp.headers["x-pull-advisory"].lower()
+
+    events = [
+        json.loads(line) for line in resp.text.splitlines() if line.strip()
+    ]
+    # First line is the advisory, last line is the result, progress in between.
+    assert events[0]["type"] == "advisory"
+    assert events[0]["model"] == "qwen2.5-coder:14b"
+    assert "disk" in events[0]["message"].lower()
+    statuses = [e["status"] for e in events if e["type"] == "progress"]
+    assert statuses == ["pulling manifest", "downloading", "success"]
+    assert events[-1] == {
+        "type": "result",
+        "ok": True,
+        "error": None,
+        "error_kind": None,
+    }
+    assert fake.url == "http://localhost:11434/api/pull"
+
+
+def test_pull_endpoint_requires_model_name(client):
+    # No model name in the body — refused by request validation, never reaching
+    # a "pull whatever is configured" path.
+    resp = client.post("/llm/local/pull", json={"provider": "ollama"})
+    assert resp.status_code == 422, resp.text
+
+
+def test_pull_endpoint_refuses_non_ollama_provider(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("a refused pull must not hit the network")
+
+    monkeypatch.setattr(local_llm, "_post_json_stream", boom)
+
+    # The persisted default provider is OpenAI-compatible, which has no pull
+    # endpoint — refused with a clear 409 before any network call.
+    resp = client.post("/llm/local/pull", json={"model": "llama3.1:8b"})
+    assert resp.status_code == 409, resp.text
+    assert "ollama" in resp.json()["detail"].lower()
+
+
+def test_pull_model_is_only_called_from_the_pull_endpoint():
+    """Pulling must never be a side effect of tailoring/preflight/startup.
+
+    The only caller of the pull capability is the dedicated pull endpoint, so
+    the tailoring/preflight/startup modules must not reference ``pull_model``
+    or its streaming primitive (task 137 acceptance: grep evidence).
+    """
+    import pathlib
+
+    import app
+
+    app_dir = pathlib.Path(app.__file__).resolve().parent
+    forbidden = [
+        app_dir / "preflight.py",
+        app_dir / "claude_worker.py",
+        app_dir / "run_directory.py",
+        app_dir / "main.py",
+    ]
+    for path in forbidden:
+        text = path.read_text()
+        assert "pull_model" not in text, f"{path} must not invoke pull_model"
+        assert "iter_pull_model" not in text, f"{path} must not invoke a pull"
+
+    # The router *is* the sole caller.
+    router_text = (app_dir / "routers" / "local_llm.py").read_text()
+    assert "iter_pull_model" in router_text

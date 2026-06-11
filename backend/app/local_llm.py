@@ -789,6 +789,35 @@ def _get_json(
     return json.loads(body)
 
 
+def _post_json_stream(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    headers: Optional[dict[str, str]] = None,
+    timeout: float = 60.0,
+):
+    """POST ``payload`` and yield each newline-delimited JSON object in turn.
+
+    Ollama's ``/api/pull`` streams progress as newline-delimited JSON (one
+    object per line), so this is the streaming counterpart to
+    :func:`_post_json`: it parses and yields each line as it arrives rather
+    than buffering the whole body. Kept as a module-level generator so tests
+    can monkeypatch this network boundary and feed simulated progress lines
+    without a live server. Blank lines are skipped.
+    """
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        for raw_line in resp:
+            line = raw_line.decode("utf-8").strip()
+            if not line:
+                continue
+            yield json.loads(line)
+
+
 # ---- Endpoint error classification (task 135) ------------------------
 
 
@@ -1049,6 +1078,93 @@ class ModelListResult:
 MODEL_LIST_UNSUPPORTED = "unsupported"
 
 
+# ---- Explicit model pull (task 137) ----------------------------------
+#
+# Pulling a model is an explicit, operator-initiated action that complements
+# the ``model_not_installed`` diagnosis (task 136): a user who discovers their
+# configured model is not installed can install it on demand. It is *never*
+# invoked automatically during resume tailoring, preflight, or app startup —
+# the only caller is the dedicated pull endpoint.
+
+# Stable advisory carried on every pull result/contract. The backend issues the
+# pull to the server but cannot inspect the host's disk or VRAM, so it cannot
+# promise the model will download successfully or run after it does.
+PULL_DISK_VRAM_ADVISORY = (
+    "The backend cannot verify whether this model will fit the host's available "
+    "disk or VRAM. The pull may fail partway, fill the disk, or download a model "
+    "the host cannot actually run."
+)
+
+# Pulling is Ollama-native only; the OpenAI-compatible surface has no portable
+# model-pull endpoint, so :meth:`LocalLLMClient.pull_model` reports this stable
+# kind rather than raising.
+PULL_UNSUPPORTED = MODEL_LIST_UNSUPPORTED
+
+
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    """Coerce a value to a non-negative int, or ``None`` when absent/invalid."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass
+class PullProgress:
+    """One structured progress update from a streamed model pull.
+
+    ``status`` is Ollama's progress string (e.g. ``"pulling manifest"``,
+    ``"downloading"``, ``"success"``). ``completed`` / ``total`` are the
+    downloaded and total byte counts when the server reports them (``None``
+    otherwise). ``error`` carries a server-reported per-line pull error.
+    """
+
+    status: str
+    completed: Optional[int] = None
+    total: Optional[int] = None
+    digest: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class ModelPullResult:
+    """Outcome of an explicit model pull.
+
+    ``ok`` is true only when the stream completed without a server-reported or
+    transport error. ``updates`` collects every :class:`PullProgress` surfaced
+    during the pull. ``error`` / ``error_kind`` carry a human message and a
+    stable machine ``kind`` on failure (``unsupported`` for a non-Ollama
+    provider, otherwise a :func:`classify_endpoint_error` kind). ``advisory``
+    always restates that disk/VRAM fit cannot be verified.
+    """
+
+    ok: bool
+    provider: str
+    model: str
+    updates: list[PullProgress] = field(default_factory=list)
+    error: Optional[str] = None
+    error_kind: Optional[str] = None
+    advisory: str = PULL_DISK_VRAM_ADVISORY
+
+
+def _pull_progress_from_line(line: dict[str, Any]) -> PullProgress:
+    """Build a :class:`PullProgress` from one Ollama ``/api/pull`` JSON line."""
+    status = line.get("status")
+    if not isinstance(status, str):
+        status = ""
+    digest = line.get("digest")
+    error = line.get("error")
+    return PullProgress(
+        status=status,
+        completed=_coerce_optional_int(line.get("completed")),
+        total=_coerce_optional_int(line.get("total")),
+        digest=digest if isinstance(digest, str) else None,
+        error=error if isinstance(error, str) else None,
+    )
+
+
 def _extract_ollama_model_names(body: dict[str, Any]) -> list[str]:
     """Pull installed model names from an Ollama ``/api/tags`` response.
 
@@ -1163,6 +1279,18 @@ class LocalLLMClient:
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         return f"{base}/api/tags"
+
+    def _ollama_native_pull_url(self) -> str:
+        """The native ``/api/pull`` endpoint derived from ``base_url``.
+
+        Like the other native helpers, the pull API lives at the server root,
+        so a configured ``http://host:11434/v1`` resolves to
+        ``http://host:11434/api/pull`` (the ``/v1`` suffix is stripped).
+        """
+        base = self.config.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        return f"{base}/api/pull"
 
     def chat(
         self,
@@ -1470,6 +1598,110 @@ class LocalLLMClient:
             ok=True,
             provider=self.provider_id,
             models=_extract_ollama_model_names(body),
+        )
+
+    def iter_pull_model(self, name: str):
+        """Yield :class:`PullProgress` for each line of a streamed model pull.
+
+        The streaming primitive behind :meth:`pull_model` and the pull
+        endpoint: it POSTs to Ollama's native ``/api/pull`` (derived from
+        ``base_url`` by stripping a trailing ``/v1``) and yields one structured
+        progress update per newline-delimited JSON line. Transport errors are
+        **not** caught here — they propagate so the caller can classify them via
+        :func:`classify_endpoint_error`. Assumes the Ollama-native provider and
+        a non-empty ``name`` (the public :meth:`pull_model` and the endpoint
+        guard both before calling this).
+        """
+        url = self._ollama_native_pull_url()
+        headers: dict[str, str] = {}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        # ``stream`` is explicit so a future Ollama default change cannot turn
+        # this into a single buffered response the NDJSON reader can't parse.
+        payload = {"name": name, "stream": True}
+        for line in _post_json_stream(
+            url,
+            payload,
+            headers=headers,
+            timeout=self.config.effective_timeout_seconds,
+        ):
+            if isinstance(line, dict):
+                yield _pull_progress_from_line(line)
+
+    def pull_model(
+        self, name: str, *, on_progress=None
+    ) -> ModelPullResult:
+        """Pull ``name`` from the configured Ollama server (Ollama-native only).
+
+        Streams the server's ``/api/pull`` progress, surfacing each update as a
+        :class:`PullProgress` (and invoking ``on_progress`` with it when given),
+        and returns a :class:`ModelPullResult` collecting every update. For the
+        OpenAI-compatible provider it returns a clear unsupported result with
+        ``error_kind`` :data:`PULL_UNSUPPORTED` rather than raising. Transport
+        failures never raise either: they are classified via
+        :func:`classify_endpoint_error` and returned as a non-OK result.
+
+        This is an explicit, operator-initiated action only — it is never
+        invoked automatically during tailoring, preflight, or startup. The
+        backend cannot verify disk/VRAM fit (see :data:`PULL_DISK_VRAM_ADVISORY`,
+        always carried on the result).
+        """
+        name = (name or "").strip()
+        if self.config.provider != PROVIDER_OLLAMA:
+            return ModelPullResult(
+                ok=False,
+                provider=self.provider_id,
+                model=name,
+                error=(
+                    "Pulling a model is only supported for the Ollama-native "
+                    "provider; the OpenAI-compatible surface has no model-pull "
+                    "endpoint."
+                ),
+                error_kind=PULL_UNSUPPORTED,
+            )
+        if not name:
+            return ModelPullResult(
+                ok=False,
+                provider=self.provider_id,
+                model=name,
+                error="a model name is required to pull",
+                error_kind=ENDPOINT_ERROR_UNEXPECTED,
+            )
+
+        updates: list[PullProgress] = []
+        error: Optional[str] = None
+        error_kind: Optional[str] = None
+        try:
+            for progress in self.iter_pull_model(name):
+                updates.append(progress)
+                if on_progress is not None:
+                    on_progress(progress)
+                # A server-reported per-line error (e.g. an unknown model name)
+                # is preserved as the failure reason; the stream may still emit
+                # further lines, so keep the first error seen.
+                if progress.error and error is None:
+                    error = progress.error
+                    error_kind = ENDPOINT_ERROR_UNEXPECTED
+        except Exception as exc:  # noqa: BLE001 - classified, never re-raised
+            kind, message = classify_endpoint_error(
+                exc, base_url=self._ollama_native_pull_url()
+            )
+            return ModelPullResult(
+                ok=False,
+                provider=self.provider_id,
+                model=name,
+                updates=updates,
+                error=message,
+                error_kind=kind,
+            )
+
+        return ModelPullResult(
+            ok=error is None,
+            provider=self.provider_id,
+            model=name,
+            updates=updates,
+            error=error,
+            error_kind=error_kind,
         )
 
     def diagnose_connection(self) -> ConnectionDiagnosis:
