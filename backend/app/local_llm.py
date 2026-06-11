@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -79,6 +80,77 @@ DEFAULT_MAX_INPUT_TOKENS = 6500
 DEFAULT_ALLOW_COMPRESSION = True
 DEFAULT_ALLOW_FALLBACK = True
 DEFAULT_ABORT_ON_OVER_BUDGET = False
+
+# ---- Reasoning ("thinking") controls (task 131) ----------------------
+#
+# Reasoning-capable local models (DeepSeek-R1, Qwen3, and other Ollama
+# models) emit chain-of-thought — usually wrapped in ``<think>...</think>``
+# markers — *before* the JSON object the preflight pipeline expects. That
+# prose makes :func:`validate_json_payload` fail and discards an otherwise
+# usable answer. ``thinking_mode`` controls how that reasoning is handled:
+#
+# - ``no_thinking``  — ask the model not to reason at all. Best-effort only:
+#   for the Ollama-native provider we send the documented ``think: false``
+#   option; for OpenAI-compatible servers we reinforce "reply with ONLY the
+#   JSON object, no reasoning" in the system prompt. A reasoning-tuned model
+#   may ignore both, so the strip step below is the reliable backstop.
+# - ``strip_thinking`` — allow the model to think but remove the thinking
+#   text from the content *before* parsing. This is the safe default.
+# - ``hide_thinking`` — like strip for parsing, but also keep the reasoning
+#   out of the surfaced ``content`` so it never reaches persisted artifacts
+#   or logs downstream.
+#
+# Stripping is the reliable mechanism; disabling reasoning is best-effort.
+THINKING_MODE_NO_THINKING = "no_thinking"
+THINKING_MODE_STRIP = "strip_thinking"
+THINKING_MODE_HIDE = "hide_thinking"
+SUPPORTED_THINKING_MODES = (
+    THINKING_MODE_NO_THINKING,
+    THINKING_MODE_STRIP,
+    THINKING_MODE_HIDE,
+)
+# Default to stripping so existing users recover reasoning-model answers
+# without reconfiguring.
+DEFAULT_THINKING_MODE = THINKING_MODE_STRIP
+
+# Removes ``<think>...</think>`` and the ``<thinking>...</thinking>`` variant,
+# case-insensitively and across newlines (``DOTALL``). The closing tag is
+# matched leniently so a mismatched ``<think>...</thinking>`` is still removed.
+_THINK_BLOCK_RE = re.compile(
+    r"<think(?:ing)?>.*?</think(?:ing)?>", re.IGNORECASE | re.DOTALL
+)
+
+# Best-effort reinforcement injected as a system message for OpenAI-compatible
+# servers under ``no_thinking`` (they have no native disable-reasoning flag).
+_NO_THINKING_SYSTEM_PROMPT = (
+    "Reply with ONLY the requested JSON object. Do not include any reasoning, "
+    "chain-of-thought, <think> blocks, prose, or markdown fences."
+)
+
+
+def strip_thinking(content: Optional[str]) -> Optional[str]:
+    """Remove reasoning ("thinking") blocks from model ``content``.
+
+    Pure and unit-testable in isolation: removes ``<think>...</think>`` and
+    ``<thinking>...</thinking>`` spans (case-insensitive, multi-line) and
+    trims surrounding whitespace so a reasoning model's structured answer is
+    left behind. Content with no thinking markers is returned unchanged
+    (aside from whitespace trimming). ``None`` passes through as ``None``.
+    """
+    if not content:
+        return content
+    return _THINK_BLOCK_RE.sub("", content).strip()
+
+
+def _normalize_thinking_mode(raw: Any) -> str:
+    """Coerce a stored/incoming thinking mode to a known value.
+
+    A missing or unrecognized value falls back to the safe default so an old
+    or hand-edited settings row never breaks loading (task 131).
+    """
+    if isinstance(raw, str) and raw in SUPPORTED_THINKING_MODES:
+        return raw
+    return DEFAULT_THINKING_MODE
 
 
 # ---- Task policy -----------------------------------------------------
@@ -188,6 +260,10 @@ class LocalLLMConfig:
     # JobApplicator's prompt budget, and only applies to the Ollama-native
     # provider (task 126).
     num_ctx: Optional[int] = None
+    # How the model's reasoning ("thinking") output is handled. Defaults to
+    # stripping ``<think>`` blocks before JSON parsing so a reasoning model's
+    # structured answer is recovered instead of discarded (task 131).
+    thinking_mode: str = DEFAULT_THINKING_MODE
     allow_compression: bool = DEFAULT_ALLOW_COMPRESSION
     allow_fallback: bool = DEFAULT_ALLOW_FALLBACK
     abort_on_over_budget: bool = DEFAULT_ABORT_ON_OVER_BUDGET
@@ -309,6 +385,7 @@ def get_config() -> LocalLLMConfig:
             else None
         ),
         num_ctx=num_ctx,
+        thinking_mode=_normalize_thinking_mode(raw.get("thinking_mode")),
         allow_compression=bool(
             raw.get("allow_compression", DEFAULT_ALLOW_COMPRESSION)
         ),
@@ -333,6 +410,7 @@ def save_config(
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
     max_input_tokens: Optional[int] = DEFAULT_MAX_INPUT_TOKENS,
     num_ctx: Optional[int] = None,
+    thinking_mode: str = DEFAULT_THINKING_MODE,
     allow_compression: bool = DEFAULT_ALLOW_COMPRESSION,
     allow_fallback: bool = DEFAULT_ALLOW_FALLBACK,
     abort_on_over_budget: bool = DEFAULT_ABORT_ON_OVER_BUDGET,
@@ -405,6 +483,16 @@ def save_config(
         if num_ctx <= 0:
             raise LocalLLMValidationError("num_ctx must be a positive integer")
 
+    # ``thinking_mode`` must be one of the supported reasoning controls. An
+    # empty value falls back to the safe default; an unrecognized value is a
+    # hard error so a typo cannot silently disable stripping (task 131).
+    thinking_mode = (thinking_mode or "").strip() or DEFAULT_THINKING_MODE
+    if thinking_mode not in SUPPORTED_THINKING_MODES:
+        raise LocalLLMValidationError(
+            f"unsupported thinking_mode {thinking_mode!r}; supported: "
+            + ", ".join(SUPPORTED_THINKING_MODES)
+        )
+
     # Resolve the API key: an empty incoming key with preserve flag keeps
     # whatever was previously stored.
     incoming_key = (api_key or "").strip() or None
@@ -424,6 +512,7 @@ def save_config(
         "reserved_output_tokens": budget.reserved_output_tokens,
         "max_input_tokens": budget.max_input_tokens,
         "num_ctx": num_ctx,
+        "thinking_mode": thinking_mode,
         "allow_compression": bool(allow_compression),
         "allow_fallback": bool(allow_fallback),
         "abort_on_over_budget": bool(abort_on_over_budget),
@@ -454,6 +543,7 @@ def save_config(
         reserved_output_tokens=budget.reserved_output_tokens,
         max_input_tokens=budget.max_input_tokens,
         num_ctx=num_ctx,
+        thinking_mode=thinking_mode,
         allow_compression=bool(allow_compression),
         allow_fallback=bool(allow_fallback),
         abort_on_over_budget=bool(abort_on_over_budget),
@@ -517,6 +607,7 @@ def get_settings_view() -> dict[str, Any]:
         "reserved_output_tokens": budget.reserved_output_tokens,
         "max_input_tokens": budget.max_input_tokens,
         "num_ctx": config.num_ctx,
+        "thinking_mode": config.thinking_mode,
         "allow_compression": config.allow_compression,
         "allow_fallback": config.allow_fallback,
         "abort_on_over_budget": config.abort_on_over_budget,
@@ -925,11 +1016,34 @@ class LocalLLMClient:
                 # than OpenAI's ``response_format``; ``"json"`` is the
                 # supported structured-output value.
                 payload["format"] = "json"
+            # No-thinking: Ollama's native API accepts a top-level ``think``
+            # flag that asks the model not to emit reasoning. This is a
+            # provider-specific option that only the Ollama-native surface
+            # understands, so it is sent *only* here. Disabling reasoning is
+            # best-effort — a reasoning-tuned model may ignore it — so the
+            # strip step in ``chat_json`` remains the reliable backstop
+            # (task 131).
+            if self.config.thinking_mode == THINKING_MODE_NO_THINKING:
+                payload["think"] = False
         else:
             url = self._chat_url()
+            # No-thinking on an OpenAI-compatible server: there is no portable
+            # native disable-reasoning flag, so we reinforce the instruction in
+            # a system message instead. A provider-specific reasoning flag is
+            # *never* sent to this surface. Best-effort, again backstopped by
+            # the strip step in ``chat_json`` (task 131).
+            outbound_messages = messages
+            if (
+                self.config.thinking_mode == THINKING_MODE_NO_THINKING
+                and response_format is not None
+            ):
+                outbound_messages = [
+                    {"role": "system", "content": _NO_THINKING_SYSTEM_PROMPT},
+                    *messages,
+                ]
             payload = {
                 "model": self.config.model,
-                "messages": messages,
+                "messages": outbound_messages,
             }
             if response_format is not None:
                 payload["response_format"] = response_format
@@ -1035,17 +1149,26 @@ class LocalLLMClient:
             _log_call(result)
             return result
 
-        data, reason = validate_json_payload(result.content, required_fields)
+        # Strip any reasoning ("thinking") text from the content *before*
+        # parsing, so a reasoning model that wraps valid JSON in a ``<think>``
+        # block is recovered instead of discarded. Under ``hide_thinking`` the
+        # stripped content also replaces ``result.content`` so the reasoning
+        # never reaches persisted artifacts or logs downstream (task 131).
+        cleaned = strip_thinking(result.content)
+        if self.config.thinking_mode == THINKING_MODE_HIDE:
+            result.content = cleaned
+
+        data, reason = validate_json_payload(cleaned, required_fields)
         if reason is None:
             result.parsed = data
             result.schema_valid = True
             _log_call(result)
             return result
 
-        # One repair attempt: feed the bad reply back with the reason.
+        # One repair attempt: feed the (cleaned) bad reply back with the reason.
         repair_messages = [
             *messages,
-            {"role": "assistant", "content": result.content or ""},
+            {"role": "assistant", "content": cleaned or ""},
             {"role": "user", "content": _repair_prompt(required_fields, reason)},
         ]
         retry = self.chat(
@@ -1059,7 +1182,10 @@ class LocalLLMClient:
             retry.schema_valid = False
             _log_call(retry)
             return retry
-        data2, reason2 = validate_json_payload(retry.content, required_fields)
+        cleaned_retry = strip_thinking(retry.content)
+        if self.config.thinking_mode == THINKING_MODE_HIDE:
+            retry.content = cleaned_retry
+        data2, reason2 = validate_json_payload(cleaned_retry, required_fields)
         retry.parsed = data2
         retry.schema_valid = reason2 is None
         if reason2 is not None:

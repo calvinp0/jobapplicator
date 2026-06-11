@@ -106,6 +106,9 @@ class LocalLLMSettingsRead(BaseModel):
     reserved_output_tokens: int
     max_input_tokens: int
     num_ctx: int | None
+    # Reasoning control: ``strip_thinking`` (default), ``hide_thinking``, or
+    # ``no_thinking`` (task 131).
+    thinking_mode: str
     allow_compression: bool
     allow_fallback: bool
     abort_on_over_budget: bool
@@ -134,6 +137,9 @@ class LocalLLMSettingsUpdate(BaseModel):
     reserved_output_tokens: int = local_llm.DEFAULT_RESERVED_OUTPUT_TOKENS
     max_input_tokens: int | None = None
     num_ctx: int | None = None
+    # Omitted means the safe default (strip thinking before JSON parsing);
+    # an unrecognized value is rejected by ``save_config`` (task 131).
+    thinking_mode: str = local_llm.DEFAULT_THINKING_MODE
     allow_compression: bool = local_llm.DEFAULT_ALLOW_COMPRESSION
     allow_fallback: bool = local_llm.DEFAULT_ALLOW_FALLBACK
     abort_on_over_budget: bool = local_llm.DEFAULT_ABORT_ON_OVER_BUDGET
@@ -162,6 +168,7 @@ def update_local_llm_settings(
             reserved_output_tokens=payload.reserved_output_tokens,
             max_input_tokens=payload.max_input_tokens,
             num_ctx=payload.num_ctx,
+            thinking_mode=payload.thinking_mode,
             allow_compression=payload.allow_compression,
             allow_fallback=payload.allow_fallback,
             abort_on_over_budget=payload.abort_on_over_budget,

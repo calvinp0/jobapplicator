@@ -1196,3 +1196,220 @@ def test_openai_compatible_effective_timeout_round_trips(client):
     body = client.get("/settings/local-llm").json()
     assert body["timeout_seconds"] is None
     assert body["effective_timeout_seconds"] == 60
+
+
+# ---- reasoning ("thinking") controls (task 131) ----------------------
+
+
+def test_strip_thinking_removes_reasoning_before_json():
+    import app.local_llm as local_llm
+
+    # Reasoning wrapped in <think> precedes the JSON object; only the JSON
+    # (whitespace-trimmed) should survive.
+    content = (
+        "<think>The user wants ATS keywords. Let me reason about it "
+        "carefully.</think>\n\n{\"keywords\": [\"python\"]}"
+    )
+    assert local_llm.strip_thinking(content) == '{"keywords": ["python"]}'
+
+
+def test_strip_thinking_handles_case_and_multiline_and_thinking_variant():
+    import app.local_llm as local_llm
+
+    # Case-insensitive tag matching, multi-line spans, and the <thinking>
+    # variant are all removed.
+    content = (
+        "<THINK>line one\nline two</think>"
+        "<Thinking>more\nreasoning</THINKING>"
+        '  {"ok": true}  '
+    )
+    assert local_llm.strip_thinking(content) == '{"ok": true}'
+
+
+def test_strip_thinking_leaves_content_without_markers_unchanged():
+    import app.local_llm as local_llm
+
+    # No thinking markers: content is returned unchanged (bar whitespace trim).
+    assert local_llm.strip_thinking('{"ok": true}') == '{"ok": true}'
+    # None passes through as None; empty stays empty.
+    assert local_llm.strip_thinking(None) is None
+    assert local_llm.strip_thinking("") == ""
+
+
+def test_chat_json_recovers_json_wrapped_in_think_block(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    # A reasoning model wraps valid JSON in a <think> block. Under the default
+    # strip mode the JSON is recovered and validated instead of falling back.
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _completion(
+            "<think>Let me work out the suggestions step by step.</think>\n"
+            '{"suggestions": [{"target": "summary"}]}'
+        )
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(enabled=True)
+    assert config.thinking_mode == local_llm.THINKING_MODE_STRIP
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "go"}],
+        required_fields=["suggestions"],
+        task="resume_suggestions",
+    )
+    assert result.schema_valid is True
+    assert result.repaired is False
+    assert result.parsed == {"suggestions": [{"target": "summary"}]}
+
+
+def test_chat_json_hide_thinking_strips_content_surfaced(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    # Under hide_thinking the reasoning is also removed from the surfaced
+    # ``content`` so it never reaches persisted artifacts or logs.
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _completion(
+            "<think>secret reasoning</think>{\"suggestions\": []}"
+        )
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True, thinking_mode=local_llm.THINKING_MODE_HIDE
+    )
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "go"}],
+        required_fields=["suggestions"],
+        task="resume_suggestions",
+    )
+    assert result.schema_valid is True
+    assert result.parsed == {"suggestions": []}
+    assert "secret reasoning" not in (result.content or "")
+    assert result.content == '{"suggestions": []}'
+
+
+def test_ollama_no_thinking_sends_native_disable_option(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+        thinking_mode=local_llm.THINKING_MODE_NO_THINKING,
+    )
+    local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    # Native Ollama disable-reasoning flag is carried on the request.
+    assert captured["payload"]["think"] is False
+
+
+def test_openai_compatible_no_thinking_never_sends_reasoning_flag(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        thinking_mode=local_llm.THINKING_MODE_NO_THINKING,
+    )
+    local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    # No provider-specific reasoning flag is ever sent to an OpenAI-compatible
+    # endpoint; instead the instruction is reinforced via a system message.
+    assert "think" not in captured["payload"]
+    messages = captured["payload"]["messages"]
+    assert messages[0]["role"] == "system"
+    assert "reasoning" in messages[0]["content"].lower()
+    assert messages[-1] == {"role": "user", "content": "hi"}
+
+
+def test_thinking_mode_round_trips_through_settings(client):
+    # Default on a fresh DB is the safe strip mode.
+    body = client.get("/settings/local-llm").json()
+    assert body["thinking_mode"] == "strip_thinking"
+
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "llama3.1:8b",
+            "thinking_mode": "no_thinking",
+        },
+    ).raise_for_status()
+    assert client.get("/settings/local-llm").json()["thinking_mode"] == (
+        "no_thinking"
+    )
+
+
+def test_save_config_rejects_unknown_thinking_mode(monkeypatch, tmp_path):
+    import pytest
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+
+    with pytest.raises(local_llm.LocalLLMValidationError):
+        local_llm.save_config(
+            enabled=True,
+            provider=local_llm.PROVIDER_OLLAMA,
+            base_url="http://localhost:11434",
+            model="llama3.1:8b",
+            allowed_tasks={},
+            thinking_mode="ponder-deeply",
+        )
+
+
+def test_get_config_defaults_unknown_thinking_mode(monkeypatch, tmp_path):
+    import json
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+    from app.db import SessionLocal
+    from app.models import AppSetting
+
+    # A missing thinking_mode defaults to the safe strip mode.
+    assert local_llm.get_config().thinking_mode == local_llm.THINKING_MODE_STRIP
+
+    # A garbage stored value also coerces to the safe default on load.
+    with SessionLocal() as session:
+        session.add(
+            AppSetting(
+                key=local_llm.LOCAL_LLM_SETTING_KEY,
+                value=json.dumps(
+                    {
+                        "enabled": True,
+                        "provider": "ollama",
+                        "base_url": "http://localhost:11434",
+                        "model": "llama3.1:8b",
+                        "thinking_mode": "nonsense",
+                    }
+                ),
+            )
+        )
+        session.commit()
+
+    assert local_llm.get_config().thinking_mode == local_llm.THINKING_MODE_STRIP
