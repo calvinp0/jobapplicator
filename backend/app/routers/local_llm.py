@@ -70,15 +70,16 @@ class LocalLLMTestResult(BaseModel):
     context_warning: str | None = None
 
 
-@router.post("/test-connection", response_model=LocalLLMTestResult)
-def test_local_llm_connection(
-    payload: LocalLLMTestRequest | None = None,
-) -> LocalLLMTestResult:
-    """Send a minimal prompt to the configured local endpoint."""
-    payload = payload or LocalLLMTestRequest()
-    config = local_llm.get_config()
+def _config_with_overrides(
+    config: local_llm.LocalLLMConfig, payload: LocalLLMTestRequest
+) -> local_llm.LocalLLMConfig:
+    """Overlay any provided request overrides onto the stored config.
 
-    # Overlay any provided overrides onto the stored config.
+    Shared by the connection-test and model-listing endpoints so the UI can
+    operate on unsaved edits with one consistent override rule. A field left
+    unset falls back to the persisted config; an empty API key keeps the
+    stored key unless ``preserve_existing_key`` is false.
+    """
     overrides: dict[str, Any] = {}
     if payload.base_url is not None:
         overrides["base_url"] = payload.base_url.strip()
@@ -107,7 +108,17 @@ def test_local_llm_connection(
     elif not payload.preserve_existing_key:
         overrides["api_key"] = None
 
-    config = replace(config, **overrides)
+    return replace(config, **overrides)
+
+
+@router.post("/test-connection", response_model=LocalLLMTestResult)
+def test_local_llm_connection(
+    payload: LocalLLMTestRequest | None = None,
+) -> LocalLLMTestResult:
+    """Send a minimal prompt to the configured local endpoint."""
+    payload = payload or LocalLLMTestRequest()
+    config = local_llm.get_config()
+    config = _config_with_overrides(config, payload)
     budget = config.context_budget
 
     client = local_llm.LocalLLMClient(config)
@@ -145,6 +156,53 @@ def test_local_llm_connection(
         context_warning=(
             None if detection.context_verified else detection.note
         ),
+    )
+
+
+# ---- List installed models (task 135) --------------------------------
+
+
+class LocalLLMModelsResult(BaseModel):
+    """Installed-model listing for a local endpoint.
+
+    ``ok`` is true only when the listing actually succeeded; ``models`` is the
+    list of installed model names (empty otherwise). ``error`` / ``error_kind``
+    explain a failure or that the OpenAI-compatible surface does not support
+    model listing (``error_kind == "unsupported"``).
+    """
+
+    provider: str
+    ok: bool
+    models: list[str]
+    error: str | None = None
+    error_kind: str | None = None
+
+
+@router.get("/models", response_model=LocalLLMModelsResult)
+def list_local_llm_models(
+    base_url: str | None = None,
+    provider: str | None = None,
+) -> LocalLLMModelsResult:
+    """List the models installed on the configured local endpoint.
+
+    Installed-model detection is **Ollama-native only** (it queries the native
+    ``/api/tags`` endpoint). Optional ``base_url`` / ``provider`` query
+    overrides let the UI list models for unsaved edits, mirroring the
+    test-connection override rule. Transport failures and the unsupported
+    OpenAI-compatible surface are reported via ``error`` / ``error_kind``
+    rather than raising.
+    """
+    config = local_llm.get_config()
+    config = _config_with_overrides(
+        config, LocalLLMTestRequest(base_url=base_url, provider=provider)
+    )
+    result = local_llm.LocalLLMClient(config).list_models()
+    return LocalLLMModelsResult(
+        provider=result.provider,
+        ok=result.ok,
+        models=result.models,
+        error=result.error,
+        error_kind=result.error_kind,
     )
 
 

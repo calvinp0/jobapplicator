@@ -1039,6 +1039,178 @@ def test_test_connection_accepts_num_ctx_override(client, monkeypatch):
     assert body["server_reported_context_tokens"] == 16384
 
 
+# ---- installed-model detection (task 135) ----------------------------
+
+
+def _ollama_tags(*names: str) -> dict:
+    """A minimal Ollama native ``/api/tags`` response body."""
+    return {
+        "models": [
+            {"name": name, "model": name, "size": 123, "digest": "sha256:abc"}
+            for name in names
+        ]
+    }
+
+
+def test_list_models_ollama_returns_installed_names(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_get(url, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        return _ollama_tags("llama3.1:8b", "qwen2.5-coder:14b")
+
+    monkeypatch.setattr(local_llm, "_get_json", fake_get)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).list_models()
+
+    # The /v1 suffix is stripped to reach the native tags endpoint.
+    assert captured["url"] == "http://localhost:11434/api/tags"
+    assert result.ok is True
+    assert result.models == ["llama3.1:8b", "qwen2.5-coder:14b"]
+    assert result.error is None
+    assert result.error_kind is None
+
+
+def test_list_models_openai_compatible_is_unsupported_without_network(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    def boom(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("openai-compatible model listing must not hit network")
+
+    monkeypatch.setattr(local_llm, "_get_json", boom)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:8000/v1",
+        model="mistral-small",
+    )
+    result = local_llm.LocalLLMClient(config).list_models()
+
+    assert result.ok is False
+    assert result.models == []
+    assert result.error_kind == local_llm.MODEL_LIST_UNSUPPORTED
+    assert "ollama" in (result.error or "").lower()
+
+
+def test_list_models_classifies_transport_failures(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+    )
+
+    # A connection failure (URLError) classifies as endpoint_unavailable.
+    def unreachable(url, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(local_llm, "_get_json", unreachable)
+    unavailable = local_llm.LocalLLMClient(config).list_models()
+    assert unavailable.ok is False
+    assert unavailable.error_kind == local_llm.ENDPOINT_ERROR_UNAVAILABLE
+
+    # A reachable host returning 404 classifies as bad_url — a distinct kind.
+    def not_found(url, *, headers=None, timeout=60.0):
+        raise urllib.error.HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    monkeypatch.setattr(local_llm, "_get_json", not_found)
+    bad_url = local_llm.LocalLLMClient(config).list_models()
+    assert bad_url.ok is False
+    assert bad_url.error_kind == local_llm.ENDPOINT_ERROR_BAD_URL
+
+    # The two failure modes are clearly distinguishable.
+    assert unavailable.error_kind != bad_url.error_kind
+
+
+def test_classify_endpoint_error_kinds():
+    import app.local_llm as local_llm
+
+    base = "http://host:11434/api/tags"
+
+    kind, msg = local_llm.classify_endpoint_error(
+        urllib.error.URLError("Connection refused"), base_url=base
+    )
+    assert kind == local_llm.ENDPOINT_ERROR_UNAVAILABLE
+    assert base in msg
+
+    kind, _ = local_llm.classify_endpoint_error(
+        urllib.error.HTTPError(base, 404, "Not Found", hdrs=None, fp=None),
+        base_url=base,
+    )
+    assert kind == local_llm.ENDPOINT_ERROR_BAD_URL
+
+    kind, _ = local_llm.classify_endpoint_error(
+        urllib.error.HTTPError(base, 405, "Method Not Allowed", hdrs=None, fp=None),
+        base_url=base,
+    )
+    assert kind == local_llm.ENDPOINT_ERROR_BAD_URL
+
+    # An HTTP 500 (reachable, but a server error) is unexpected, not bad_url.
+    kind, _ = local_llm.classify_endpoint_error(
+        urllib.error.HTTPError(base, 500, "Server Error", hdrs=None, fp=None),
+        base_url=base,
+    )
+    assert kind == local_llm.ENDPOINT_ERROR_UNEXPECTED
+
+    kind, _ = local_llm.classify_endpoint_error(
+        ValueError("boom"), base_url=base
+    )
+    assert kind == local_llm.ENDPOINT_ERROR_UNEXPECTED
+
+
+def test_models_endpoint_lists_ollama_models_with_overrides(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_get(url, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        return _ollama_tags("llama3.1:8b", "phi3:mini")
+
+    monkeypatch.setattr(local_llm, "_get_json", fake_get)
+
+    # The persisted config defaults to the OpenAI-compatible provider; the
+    # query overrides switch the listing to the Ollama-native surface for an
+    # unsaved edit.
+    resp = client.get(
+        "/llm/local/models",
+        params={"provider": "ollama", "base_url": "http://localhost:11434/v1"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["provider"] == "local_ollama"
+    assert body["models"] == ["llama3.1:8b", "phi3:mini"]
+    assert body["error"] is None
+    assert body["error_kind"] is None
+    assert captured["url"] == "http://localhost:11434/api/tags"
+
+
+def test_models_endpoint_reports_unsupported_for_openai_compatible(client):
+    # With no overrides the persisted default is the OpenAI-compatible
+    # provider, which cannot list models — reported, not raised.
+    resp = client.get("/llm/local/models")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["provider"] == "local_openai_compatible"
+    assert body["models"] == []
+    assert body["error_kind"] == "unsupported"
+
+
 # ---- per-call timeout (task 130) -------------------------------------
 
 
