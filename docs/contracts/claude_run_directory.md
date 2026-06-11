@@ -275,6 +275,27 @@ entry includes a `context` object with:
 - `fallback_used`
 - `over_budget`
 
+When a task **actually issued** a local call (a request reached the server),
+its entry also carries (task 133):
+
+- `local_attempted` — `true` only on a task where a local call was issued.
+  Present only on attempted tasks; a deterministic-only task (local disabled,
+  over-budget before the call, or skipped after repeated timeouts) omits it
+  entirely so it stays neutral.
+- `performance` — a record of how the local call behaved:
+  - `prompt_token_estimate` — the prompt token estimate the call was sent with.
+    Reuses the budgeted `context.estimated_input_tokens_final`; it is not
+    recomputed.
+  - `elapsed_ms` — the call's measured elapsed time. Absent when the call timed
+    out (the timeout fires before a latency is recorded).
+  - `effective_timeout_seconds` — the per-call timeout that bounded the attempt
+    (the provider-aware value resolved in task 130).
+
+A task that fell back *before* contacting the server (budget over-limit, or the
+task-132 skip path) is not "attempted" and records neither `local_attempted`
+nor `performance`; its prompt token estimate still lives in
+`context.estimated_input_tokens_final`.
+
 If a local input remains too large and deterministic fallback is allowed, the
 task entry records `status = "fallback"`, `provider = "deterministic"`, and a
 clear `fallback_reason`. Local LLM prompts must never be silently truncated.
@@ -300,6 +321,28 @@ failure records `context_verified = false` and never fails preflight, and a
 detected context is never auto-applied to the budget — the user stays in
 control of the budget. Deterministic-only runs (the local provider is not the
 intended primary) omit the top-level `context` summary entirely.
+
+When the run intends the local provider, the manifest also carries three
+top-level boolean signals describing how the local provider fared (task 133):
+
+- `local_attempted` — `true` when at least one task actually issued a local
+  call this run. Distinct from `fallback_used`: a run can fall back without ever
+  contacting the server (everything over budget), and a run can attempt local
+  and still fall back (a timeout or unparseable output).
+- `local_degraded` — `true` once a local call timed out this run (task 132).
+- `local_skipped` — `true` once repeated timeouts crossed the skip threshold and
+  the remaining tasks bypassed the local provider entirely (task 132).
+
+These three flags are present only when the local provider was the intended
+primary; a deterministic-only run omits them so it never gains misleading
+"attempted" fields.
+
+When `local_attempted` and `fallback_used` are both true, the human-readable
+`preflight_summary.md` and the run trace (`run.log` / progress stream) carry a
+stable `Local LLM attempted but fell back: <reason>` line (noting *degraded* or
+*skipped after repeated timeouts* when applicable) so an operator can see at a
+glance that the deterministic artifacts came from a local attempt that
+degraded, not from a run that never tried the local provider.
 
 ### `revision_feedback.md`
 
@@ -388,12 +431,16 @@ Artifacts:
   evidence exists.
 - `preflight_manifest.json` — `created_at`, top-level `provider`/`model`,
   `fallback_used` (and `fallback_reason` when a local task degraded), a
-  `tasks` array recording per-task `name`/`provider`/`model`/`status`/`output`,
-  and — for local runs — a top-level `context` summary of the assumed vs.
-  server-reported context (`assumed_context_tokens`,
+  `tasks` array recording per-task `name`/`provider`/`model`/`status`/`output`
+  (plus, on tasks that issued a local call, `local_attempted` and a
+  `performance` record of `prompt_token_estimate`/`elapsed_ms`/
+  `effective_timeout_seconds`), and — for local runs — the top-level
+  `local_attempted`/`local_degraded`/`local_skipped` signals and a `context`
+  summary of the assumed vs. server-reported context (`assumed_context_tokens`,
   `server_reported_context_tokens`, `context_verified`). A `provider` of
   `deterministic` means the heuristic extractor produced the artifact. See
-  *`preflight/preflight_manifest.json`* above for the full context schema.
+  *`preflight/preflight_manifest.json`* above for the full context and
+  performance schema.
 - `preflight_summary.md` — optional human-readable projection of the
   manifest.
 

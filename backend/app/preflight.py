@@ -109,6 +109,13 @@ LOCAL_SKIP_TIMEOUT_THRESHOLD = 2
 # repeated timeouts.
 LOCAL_SKIPPED_REASON = "local provider skipped after repeated timeouts"
 
+# Stable marker phrasing for the "local LLM was tried and then degraded/skipped"
+# situation (task 133). Emitted verbatim through the run trace (run.log /
+# progress stream) and rendered into the human-readable preflight summary so an
+# operator — and the frontend run-trace task (134) — can key on a single,
+# documented string. Always followed by ``": <reason>"``.
+LOCAL_ATTEMPTED_FELL_BACK_MARKER = "Local LLM attempted but fell back"
+
 # Default context window preflight budgets against (task 132). Preflight
 # prompts are short — a single job description plus a fixed JSON shape — and a
 # reasoning model handed a large declared context wastes it (and slows down)
@@ -192,6 +199,20 @@ class PreflightTaskResult:
     duration_ms: Optional[int] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    # Local LLM performance record (task 133). ``local_attempted`` is True only
+    # when a local call was actually issued for this task (a ``chat_json``
+    # request was sent), distinct from a task that fell back before contacting
+    # the server (budget over-limit, or the task-132 skip path). The other three
+    # fields populate the manifest entry's ``performance`` object:
+    # ``prompt_token_estimate`` reuses the estimate already computed in
+    # ``_prepare_local_messages`` (``estimated_input_tokens_final``);
+    # ``latency_ms`` is the call's measured elapsed time; and
+    # ``effective_timeout_seconds`` is the per-call timeout that bounded it
+    # (task 130).
+    local_attempted: bool = False
+    prompt_token_estimate: Optional[int] = None
+    latency_ms: Optional[int] = None
+    effective_timeout_seconds: Optional[int] = None
 
     def manifest_entry(self) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -207,6 +228,22 @@ class PreflightTaskResult:
                 entry["fallback_reason"] = self.fallback_reason
         if self.context is not None:
             entry["context"] = self.context
+        # Performance record for a genuinely-attempted local call (task 133).
+        # Deterministic-only tasks (local never attempted) gain neither the flag
+        # nor the ``performance`` object, so they stay neutral.
+        if self.local_attempted:
+            entry["local_attempted"] = True
+            performance: dict[str, Any] = {}
+            if self.prompt_token_estimate is not None:
+                performance["prompt_token_estimate"] = self.prompt_token_estimate
+            if self.latency_ms is not None:
+                performance["elapsed_ms"] = self.latency_ms
+            if self.effective_timeout_seconds is not None:
+                performance["effective_timeout_seconds"] = (
+                    self.effective_timeout_seconds
+                )
+            if performance:
+                entry["performance"] = performance
         return entry
 
 
@@ -444,6 +481,21 @@ def run_preflight(
         (r.fallback_reason for r in results if r.fallback_used and r.fallback_reason),
         None,
     )
+    # Whether the local provider was actually contacted for at least one task
+    # (task 133). Distinct from ``fallback_used``: a run can fall back without
+    # ever issuing a local call (everything over budget), and a run can attempt
+    # local and still fall back (timeout / bad output).
+    local_attempted = any(r.local_attempted for r in results)
+
+    # Surface "attempted but fell back" prominently in the run trace so an
+    # operator does not have to reverse-engineer why a slow/wedged local model
+    # (task 132) quietly produced deterministic artifacts (task 133).
+    if local_attempted and fallback_used:
+        marker = _local_fell_back_line(
+            fallback_reason, health.degraded, health.skip_local
+        )
+        log(marker)
+        progress(marker)
 
     created_at = (now or datetime.now(timezone.utc)).isoformat()
     manifest = {
@@ -455,6 +507,13 @@ def run_preflight(
     }
     if fallback_used and fallback_reason:
         manifest["fallback_reason"] = fallback_reason
+    # Local-attempt / degradation signals are recorded only when the local
+    # provider was the intended primary, so a deterministic-only run never gains
+    # misleading "attempted" fields (task 133).
+    if intended_local:
+        manifest["local_attempted"] = local_attempted
+        manifest["local_degraded"] = health.degraded
+        manifest["local_skipped"] = health.skip_local
     if context_summary is not None:
         manifest["context"] = context_summary
 
@@ -640,6 +699,11 @@ def _run_one(
             required_fields=list(spec.required_fields),
             task=spec.policy_task,
         )
+        # A local call was actually issued: capture its performance record
+        # (task 133) regardless of whether it ultimately validated. The prompt
+        # token estimate reuses the figure already computed while budgeting.
+        prompt_token_estimate = context_info.get("estimated_input_tokens_final")
+        effective_timeout = cfg.effective_timeout_seconds
         if call.ok and call.schema_valid and call.parsed is not None:
             data, reason = validator(call.parsed)
             if reason is None and data is not None:
@@ -650,6 +714,10 @@ def _run_one(
                     status=STATUS_SUCCEEDED,
                     output=_artifact_relpath(spec.artifact),
                     context=context_info,
+                    local_attempted=True,
+                    prompt_token_estimate=prompt_token_estimate,
+                    latency_ms=call.latency_ms,
+                    effective_timeout_seconds=effective_timeout,
                 )
             fallback_reason = f"local output failed schema validation: {reason}"
         else:
@@ -661,8 +729,10 @@ def _run_one(
                 call.error
                 or "local provider returned an invalid or unparseable response"
             )
-        # Fall through to deterministic, recording that local was intended.
-        return _deterministic_result(
+        # Fall through to deterministic, recording that local was attempted (so
+        # the manifest distinguishes "tried and degraded" from "never tried")
+        # along with its performance record.
+        data, result = _deterministic_result(
             spec,
             deterministic,
             validator,
@@ -671,6 +741,11 @@ def _run_one(
             fallback_reason=fallback_reason,
             context=context_info,
         )
+        result.local_attempted = True
+        result.prompt_token_estimate = prompt_token_estimate
+        result.latency_ms = call.latency_ms
+        result.effective_timeout_seconds = effective_timeout
+        return data, result
 
     # Deterministic is the intended provider (local disabled/not allowed).
     return _deterministic_result(spec, deterministic, validator)
@@ -1261,6 +1336,24 @@ def validate_manifest(
 # ---- Human-readable projection ---------------------------------------
 
 
+def _local_fell_back_line(
+    reason: Optional[str], degraded: bool, skipped: bool
+) -> str:
+    """Build the stable "attempted but fell back" trace/summary line (task 133).
+
+    Used verbatim both in the run-trace callbacks and the human-readable
+    summary so the marker phrasing stays identical for the frontend (task 134).
+    """
+    line = LOCAL_ATTEMPTED_FELL_BACK_MARKER
+    if reason:
+        line += f": {reason}"
+    if skipped:
+        line += " (local provider skipped after repeated timeouts)"
+    elif degraded:
+        line += " (local provider degraded)"
+    return line
+
+
 def render_preflight_summary(
     manifest: dict[str, Any], artifact_paths: dict[str, Path]
 ) -> str:
@@ -1271,6 +1364,17 @@ def render_preflight_summary(
     lines.append(f"- Fallback used: {manifest.get('fallback_used')}")
     if manifest.get("fallback_reason"):
         lines.append(f"- Fallback reason: {manifest['fallback_reason']}")
+    # When the local provider was tried and the run still fell back, make the
+    # situation obvious at a glance (task 133).
+    if manifest.get("local_attempted") and manifest.get("fallback_used"):
+        lines.append(
+            "- "
+            + _local_fell_back_line(
+                manifest.get("fallback_reason"),
+                bool(manifest.get("local_degraded")),
+                bool(manifest.get("local_skipped")),
+            )
+        )
     context = manifest.get("context")
     if isinstance(context, dict):
         assumed = context.get("assumed_context_tokens")
