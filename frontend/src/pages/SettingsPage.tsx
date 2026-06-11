@@ -15,6 +15,7 @@ import {
   listEvidenceSources,
   listLocalLlmModels,
   listMasterResumes,
+  pullLocalLlmModel,
   resetLocalData,
   setGmailOAuthSettings,
   setLlmProviderSetting,
@@ -26,6 +27,7 @@ import type {
   GmailOAuthSettings,
   GmailStatusResponse,
   LlmProvider,
+  LocalLlmPullEvent,
   LocalLlmSettings,
   MasterResume,
 } from "../api";
@@ -517,6 +519,15 @@ const LOCAL_TASK_LABELS: Record<string, string> = {
   claim_audit: "Claim audit (experimental)",
 };
 
+// Disk/VRAM-unknown advisory shown before and during a model pull (task 139).
+// It mirrors the backend's ``PULL_DISK_VRAM_ADVISORY`` (task 137), which is also
+// streamed as the first line of the pull response, so the warning is visible at
+// confirmation time even before the stream starts.
+const PULL_DISK_VRAM_ADVISORY =
+  "The backend cannot verify whether this model will fit the host's available " +
+  "disk or VRAM. The pull may fail partway, fill the disk, or download a model " +
+  "the host cannot actually run.";
+
 /**
  * Turn a classified connection failure (task 136) into a distinct, actionable
  * message. The backend tags each failure with a stable ``error_kind`` so the
@@ -597,10 +608,37 @@ function LocalLlmCard() {
   const [modelsListed, setModelsListed] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
 
+  // Explicit, confirmation-gated model pull (task 139). The pull is offered
+  // only for the Ollama-native provider and never fires on the first click:
+  // ``pullConfirming`` shows the confirm step (with the disk/VRAM warning) and
+  // only "Confirm pull" sends the request. ``pullStatus`` / ``pullProgress``
+  // are driven by the streamed progress events; ``pullResult`` is the terminal
+  // state; ``pullError`` carries a request-level failure (e.g. a 409 refusal).
+  const [pullConfirming, setPullConfirming] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState<{
+    completed: number | null;
+    total: number | null;
+  } | null>(null);
+  const [pullResult, setPullResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const [pullError, setPullError] = useState<string | null>(null);
+
   function clearModels() {
     setInstalledModels([]);
     setModelsListed(false);
     setModelsError(null);
+  }
+
+  function resetPull() {
+    setPullConfirming(false);
+    setPullStatus(null);
+    setPullProgress(null);
+    setPullResult(null);
+    setPullError(null);
   }
 
   function applySettings(data: LocalLlmSettings) {
@@ -777,11 +815,88 @@ function LocalLlmCard() {
     }
   }
 
+  // Step 1 of the gated pull: reveal the confirmation step. No request is sent
+  // here — only "Confirm pull" actually contacts the server.
+  function requestPull() {
+    clearFeedback();
+    setPullResult(null);
+    setPullError(null);
+    setPullStatus(null);
+    setPullProgress(null);
+    setPullConfirming(true);
+  }
+
+  // Step 2: the user confirmed, so issue the explicit pull and render the
+  // streamed progress. Refreshes the installed-model list on success so the
+  // newly installed model appears in the picker.
+  async function handleConfirmPull() {
+    const target = model.trim();
+    if (!target) {
+      setPullError("Enter a model name to pull.");
+      return;
+    }
+    setPullConfirming(false);
+    setIsPulling(true);
+    setPullStatus(null);
+    setPullProgress(null);
+    setPullResult(null);
+    setPullError(null);
+    let pulledOk = false;
+    try {
+      await pullLocalLlmModel(
+        {
+          model: target,
+          provider,
+          base_url: baseUrl,
+          api_key: apiKey ? apiKey : null,
+          preserve_existing_key: !apiKey,
+        },
+        (event: LocalLlmPullEvent) => {
+          if (event.type === "progress") {
+            setPullStatus(event.status);
+            setPullProgress({
+              completed: event.completed,
+              total: event.total,
+            });
+          } else if (event.type === "result") {
+            pulledOk = event.ok;
+            setPullResult({
+              ok: event.ok,
+              message: event.ok
+                ? `Pulled "${target}". It is now installed on this server.`
+                : event.error ||
+                  "The pull failed. Check the model name and the server.",
+            });
+          }
+        },
+      );
+    } catch (err: unknown) {
+      setPullError(extractApiDetail(err));
+    } finally {
+      setIsPulling(false);
+    }
+    // Refresh the installed-model list on success so the newly installed model
+    // surfaces in the picker. Best-effort: a listing failure is shown inline.
+    if (pulledOk) {
+      void handleListModels();
+    }
+  }
+
   const configurableTasks = (settings?.task_policy ?? []).filter(
     (t) => t.configurable,
   );
   const usableBudget = Math.max(0, maxInputTokens);
   const smallContext = contextWindowTokens < 4096;
+  // Percent complete for the pull progress bar, when the server reports byte
+  // totals. Null leaves the bar indeterminate (Ollama omits totals for the
+  // manifest/verify phases).
+  const pullPercent =
+    pullProgress && pullProgress.total
+      ? Math.min(
+          100,
+          Math.floor(((pullProgress.completed ?? 0) / pullProgress.total) * 100),
+        )
+      : null;
 
   return (
     <section className="settings-card" data-testid="local-llm-card">
@@ -828,6 +943,7 @@ function LocalLlmCard() {
                 setProvider(e.target.value);
                 clearFeedback();
                 clearModels();
+                resetPull();
               }}
             >
               <option value="openai_compatible">OpenAI-compatible</option>
@@ -849,6 +965,7 @@ function LocalLlmCard() {
                 setBaseUrl(e.target.value);
                 clearFeedback();
                 clearModels();
+                resetPull();
               }}
             />
           </label>
@@ -879,6 +996,7 @@ function LocalLlmCard() {
               onChange={(e) => {
                 setModel(e.target.value);
                 clearFeedback();
+                resetPull();
               }}
             />
           </label>
@@ -941,6 +1059,100 @@ function LocalLlmCard() {
               >
                 {modelsError}
               </p>
+            ) : null}
+
+            {/* Explicit, confirmation-gated pull (task 139). Ollama-native
+                only — the server's /api/pull has no OpenAI-compatible
+                equivalent. No request is sent until the user clicks "Pull
+                model" and then confirms. */}
+            {provider === "ollama" ? (
+              <div className="local-llm-pull" data-testid="local-llm-pull">
+                {!pullConfirming && !isPulling ? (
+                  <div className="settings-card-form-actions">
+                    <button
+                      type="button"
+                      onClick={requestPull}
+                      disabled={!model.trim()}
+                    >
+                      Pull model
+                    </button>
+                  </div>
+                ) : null}
+
+                {pullConfirming ? (
+                  <div
+                    className="local-llm-pull-confirm"
+                    data-testid="pull-confirm"
+                    role="group"
+                    aria-label="Confirm model pull"
+                  >
+                    <p
+                      role="alert"
+                      className="settings-warning"
+                      data-testid="pull-advisory-warning"
+                    >
+                      {PULL_DISK_VRAM_ADVISORY}
+                    </p>
+                    <p className="settings-helper">
+                      Pull <code>{model.trim() || "(no model)"}</code> onto this
+                      Ollama server now? This downloads the model and may take a
+                      while.
+                    </p>
+                    <div className="settings-card-form-actions">
+                      <button type="button" onClick={handleConfirmPull}>
+                        Confirm pull
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPullConfirming(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {isPulling || pullStatus || pullProgress ? (
+                  <div
+                    className="local-llm-pull-progress"
+                    data-testid="pull-progress"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <p className="settings-helper">
+                      {isPulling ? "Pulling…" : "Pull finished."}
+                      {pullStatus ? ` ${pullStatus}` : ""}
+                      {pullPercent != null ? ` (${pullPercent}%)` : ""}
+                    </p>
+                    {pullPercent != null ? (
+                      <progress
+                        data-testid="pull-progress-bar"
+                        max={100}
+                        value={pullPercent}
+                      />
+                    ) : isPulling ? (
+                      <progress data-testid="pull-progress-bar" />
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {pullResult ? (
+                  <p
+                    role={pullResult.ok ? "status" : "alert"}
+                    className={pullResult.ok ? "settings-success" : "error"}
+                    data-testid="pull-result"
+                    data-pull-ok={pullResult.ok ? "true" : "false"}
+                  >
+                    {pullResult.message}
+                  </p>
+                ) : null}
+
+                {pullError ? (
+                  <p role="alert" className="error" data-testid="pull-error">
+                    {pullError}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
@@ -1164,6 +1376,26 @@ function LocalLlmCard() {
                     testResult.installedModels,
                   )}
             </p>
+          ) : null}
+          {/* When the configured model is missing on an Ollama server, make the
+              explicit pull the obvious next step — clicking opens the same
+              confirmation-gated flow for the named model. */}
+          {testResult &&
+          !testResult.ok &&
+          testResult.errorKind === "model_not_installed" &&
+          provider === "ollama" &&
+          model.trim() &&
+          !isPulling &&
+          !pullConfirming ? (
+            <div className="settings-card-form-actions">
+              <button
+                type="button"
+                onClick={requestPull}
+                data-testid="pull-missing-model"
+              >
+                Pull “{model.trim()}”
+              </button>
+            </div>
           ) : null}
           {testResult?.ok &&
           testResult.contextVerified &&

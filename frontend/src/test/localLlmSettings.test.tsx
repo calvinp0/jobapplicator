@@ -8,6 +8,7 @@ const {
   setLocalLlmSettingsMock,
   testLocalLlmConnectionMock,
   listLocalLlmModelsMock,
+  pullLocalLlmModelMock,
   ApiErrorMock,
 } = vi.hoisted(() => {
   class ApiErrorMock extends Error {
@@ -25,6 +26,7 @@ const {
     setLocalLlmSettingsMock: vi.fn(),
     testLocalLlmConnectionMock: vi.fn(),
     listLocalLlmModelsMock: vi.fn(),
+    pullLocalLlmModelMock: vi.fn(),
     ApiErrorMock,
   };
 });
@@ -84,6 +86,7 @@ vi.mock("../api", () => ({
   setLocalLlmSettings: setLocalLlmSettingsMock,
   testLocalLlmConnection: testLocalLlmConnectionMock,
   listLocalLlmModels: listLocalLlmModelsMock,
+  pullLocalLlmModel: pullLocalLlmModelMock,
   ApiError: ApiErrorMock,
 }));
 
@@ -735,5 +738,218 @@ describe("SettingsPage – Local LLM card", () => {
     const result = await within(card).findByTestId("test-connection-result");
     expect(result).toHaveAttribute("data-error-kind", "endpoint_unavailable");
     expect(result).toHaveTextContent(/could not reach the server/i);
+  });
+
+  // ---- Explicit, confirmation-gated model pull (task 139) ----
+
+  it("offers the Pull model control only for the Ollama provider", async () => {
+    const user = userEvent.setup();
+    // Default provider is openai_compatible: no pull control (Ollama-only).
+    renderPage();
+    const card = await waitFor(() => getCard());
+    expect(within(card).queryByTestId("local-llm-pull")).toBeNull();
+    expect(
+      within(card).queryByRole("button", { name: /^pull model$/i }),
+    ).toBeNull();
+
+    await user.selectOptions(
+      within(card).getByLabelText(/provider/i),
+      "ollama",
+    );
+    expect(within(card).getByTestId("local-llm-pull")).toBeInTheDocument();
+    expect(
+      within(card).getByRole("button", { name: /^pull model$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not pull without confirmation, and pulls after confirming", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "qwen2.5-coder:14b" }),
+    );
+    pullLocalLlmModelMock.mockResolvedValue(undefined);
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    // First click only reveals the confirmation step — no request is sent.
+    await user.click(
+      within(card).getByRole("button", { name: /^pull model$/i }),
+    );
+    expect(within(card).getByTestId("pull-confirm")).toBeInTheDocument();
+    expect(pullLocalLlmModelMock).not.toHaveBeenCalled();
+
+    // Confirming sends exactly one request for the named model.
+    await user.click(
+      within(card).getByRole("button", { name: /confirm pull/i }),
+    );
+    await waitFor(() =>
+      expect(pullLocalLlmModelMock).toHaveBeenCalledTimes(1),
+    );
+    expect(pullLocalLlmModelMock.mock.calls[0][0]).toMatchObject({
+      model: "qwen2.5-coder:14b",
+      provider: "ollama",
+    });
+  });
+
+  it("cancelling the confirmation never sends a pull request", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "qwen2.5-coder:14b" }),
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /^pull model$/i }),
+    );
+    await user.click(within(card).getByRole("button", { name: /cancel/i }));
+
+    expect(within(card).queryByTestId("pull-confirm")).toBeNull();
+    expect(pullLocalLlmModelMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the disk/VRAM warning, progress, and a success terminal state", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "qwen2.5-coder:14b" }),
+    );
+    // After a successful pull the panel re-lists installed models.
+    listLocalLlmModelsMock.mockResolvedValue({
+      provider: "local_ollama",
+      ok: true,
+      models: ["qwen2.5-coder:14b"],
+      error: null,
+      error_kind: null,
+    });
+    pullLocalLlmModelMock.mockImplementation(
+      async (
+        _payload: unknown,
+        onEvent: (event: {
+          type: string;
+          [key: string]: unknown;
+        }) => void,
+      ) => {
+        onEvent({
+          type: "advisory",
+          model: "qwen2.5-coder:14b",
+          provider: "local_ollama",
+          message: "advisory",
+        });
+        onEvent({
+          type: "progress",
+          status: "downloading",
+          completed: 50,
+          total: 100,
+          digest: "sha256:abc",
+        });
+        onEvent({ type: "result", ok: true, error: null, error_kind: null });
+      },
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /^pull model$/i }),
+    );
+    // The disk/VRAM-unknown warning is shown at the confirmation step.
+    expect(
+      within(card).getByTestId("pull-advisory-warning"),
+    ).toHaveTextContent(/cannot verify whether this model will fit/i);
+
+    await user.click(
+      within(card).getByRole("button", { name: /confirm pull/i }),
+    );
+
+    // A progress/terminal state is rendered from the streamed events.
+    expect(
+      await within(card).findByTestId("pull-progress"),
+    ).toHaveTextContent(/downloading/i);
+    const result = await within(card).findByTestId("pull-result");
+    expect(result).toHaveAttribute("data-pull-ok", "true");
+    expect(result).toHaveTextContent(/now installed/i);
+  });
+
+  it("renders a pull failure terminal state", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "does-not-exist" }),
+    );
+    pullLocalLlmModelMock.mockImplementation(
+      async (
+        _payload: unknown,
+        onEvent: (event: {
+          type: string;
+          [key: string]: unknown;
+        }) => void,
+      ) => {
+        onEvent({
+          type: "advisory",
+          model: "does-not-exist",
+          provider: "local_ollama",
+          message: "advisory",
+        });
+        onEvent({
+          type: "result",
+          ok: false,
+          error: "pull model manifest: file does not exist",
+          error_kind: "unexpected",
+        });
+      },
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /^pull model$/i }),
+    );
+    await user.click(
+      within(card).getByRole("button", { name: /confirm pull/i }),
+    );
+
+    const result = await within(card).findByTestId("pull-result");
+    expect(result).toHaveAttribute("data-pull-ok", "false");
+    expect(result).toHaveTextContent(/file does not exist/i);
+  });
+
+  it("offers to pull the missing model after a model_not_installed diagnostic", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ provider: "ollama", model: "llama3.1:70b" }),
+    );
+    testLocalLlmConnectionMock.mockResolvedValue({
+      ok: false,
+      message: "Connection failed.",
+      model: "llama3.1:70b",
+      provider: "local_ollama",
+      latency_ms: null,
+      error: 'Model "llama3.1:70b" is not installed on this Ollama server.',
+      error_kind: "model_not_installed",
+      installed_models: ["llama3.1:8b"],
+      context_window_tokens: 8192,
+      max_input_tokens: 6500,
+      server_reported_context_tokens: null,
+      context_verified: false,
+      context_warning: null,
+    });
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.click(
+      within(card).getByRole("button", { name: /test connection/i }),
+    );
+
+    // The diagnostic surfaces a direct "Pull <model>" affordance.
+    const pullMissing = await within(card).findByTestId("pull-missing-model");
+    expect(pullMissing).toHaveTextContent(/llama3\.1:70b/i);
+
+    // It opens the same confirmation-gated flow — still no request yet.
+    await user.click(pullMissing);
+    expect(within(card).getByTestId("pull-confirm")).toBeInTheDocument();
+    expect(pullLocalLlmModelMock).not.toHaveBeenCalled();
   });
 });

@@ -44,6 +44,8 @@ import type {
   LlmProvider,
   LlmProviderSetting,
   LocalLlmModelsResult,
+  LocalLlmPullEvent,
+  LocalLlmPullRequest,
   LocalLlmSettings,
   LocalLlmSettingsUpdate,
   LocalLlmTaskPolicy,
@@ -113,6 +115,8 @@ export type {
   LlmProvider,
   LlmProviderSetting,
   LocalLlmModelsResult,
+  LocalLlmPullEvent,
+  LocalLlmPullRequest,
   LocalLlmSettings,
   LocalLlmSettingsUpdate,
   LocalLlmTaskPolicy,
@@ -515,6 +519,79 @@ export function listLocalLlmModels(
   if (overrides.provider) params.set("provider", overrides.provider);
   const query = params.toString();
   return apiRequest(`/llm/local/models${query ? `?${query}` : ""}`);
+}
+
+/**
+ * Explicitly pull (install) a model on the configured Ollama server (task 137).
+ *
+ * This is the only path that triggers a model pull — it never fires as a side
+ * effect of any other flow, and the UI (task 139) gates it behind a
+ * confirmation dialog. Pulling is Ollama-native only; a non-Ollama provider is
+ * refused with HTTP 409 (surfaced as an {@link ApiError}).
+ *
+ * The backend streams newline-delimited JSON (NDJSON): an ``advisory`` line
+ * first (disk/VRAM fit is unknown), one ``progress`` line per server update,
+ * and a final ``result`` line. Each parsed event is delivered to ``onEvent`` as
+ * it arrives so the caller can render live progress. Resolves once the stream
+ * ends; rejects (without emitting events) when the request itself fails.
+ */
+export async function pullLocalLlmModel(
+  payload: LocalLlmPullRequest,
+  onEvent: (event: LocalLlmPullEvent) => void,
+  options: { signal?: AbortSignal } = {},
+): Promise<void> {
+  const path = "/llm/local/pull";
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/x-ndjson",
+    },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  });
+
+  if (!response.ok || !response.body) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    throw new ApiError(
+      `Request to ${path} failed with status ${response.status}`,
+      response.status,
+      body,
+    );
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const flushLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      onEvent(JSON.parse(trimmed) as LocalLlmPullEvent);
+    } catch {
+      // Ignore a malformed line rather than abort the whole pull stream.
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      flushLine(buffer.slice(0, newlineIndex));
+      buffer = buffer.slice(newlineIndex + 1);
+      newlineIndex = buffer.indexOf("\n");
+    }
+  }
+  buffer += decoder.decode();
+  flushLine(buffer);
 }
 
 export function listApplications(): Promise<Application[]> {
