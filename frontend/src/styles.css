@@ -1479,6 +1479,14 @@ fieldset.field legend {
   font-style: italic;
 }
 
+/* Installed-model picker block (task 138): the "List installed models"
+   affordance plus the resulting picker / empty / error states. */
+.local-llm-models {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 /* ----- Job detail ----- */
 
 .job-description {

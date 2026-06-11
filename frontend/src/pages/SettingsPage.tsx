@@ -13,6 +13,7 @@ import {
   importEvidenceSourceFile,
   importMasterResumeFile,
   listEvidenceSources,
+  listLocalLlmModels,
   listMasterResumes,
   resetLocalData,
   setGmailOAuthSettings,
@@ -517,6 +518,34 @@ const LOCAL_TASK_LABELS: Record<string, string> = {
 };
 
 /**
+ * Turn a classified connection failure (task 136) into a distinct, actionable
+ * message. The backend tags each failure with a stable ``error_kind`` so the
+ * UI can explain *why* the test failed instead of echoing a raw transport
+ * error. Unknown / ``unexpected`` kinds fall back to the underlying detail.
+ */
+function describeConnectionFailure(
+  errorKind: string | null,
+  detail: string,
+  model: string,
+  installedModels: string[],
+): string {
+  switch (errorKind) {
+    case "endpoint_unavailable":
+      return `Could not reach the server. Check the host and port and that the local LLM server is running. (${detail})`;
+    case "bad_url":
+      return `The endpoint looks wrong: the host is reachable but the API path was not found. Check the base URL and the selected provider — for the OpenAI-compatible provider the base URL must include /v1. (${detail})`;
+    case "model_not_installed": {
+      const installed = installedModels.length
+        ? installedModels.join(", ")
+        : "(none)";
+      return `Model "${model}" is not installed on this Ollama server. Installed: ${installed}. Pick an installed model below or pull it.`;
+    }
+    default:
+      return detail;
+  }
+}
+
+/**
  * Experimental local LLM provider card (task 123).
  *
  * Lets the user point the app at a local OpenAI-compatible endpoint
@@ -552,10 +581,27 @@ function LocalLlmCard() {
   const [testResult, setTestResult] = useState<{
     ok: boolean;
     message: string;
+    errorKind: string | null;
+    installedModels: string[];
     serverReportedContextTokens: number | null;
     contextVerified: boolean;
     contextWarning: string | null;
   } | null>(null);
+
+  // Installed-model listing (task 135). Populated by the "List models" button
+  // (or by a model_not_installed test failure, which carries the list too) so
+  // the picker can offer real models instead of free text. ``modelsListed``
+  // distinguishes "not listed yet" from "listed and empty".
+  const [installedModels, setInstalledModels] = useState<string[]>([]);
+  const [isListingModels, setIsListingModels] = useState(false);
+  const [modelsListed, setModelsListed] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+
+  function clearModels() {
+    setInstalledModels([]);
+    setModelsListed(false);
+    setModelsError(null);
+  }
 
   function applySettings(data: LocalLlmSettings) {
     setSettings(data);
@@ -665,26 +711,69 @@ function LocalLlmCard() {
         api_key: apiKey ? apiKey : null,
         preserve_existing_key: !apiKey,
       });
+      const installed = result.installed_models ?? [];
       setTestResult({
         ok: result.ok,
         message: result.ok
           ? result.message
           : result.error || result.message,
+        errorKind: result.error_kind ?? null,
+        installedModels: installed,
         serverReportedContextTokens:
           result.server_reported_context_tokens ?? null,
         contextVerified: Boolean(result.context_verified),
         contextWarning: result.context_warning ?? null,
       });
+      // A model_not_installed failure carries the server's installed models, so
+      // surface them in the picker too — that is exactly the list the user
+      // needs to fix the problem.
+      if (!result.ok && installed.length > 0) {
+        setInstalledModels(installed);
+        setModelsListed(true);
+        setModelsError(null);
+      }
     } catch (err: unknown) {
       setTestResult({
         ok: false,
         message: extractApiDetail(err),
+        errorKind: null,
+        installedModels: [],
         serverReportedContextTokens: null,
         contextVerified: false,
         contextWarning: null,
       });
     } finally {
       setIsTesting(false);
+    }
+  }
+
+  async function handleListModels() {
+    setIsListingModels(true);
+    setModelsError(null);
+    setModelsListed(false);
+    try {
+      const result = await listLocalLlmModels({
+        base_url: baseUrl,
+        provider,
+      });
+      if (result.ok) {
+        setInstalledModels(result.models);
+        setModelsListed(true);
+      } else {
+        setInstalledModels([]);
+        setModelsListed(true);
+        setModelsError(
+          result.error_kind === "unsupported"
+            ? "Listing installed models is only available for the Ollama provider. Switch the provider to Ollama, or type a model name below."
+            : result.error || "Could not list installed models.",
+        );
+      }
+    } catch (err: unknown) {
+      setInstalledModels([]);
+      setModelsListed(true);
+      setModelsError(extractApiDetail(err));
+    } finally {
+      setIsListingModels(false);
     }
   }
 
@@ -738,6 +827,7 @@ function LocalLlmCard() {
               onChange={(e) => {
                 setProvider(e.target.value);
                 clearFeedback();
+                clearModels();
               }}
             >
               <option value="openai_compatible">OpenAI-compatible</option>
@@ -758,6 +848,7 @@ function LocalLlmCard() {
               onChange={(e) => {
                 setBaseUrl(e.target.value);
                 clearFeedback();
+                clearModels();
               }}
             />
           </label>
@@ -791,6 +882,67 @@ function LocalLlmCard() {
               }}
             />
           </label>
+
+          <div className="local-llm-models" data-testid="local-llm-models">
+            <div className="settings-card-form-actions">
+              <button
+                type="button"
+                onClick={handleListModels}
+                disabled={isListingModels}
+              >
+                {isListingModels ? "Listing…" : "List installed models"}
+              </button>
+            </div>
+            {provider === "openai_compatible" ? (
+              <p
+                className="settings-helper"
+                role="note"
+                data-testid="models-unsupported"
+              >
+                Model listing is Ollama-only — an OpenAI-compatible endpoint has
+                no portable way to list installed models. Type the model name
+                above to match what your server runs.
+              </p>
+            ) : null}
+            {modelsListed && installedModels.length > 0 ? (
+              <label className="field">
+                <span>Installed models</span>
+                <select
+                  data-testid="installed-models-select"
+                  value={installedModels.includes(model) ? model : ""}
+                  onChange={(e) => {
+                    setModel(e.target.value);
+                    clearFeedback();
+                  }}
+                >
+                  <option value="">Select an installed model…</option>
+                  {installedModels.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {modelsListed &&
+            installedModels.length === 0 &&
+            !modelsError &&
+            provider === "ollama" ? (
+              <p className="settings-helper" data-testid="models-empty">
+                No models are installed on this server. Pull one with{" "}
+                <code>ollama pull &lt;model&gt;</code>, then list again.
+              </p>
+            ) : null}
+            {modelsError ? (
+              <p
+                role="alert"
+                className="error"
+                data-testid="models-error"
+              >
+                {modelsError}
+              </p>
+            ) : null}
+          </div>
 
           <label className="field">
             <span>Timeout (seconds)</span>
@@ -1000,8 +1152,17 @@ function LocalLlmCard() {
             <p
               role={testResult.ok ? "status" : "alert"}
               className={testResult.ok ? "settings-success" : "error"}
+              data-testid="test-connection-result"
+              data-error-kind={testResult.ok ? undefined : testResult.errorKind ?? undefined}
             >
-              {testResult.message}
+              {testResult.ok
+                ? testResult.message
+                : describeConnectionFailure(
+                    testResult.errorKind,
+                    testResult.message,
+                    model,
+                    testResult.installedModels,
+                  )}
             </p>
           ) : null}
           {testResult?.ok &&

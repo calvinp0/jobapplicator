@@ -793,6 +793,14 @@ export interface LocalLlmTestResult {
   provider: string;
   latency_ms: number | null;
   error: string | null;
+  // Connection-error classification (task 136). ``error_kind`` is a stable
+  // tag — ``none`` on success, otherwise ``endpoint_unavailable``,
+  // ``bad_url``, ``model_not_installed``, or ``unexpected`` — so the UI can
+  // render a distinct message per class. ``installed_models`` carries the
+  // server's installed models (Ollama-native only; empty for the
+  // OpenAI-compatible surface, which cannot list models).
+  error_kind: string | null;
+  installed_models: string[];
   context_window_tokens: number;
   max_input_tokens: number;
   // Server-context detection (task 127). server_reported_context_tokens is
@@ -802,6 +810,20 @@ export interface LocalLlmTestResult {
   server_reported_context_tokens: number | null;
   context_verified: boolean;
   context_warning: string | null;
+}
+
+// Response of GET /llm/local/models (task 135). Lists the models installed on
+// the configured local endpoint. ``ok`` is true only when the listing actually
+// succeeded; ``models`` is the installed-model names (empty otherwise).
+// ``error`` / ``error_kind`` explain a failure — including ``unsupported`` when
+// the configured provider is OpenAI-compatible, which has no model-listing
+// endpoint.
+export interface LocalLlmModelsResult {
+  provider: string;
+  ok: boolean;
+  models: string[];
+  error: string | null;
+  error_kind: string | null;
 }
 
 export interface LocalLlmTestRequest {

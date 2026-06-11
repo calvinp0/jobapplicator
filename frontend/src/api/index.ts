@@ -43,6 +43,7 @@ import type {
   JobCaptureConfirm,
   LlmProvider,
   LlmProviderSetting,
+  LocalLlmModelsResult,
   LocalLlmSettings,
   LocalLlmSettingsUpdate,
   LocalLlmTaskPolicy,
@@ -111,6 +112,7 @@ export type {
   JobCaptureConfirm,
   LlmProvider,
   LlmProviderSetting,
+  LocalLlmModelsResult,
   LocalLlmSettings,
   LocalLlmSettingsUpdate,
   LocalLlmTaskPolicy,
@@ -495,6 +497,24 @@ export function testLocalLlmConnection(
     method: "POST",
     body: payload,
   });
+}
+
+/**
+ * List the models installed on the configured local endpoint (task 135).
+ *
+ * Optional ``base_url`` / ``provider`` overrides mirror the connection-test
+ * override rule, so the UI can list models for unsaved edits before saving.
+ * Installed-model listing is Ollama-native only; for the OpenAI-compatible
+ * provider the call returns ``ok = false`` with ``error_kind = "unsupported"``.
+ */
+export function listLocalLlmModels(
+  overrides: { base_url?: string | null; provider?: string | null } = {},
+): Promise<LocalLlmModelsResult> {
+  const params = new URLSearchParams();
+  if (overrides.base_url) params.set("base_url", overrides.base_url);
+  if (overrides.provider) params.set("provider", overrides.provider);
+  const query = params.toString();
+  return apiRequest(`/llm/local/models${query ? `?${query}` : ""}`);
 }
 
 export function listApplications(): Promise<Application[]> {
