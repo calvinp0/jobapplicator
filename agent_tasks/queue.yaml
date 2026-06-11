@@ -2763,7 +2763,7 @@ tasks:
     file: "agent_tasks/138-frontend-local-llm-model-picker-and-diagnostics.md"
     branch: "agent/138-frontend-local-llm-model-picker-and-diagnostics"
     worktree: "agent-138-frontend-local-llm-model-picker-and-diagnostics"
-    status: "ready"
+    status: "done"
     depends_on:
       - "136-classify-local-llm-connection-errors"
       - "128-clarify-context-budget-settings-ui"
@@ -2784,7 +2784,7 @@ tasks:
     file: "agent_tasks/139-frontend-local-llm-model-pull-action.md"
     branch: "agent/139-frontend-local-llm-model-pull-action"
     worktree: "agent-139-frontend-local-llm-model-pull-action"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "137-add-ollama-model-pull-endpoint"
       - "138-frontend-local-llm-model-picker-and-diagnostics"
