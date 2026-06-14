@@ -2918,7 +2918,7 @@ tasks:
     file: "agent_tasks/146-frontend-local-llm-generation-controls.md"
     branch: "agent/146-frontend-local-llm-generation-controls"
     worktree: "agent-146-frontend-local-llm-generation-controls"
-    status: "ready"
+    status: "done"
     depends_on:
       - "140-local-llm-output-token-cap"
       - "145-preflight-record-generation-controls"
