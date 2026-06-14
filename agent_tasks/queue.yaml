@@ -2879,7 +2879,7 @@ tasks:
     file: "agent_tasks/144-local-llm-timeout-cause-classification.md"
     branch: "agent/144-local-llm-timeout-cause-classification"
     worktree: "agent-144-local-llm-timeout-cause-classification"
-    status: "ready"
+    status: "done"
     depends_on:
       - "143-local-llm-ollama-generation-metrics"
     verification:
@@ -2899,7 +2899,7 @@ tasks:
     file: "agent_tasks/145-preflight-record-generation-controls.md"
     branch: "agent/145-preflight-record-generation-controls"
     worktree: "agent-145-preflight-record-generation-controls"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "144-local-llm-timeout-cause-classification"
     verification:
