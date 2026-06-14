@@ -1096,6 +1096,234 @@ def test_llm_call_result_thinking_returned_defaults_false():
     assert result.thinking_returned is False
 
 
+# ---- Ollama generation metrics / tokens-per-second (task 143) --------
+
+
+def _ollama_completion_with_metrics(
+    content: str,
+    *,
+    prompt_eval_count=42,
+    eval_count=100,
+    total_duration=2_500_000_000,
+    eval_duration=2_000_000_000,
+    model: str = "llama3.1:8b",
+) -> dict:
+    """An Ollama native ``/api/chat`` body carrying generation telemetry.
+
+    The nanosecond durations and token counts mirror what Ollama reports;
+    individual fields can be dropped (pass ``None``) to simulate a partial body.
+    """
+    body: dict = {
+        "model": model,
+        "message": {"role": "assistant", "content": content},
+        "done": True,
+    }
+    for key, value in (
+        ("prompt_eval_count", prompt_eval_count),
+        ("eval_count", eval_count),
+        ("total_duration", total_duration),
+        ("eval_duration", eval_duration),
+    ):
+        if value is not None:
+            body[key] = value
+    return body
+
+
+def test_extract_generation_metrics_full():
+    import app.local_llm as local_llm
+
+    metrics = local_llm.extract_generation_metrics(
+        _ollama_completion_with_metrics('{"ok": true}')
+    )
+    assert metrics is not None
+    assert metrics.prompt_eval_count == 42
+    assert metrics.eval_count == 100
+    # Nanosecond durations are converted to milliseconds.
+    assert metrics.total_duration_ms == 2500
+    assert metrics.eval_duration_ms == 2000
+    # tokens/sec = eval_count / (eval_duration / 1e9) = 100 / 2.0 = 50.0
+    assert metrics.tokens_per_second == 50.0
+
+
+def test_extract_generation_metrics_partial():
+    import app.local_llm as local_llm
+
+    # Only the token counts are present (no durations): the counts survive and
+    # the missing durations / derived tokens/sec degrade to None.
+    metrics = local_llm.extract_generation_metrics(
+        _ollama_completion_with_metrics(
+            '{"ok": true}', total_duration=None, eval_duration=None
+        )
+    )
+    assert metrics is not None
+    assert metrics.prompt_eval_count == 42
+    assert metrics.eval_count == 100
+    assert metrics.total_duration_ms is None
+    assert metrics.eval_duration_ms is None
+    assert metrics.tokens_per_second is None
+
+
+def test_extract_generation_metrics_zero_duration_is_none_not_divide_error():
+    import app.local_llm as local_llm
+
+    # A zero eval_duration must not raise; tokens/sec degrades to None while
+    # the (zero) eval_duration_ms is still reported.
+    metrics = local_llm.extract_generation_metrics(
+        _ollama_completion_with_metrics('{"ok": true}', eval_duration=0)
+    )
+    assert metrics is not None
+    assert metrics.eval_duration_ms == 0
+    assert metrics.tokens_per_second is None
+
+
+def test_extract_generation_metrics_missing_returns_none():
+    import app.local_llm as local_llm
+
+    # A response with none of the metric fields (e.g. an OpenAI-compatible
+    # body) yields no metrics holder at all.
+    assert local_llm.extract_generation_metrics(_completion("pong")) is None
+    assert local_llm.extract_generation_metrics(_ollama_completion("pong")) is None
+    # Never raises on a non-dict body either.
+    assert local_llm.extract_generation_metrics("not-a-dict") is None
+
+
+def test_extract_generation_metrics_malformed_fields_degrade_to_none():
+    import app.local_llm as local_llm
+
+    # Garbage values are coerced to None per field rather than raising; a
+    # present-but-malformed field still counts as "metrics present".
+    metrics = local_llm.extract_generation_metrics(
+        {
+            "message": {"role": "assistant", "content": "{}"},
+            "prompt_eval_count": "not-an-int",
+            "eval_count": 100,
+            "eval_duration": "bogus",
+            "total_duration": 2_500_000_000,
+        }
+    )
+    assert metrics is not None
+    assert metrics.prompt_eval_count is None
+    assert metrics.eval_count == 100
+    assert metrics.total_duration_ms == 2500
+    assert metrics.eval_duration_ms is None
+    # eval_duration was unusable, so tokens/sec cannot be derived.
+    assert metrics.tokens_per_second is None
+
+
+def test_chat_populates_generation_metrics_for_ollama(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _ollama_completion_with_metrics('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert result.ok is True
+    assert result.generation_metrics is not None
+    assert result.generation_metrics.eval_count == 100
+    assert result.generation_metrics.prompt_eval_count == 42
+    assert result.generation_metrics.tokens_per_second == 50.0
+
+
+def test_chat_leaves_generation_metrics_none_for_openai_compatible(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    # Even if an OpenAI-compatible server somehow echoed Ollama-style fields,
+    # the client never populates metrics for that provider.
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        body = _completion('{"ok": true}')
+        body["eval_count"] = 100
+        body["eval_duration"] = 2_000_000_000
+        return body
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert result.ok is True
+    assert result.generation_metrics is None
+
+
+def test_log_call_appends_tokens_per_second_and_output_tokens(caplog):
+    import logging
+
+    import app.local_llm as local_llm
+
+    result = local_llm.LLMCallResult(
+        ok=True,
+        provider="local_ollama",
+        model="llama3.1:8b",
+        task="ats_keywords",
+        schema_valid=True,
+        generation_metrics=local_llm.GenerationMetrics(
+            prompt_eval_count=42,
+            eval_count=100,
+            total_duration_ms=2500,
+            eval_duration_ms=2000,
+            tokens_per_second=50.0,
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger="app.local_llm"):
+        local_llm._log_call(result)
+
+    line = caplog.records[-1].getMessage()
+    # The existing prefix is preserved verbatim...
+    assert line.startswith(
+        "LLM provider: local_ollama | Model: llama3.1:8b | Task: ats_keywords | "
+        "Schema validation: passed | Fallback used: no"
+    )
+    # ...and the metrics are appended.
+    assert "Tokens/sec: 50.0" in line
+    assert "Output tokens: 100" in line
+
+
+def test_log_call_without_metrics_keeps_existing_format(caplog):
+    import logging
+
+    import app.local_llm as local_llm
+
+    result = local_llm.LLMCallResult(
+        ok=True,
+        provider="local_openai_compatible",
+        model="llama3.1:8b",
+        task="ats_keywords",
+        schema_valid=True,
+    )
+    with caplog.at_level(logging.INFO, logger="app.local_llm"):
+        local_llm._log_call(result)
+
+    line = caplog.records[-1].getMessage()
+    # No generation metrics → the original single-line format is unchanged.
+    assert line == (
+        "LLM provider: local_openai_compatible | Model: llama3.1:8b | "
+        "Task: ats_keywords | Schema validation: passed | Fallback used: no"
+    )
+    assert "Tokens/sec" not in line
+    assert "Output tokens" not in line
+
+
 def test_client_ollama_bare_base_url_uses_native_chat(client, monkeypatch):
     import app.local_llm as local_llm
 

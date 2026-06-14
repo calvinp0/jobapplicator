@@ -413,6 +413,36 @@ Each structured call logs a single line:
 LLM provider: local_openai_compatible | Model: llama3.1:8b | Task: ats_keywords | Schema validation: passed | Fallback used: no
 ```
 
+### Ollama generation metrics and tokens/sec (task 143)
+
+Ollama's native `/api/chat` response returns authoritative, server-reported
+generation telemetry that the client captures onto the call result
+(`LLMCallResult.generation_metrics`):
+
+- `prompt_eval_count` — input tokens the server evaluated.
+- `eval_count` — output tokens the server generated.
+- `total_duration_ms` / `eval_duration_ms` — the total and generation timings,
+  converted from Ollama's nanosecond `total_duration` / `eval_duration` to
+  milliseconds.
+- `tokens_per_second` — derived as `eval_count / (eval_duration / 1e9)`, rounded
+  to one decimal. It is `null` when `eval_duration` is zero or missing (so a
+  divide error is never possible).
+
+These are **server-reported and authoritative**, unlike the *estimated*
+`prompt_token_estimate` the preflight pipeline records. They are
+**Ollama-native only and best-effort**: the OpenAI-compatible surface does not
+return these fields, so `generation_metrics` is left unpopulated for that
+provider (and for any failed call). Extraction is total — missing, zero, or
+malformed fields degrade to `null` per field and never raise.
+
+When the metrics are available, the per-call log line **appends** the
+tokens/sec and output-token count after the existing fields (the original
+prefix is unchanged):
+
+```text
+LLM provider: local_ollama | Model: llama3.1:8b | Task: ats_keywords | Schema validation: passed | Fallback used: no | Tokens/sec: 50.0 | Output tokens: 100
+```
+
 ## Run metadata
 
 Where a task records provenance, the provider/model is stamped via
