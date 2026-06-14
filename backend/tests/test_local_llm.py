@@ -146,6 +146,103 @@ def test_local_llm_num_ctx_rejects_non_positive(client):
     assert "num_ctx" in resp.json()["detail"]
 
 
+def test_local_llm_max_output_tokens_round_trips_through_settings(client):
+    # Unset on a fresh DB.
+    assert client.get("/settings/local-llm").json()["max_output_tokens"] is None
+
+    client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "max_output_tokens": 512,
+        },
+    ).raise_for_status()
+
+    body = client.get("/settings/local-llm").json()
+    assert body["max_output_tokens"] == 512
+
+
+def test_local_llm_max_output_tokens_rejects_non_positive(client):
+    resp = client.put(
+        "/settings/local-llm",
+        json={
+            "enabled": True,
+            "base_url": "http://localhost:11434/v1",
+            "model": "llama3.1:8b",
+            "max_output_tokens": 0,
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "max_output_tokens" in resp.json()["detail"]
+
+
+def test_get_config_parses_and_validates_max_output_tokens(monkeypatch, tmp_path):
+    import pytest
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+
+    # Unset on a fresh DB.
+    assert local_llm.get_config().max_output_tokens is None
+
+    # A positive int persists and reloads.
+    config = local_llm.save_config(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        timeout_seconds=local_llm.DEFAULT_TIMEOUT_SECONDS,
+        allowed_tasks={},
+        max_output_tokens=256,
+    )
+    assert config.max_output_tokens == 256
+    assert local_llm.get_config().max_output_tokens == 256
+
+    # A non-positive value is rejected, independent of the context budget.
+    with pytest.raises(local_llm.LocalLLMValidationError):
+        local_llm.save_config(
+            enabled=True,
+            provider=local_llm.PROVIDER_OLLAMA,
+            base_url="http://localhost:11434/v1",
+            model="llama3.1:8b",
+            timeout_seconds=local_llm.DEFAULT_TIMEOUT_SECONDS,
+            allowed_tasks={},
+            max_output_tokens=-1,
+        )
+
+
+def test_get_config_treats_invalid_stored_max_output_tokens_as_none(
+    monkeypatch, tmp_path
+):
+    import json
+
+    local_llm = _load_local_llm_with_temp_db(monkeypatch, tmp_path)
+    from app.db import SessionLocal
+    from app.models import AppSetting
+
+    # A garbage stored value (non-int) is coerced to None on load.
+    with SessionLocal() as session:
+        session.add(
+            AppSetting(
+                key=local_llm.LOCAL_LLM_SETTING_KEY,
+                value=json.dumps(
+                    {
+                        "enabled": True,
+                        "provider": "ollama",
+                        "base_url": "http://localhost:11434/v1",
+                        "model": "llama3.1:8b",
+                        "max_output_tokens": "not-an-int",
+                    }
+                ),
+            )
+        )
+        session.commit()
+
+    assert local_llm.get_config().max_output_tokens is None
+
+
 def test_get_config_parses_and_validates_num_ctx(monkeypatch, tmp_path):
     import pytest
 
@@ -530,6 +627,147 @@ def test_client_ollama_without_num_ctx_uses_native_chat(client, monkeypatch):
     assert captured["url"] == "http://localhost:11434/api/chat"
     assert captured["payload"]["stream"] is False
     assert "options" not in captured["payload"]
+
+
+def test_client_sends_num_predict_for_ollama_native(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["url"] = url
+        captured["payload"] = payload
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # An output cap with no num_ctx still produces a single options block
+    # carrying num_predict (and no num_ctx).
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        max_output_tokens=256,
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert result.ok is True
+    assert captured["url"] == "http://localhost:11434/api/chat"
+    assert captured["payload"]["options"] == {"num_predict": 256}
+
+
+def test_client_sends_num_predict_and_num_ctx_in_single_options_block(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # A cap set alongside num_ctx yields one options block with both keys.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        num_ctx=16384,
+        max_output_tokens=256,
+    )
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+
+    assert captured["payload"]["options"] == {
+        "num_ctx": 16384,
+        "num_predict": 256,
+    }
+
+
+def test_client_omits_num_predict_for_ollama_when_unset(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _ollama_completion("ok")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # No cap and no num_ctx → no options block at all.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        max_output_tokens=None,
+    )
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+
+    assert "options" not in captured["payload"]
+
+
+def test_client_sends_max_tokens_for_openai_compatible(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _completion('{"ok": true}', model="qwen")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="qwen2.5-coder:14b",
+        max_output_tokens=512,
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert result.ok is True
+    # The OpenAI-compatible surface caps output via top-level max_tokens,
+    # never via an options/num_predict block.
+    assert captured["payload"]["max_tokens"] == 512
+    assert "options" not in captured["payload"]
+    assert "num_predict" not in captured["payload"]
+
+
+def test_client_omits_max_tokens_for_openai_compatible_when_unset(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _completion("ok")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        max_output_tokens=None,
+    )
+    local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
+
+    assert "max_tokens" not in captured["payload"]
 
 
 def test_client_ollama_bare_base_url_uses_native_chat(client, monkeypatch):

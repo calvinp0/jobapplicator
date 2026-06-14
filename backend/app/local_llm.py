@@ -260,6 +260,15 @@ class LocalLLMConfig:
     # JobApplicator's prompt budget, and only applies to the Ollama-native
     # provider (task 126).
     num_ctx: Optional[int] = None
+    # Optional per-call cap on the *output* the model server may generate.
+    # ``None`` means "do not send an output cap; leave the server at its own
+    # default". Unlike ``reserved_output_tokens`` (JobApplicator's internal
+    # prompt-budget headroom, which is never sent to the server), this cap is
+    # sent to the server as the provider-native field — ``options.num_predict``
+    # for the Ollama-native provider and ``max_tokens`` for the
+    # OpenAI-compatible provider — so generation is bounded at the source before
+    # the deterministic fallback can kick in (task 140).
+    max_output_tokens: Optional[int] = None
     # How the model's reasoning ("thinking") output is handled. Defaults to
     # stripping ``<think>`` blocks before JSON parsing so a reasoning model's
     # structured answer is recovered instead of discarded (task 131).
@@ -350,6 +359,16 @@ def get_config() -> LocalLLMConfig:
         num_ctx = int(raw_num_ctx) if raw_num_ctx is not None else None
     except (TypeError, ValueError):
         num_ctx = None
+    # ``max_output_tokens`` is optional in exactly the same way as ``num_ctx``:
+    # missing, null, or a non-integer value all mean "send no output cap"
+    # (task 140).
+    raw_max_output = raw.get("max_output_tokens")
+    try:
+        max_output_tokens = (
+            int(raw_max_output) if raw_max_output is not None else None
+        )
+    except (TypeError, ValueError):
+        max_output_tokens = None
     # ``timeout_seconds`` is optional: a missing, null, or non-integer stored
     # value means "not explicitly configured", so the effective timeout is
     # resolved provider-aware at read time. A stored integer is an explicit
@@ -385,6 +404,7 @@ def get_config() -> LocalLLMConfig:
             else None
         ),
         num_ctx=num_ctx,
+        max_output_tokens=max_output_tokens,
         thinking_mode=_normalize_thinking_mode(raw.get("thinking_mode")),
         allow_compression=bool(
             raw.get("allow_compression", DEFAULT_ALLOW_COMPRESSION)
@@ -410,6 +430,7 @@ def save_config(
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
     max_input_tokens: Optional[int] = DEFAULT_MAX_INPUT_TOKENS,
     num_ctx: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
     thinking_mode: str = DEFAULT_THINKING_MODE,
     allow_compression: bool = DEFAULT_ALLOW_COMPRESSION,
     allow_fallback: bool = DEFAULT_ALLOW_FALLBACK,
@@ -483,6 +504,22 @@ def save_config(
         if num_ctx <= 0:
             raise LocalLLMValidationError("num_ctx must be a positive integer")
 
+    # ``max_output_tokens`` is validated like ``num_ctx``: when present it must
+    # be a positive integer; ``None`` means "send no output cap". It is the cap
+    # actually sent to the server (num_predict / max_tokens), not the internal
+    # prompt-budget headroom (task 140).
+    if max_output_tokens is not None:
+        try:
+            max_output_tokens = int(max_output_tokens)
+        except (TypeError, ValueError) as exc:
+            raise LocalLLMValidationError(
+                "max_output_tokens must be a positive integer"
+            ) from exc
+        if max_output_tokens <= 0:
+            raise LocalLLMValidationError(
+                "max_output_tokens must be a positive integer"
+            )
+
     # ``thinking_mode`` must be one of the supported reasoning controls. An
     # empty value falls back to the safe default; an unrecognized value is a
     # hard error so a typo cannot silently disable stripping (task 131).
@@ -512,6 +549,7 @@ def save_config(
         "reserved_output_tokens": budget.reserved_output_tokens,
         "max_input_tokens": budget.max_input_tokens,
         "num_ctx": num_ctx,
+        "max_output_tokens": max_output_tokens,
         "thinking_mode": thinking_mode,
         "allow_compression": bool(allow_compression),
         "allow_fallback": bool(allow_fallback),
@@ -543,6 +581,7 @@ def save_config(
         reserved_output_tokens=budget.reserved_output_tokens,
         max_input_tokens=budget.max_input_tokens,
         num_ctx=num_ctx,
+        max_output_tokens=max_output_tokens,
         thinking_mode=thinking_mode,
         allow_compression=bool(allow_compression),
         allow_fallback=bool(allow_fallback),
@@ -607,6 +646,7 @@ def get_settings_view() -> dict[str, Any]:
         "reserved_output_tokens": budget.reserved_output_tokens,
         "max_input_tokens": budget.max_input_tokens,
         "num_ctx": config.num_ctx,
+        "max_output_tokens": config.max_output_tokens,
         "thinking_mode": config.thinking_mode,
         "allow_compression": config.allow_compression,
         "allow_fallback": config.allow_fallback,
@@ -1339,8 +1379,18 @@ class LocalLLMClient:
                 "messages": messages,
                 "stream": False,
             }
+            # ``options`` collects the Ollama-native generation controls. Both
+            # ``num_ctx`` (server context length) and ``num_predict`` (the
+            # output-token cap, task 140) live here, so the block is created
+            # once and shared — a cap set alongside num_ctx yields a single
+            # options block carrying both keys.
+            options: dict[str, Any] = {}
             if self.config.num_ctx is not None:
-                payload["options"] = {"num_ctx": self.config.num_ctx}
+                options["num_ctx"] = self.config.num_ctx
+            if self.config.max_output_tokens is not None:
+                options["num_predict"] = self.config.max_output_tokens
+            if options:
+                payload["options"] = options
             if response_format is not None:
                 # Native /api/chat uses a top-level ``format`` field rather
                 # than OpenAI's ``response_format``; ``"json"`` is the
@@ -1375,6 +1425,11 @@ class LocalLLMClient:
                 "model": self.config.model,
                 "messages": outbound_messages,
             }
+            # The OpenAI-compatible surface caps output via the top-level
+            # ``max_tokens`` field (the provider-native equivalent of Ollama's
+            # ``num_predict``); sent only when a cap is configured (task 140).
+            if self.config.max_output_tokens is not None:
+                payload["max_tokens"] = self.config.max_output_tokens
             if response_format is not None:
                 payload["response_format"] = response_format
 
