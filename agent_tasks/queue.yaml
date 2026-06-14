@@ -2899,7 +2899,7 @@ tasks:
     file: "agent_tasks/145-preflight-record-generation-controls.md"
     branch: "agent/145-preflight-record-generation-controls"
     worktree: "agent-145-preflight-record-generation-controls"
-    status: "ready"
+    status: "done"
     depends_on:
       - "144-local-llm-timeout-cause-classification"
     verification:
@@ -2918,7 +2918,7 @@ tasks:
     file: "agent_tasks/146-frontend-local-llm-generation-controls.md"
     branch: "agent/146-frontend-local-llm-generation-controls"
     worktree: "agent-146-frontend-local-llm-generation-controls"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "140-local-llm-output-token-cap"
       - "145-preflight-record-generation-controls"
