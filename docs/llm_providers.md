@@ -99,6 +99,19 @@ The Settings page exposes an **LLM Providers** section (separate from the
   **Context window tokens** above: `num_ctx` configures the model server,
   while the context-budget fields drive JobApplicator's own prompt budgeting.
   Leave it unset to use the server's own default.
+- **Max output tokens (optional)** — a per-call cap on the output the model
+  server may generate, sent to the server as the **provider-native** field so
+  generation is bounded at the source rather than trimmed after the fact: the
+  **Ollama** provider receives it as `options.num_predict` on the native
+  `/api/chat` request (alongside `num_ctx` when both are set), and the
+  **OpenAI-compatible** provider receives it as the top-level `max_tokens`
+  field. It is optional and defaults to the **server's own limit** — leave it
+  unset to send no cap. This is **distinct** from **Reserved output tokens**
+  above: reserved output tokens is JobApplicator's internal prompt-budget
+  headroom and is *never* sent to the server, whereas this cap is an actual
+  instruction to the model server. Its purpose is to **bound a local model's
+  generation before the deterministic fallback** so a model cannot run away
+  producing unbounded text (task 140).
 - **Reasoning control (`thinking_mode`)** — how the model's "thinking" /
   chain-of-thought output is handled. Reasoning-capable local models
   (DeepSeek-R1, Qwen3, and other Ollama models) emit reasoning — usually

@@ -106,6 +106,11 @@ class LocalLLMSettingsRead(BaseModel):
     reserved_output_tokens: int
     max_input_tokens: int
     num_ctx: int | None
+    # Optional per-call output-token cap sent to the server as the
+    # provider-native field (``num_predict`` for Ollama-native, ``max_tokens``
+    # for OpenAI-compatible); ``null`` leaves the server at its own limit
+    # (task 140).
+    max_output_tokens: int | None
     # Reasoning control: ``strip_thinking`` (default), ``hide_thinking``, or
     # ``no_thinking`` (task 131).
     thinking_mode: str
@@ -137,6 +142,8 @@ class LocalLLMSettingsUpdate(BaseModel):
     reserved_output_tokens: int = local_llm.DEFAULT_RESERVED_OUTPUT_TOKENS
     max_input_tokens: int | None = None
     num_ctx: int | None = None
+    # Optional output-token cap; ``None`` sends no cap (task 140).
+    max_output_tokens: int | None = None
     # Omitted means the safe default (strip thinking before JSON parsing);
     # an unrecognized value is rejected by ``save_config`` (task 131).
     thinking_mode: str = local_llm.DEFAULT_THINKING_MODE
@@ -168,6 +175,7 @@ def update_local_llm_settings(
             reserved_output_tokens=payload.reserved_output_tokens,
             max_input_tokens=payload.max_input_tokens,
             num_ctx=payload.num_ctx,
+            max_output_tokens=payload.max_output_tokens,
             thinking_mode=payload.thinking_mode,
             allow_compression=payload.allow_compression,
             allow_fallback=payload.allow_fallback,
