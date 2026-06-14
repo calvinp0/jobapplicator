@@ -13,6 +13,7 @@ import {
 import type {
   ClaudeRun,
   Job,
+  ProviderTraceEvent,
   RecruiterReview,
   ResumeVersion,
 } from "../api";
@@ -453,6 +454,24 @@ function formatTimestamp(value: string | null): string {
   return parsed.toLocaleString();
 }
 
+/**
+ * A trace step carries local LLM generation telemetry (tasks 142–145) only when
+ * it actually issued a local call: ``thinking_returned`` is recorded on every
+ * attempted-local task, while the server-reported counts (``tokens_per_second`` /
+ * ``eval_count``) are Ollama-native only and present only when the server
+ * reported them. A deterministic-only step carries none of these, so this is
+ * also the predicate for "should we surface a telemetry row at all".
+ */
+export function hasLocalGenerationTelemetry(event: ProviderTraceEvent): boolean {
+  const details = event.details;
+  if (!details) return false;
+  return (
+    details.thinking_returned != null ||
+    details.tokens_per_second != null ||
+    details.eval_count != null
+  );
+}
+
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [run, setRun] = useState<ClaudeRun | null>(null);
@@ -569,6 +588,13 @@ export function RunDetailPage() {
     ...progressLines,
     ...logLines,
   ]);
+
+  // Per-task local LLM generation telemetry surfaced from the preflight
+  // manifest via the provider trace (tasks 142–145). Empty for a
+  // deterministic-only run, so the Advanced-details block renders nothing.
+  const localTelemetryEvents = (run?.provider_trace ?? []).filter(
+    hasLocalGenerationTelemetry,
+  );
 
   async function handleStartTailoring() {
     if (!runId || !run || run.status !== "created") return;
@@ -789,6 +815,52 @@ export function RunDetailPage() {
               </p>
             ) : null}
           </>
+        ) : null}
+        {localTelemetryEvents.length > 0 ? (
+          <div
+            className="local-llm-telemetry"
+            data-testid="local-llm-telemetry"
+          >
+            <p className="advanced-section-label">Local LLM generation</p>
+            <ul className="local-llm-telemetry-list">
+              {localTelemetryEvents.map((event) => {
+                const details = event.details ?? {};
+                return (
+                  <li
+                    key={event.step}
+                    className="local-llm-telemetry-item"
+                    data-testid={`local-llm-telemetry-${event.step}`}
+                  >
+                    <span className="local-llm-telemetry-task">
+                      {event.label}
+                    </span>
+                    <dl className="run-meta">
+                      {details.tokens_per_second != null ? (
+                        <>
+                          <dt>Tokens/sec</dt>
+                          <dd>{details.tokens_per_second}</dd>
+                        </>
+                      ) : null}
+                      {details.eval_count != null ? (
+                        <>
+                          <dt>Output tokens</dt>
+                          <dd>{details.eval_count}</dd>
+                        </>
+                      ) : null}
+                    </dl>
+                    {details.thinking_returned === true ? (
+                      <span
+                        className="local-llm-thinking-badge"
+                        data-testid={`local-llm-thinking-${event.step}`}
+                      >
+                        Reasoning returned
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         ) : null}
         <dl className="run-meta">
           <dt>Run id</dt>

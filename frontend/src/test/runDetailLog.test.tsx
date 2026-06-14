@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 const {
@@ -279,5 +279,124 @@ describe("RunDetailPage recent-activity panel", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ---- Local LLM generation telemetry (tasks 142–145, surfaced by task 146) ----
+
+  it("surfaces local LLM generation telemetry inside Advanced details", async () => {
+    getRunMock.mockResolvedValue({
+      ...baseRun,
+      provider_summary: {
+        label: "Preflight: Ollama · Tailoring: Claude Code",
+        providers_used: ["local_ollama", "claude_code"],
+        has_warnings: false,
+      },
+      provider_trace: [
+        {
+          step: "job_summary",
+          label: "Job summary",
+          provider: "local_ollama",
+          provider_label: "Ollama",
+          model: "llama3.1:8b",
+          status: "ok",
+          details: {
+            tokens_per_second: 146.4,
+            eval_count: 612,
+            prompt_eval_count: 5774,
+            thinking_returned: true,
+          },
+        },
+        {
+          step: "ats_keywords",
+          label: "ATS keywords",
+          provider: "local_ollama",
+          provider_label: "Ollama",
+          model: "llama3.1:8b",
+          status: "ok",
+          details: {
+            eval_count: 84,
+            thinking_returned: false,
+          },
+        },
+        {
+          step: "render_docx",
+          label: "Render DOCX",
+          provider: "deterministic",
+          provider_label: "Deterministic",
+          model: null,
+          status: "ok",
+          details: {},
+        },
+      ],
+    });
+    getRunLogMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: [],
+      truncated: false,
+    });
+
+    renderRunDetail("run-1");
+
+    const telemetry = await screen.findByTestId("local-llm-telemetry");
+    // tokens/sec and output-token count from the server-reported metrics.
+    expect(telemetry).toHaveTextContent(/tokens\/sec/i);
+    expect(telemetry).toHaveTextContent(/146\.4/);
+    expect(telemetry).toHaveTextContent(/output tokens/i);
+    expect(telemetry).toHaveTextContent(/612/);
+
+    // The "reasoning returned" indicator shows only when thinking_returned is true.
+    expect(
+      screen.getByTestId("local-llm-thinking-job_summary"),
+    ).toHaveTextContent(/reasoning returned/i);
+    expect(
+      screen.queryByTestId("local-llm-thinking-ats_keywords"),
+    ).not.toBeInTheDocument();
+
+    // The deterministic step carries no telemetry, so it gets no row.
+    expect(
+      screen.queryByTestId("local-llm-telemetry-render_docx"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("local-llm-telemetry-job_summary"),
+    ).toBeInTheDocument();
+
+    // It lives inside the Advanced details disclosure, not the primary flow.
+    const detailsEl = screen
+      .getByText(/^Advanced details$/)
+      .closest("details");
+    expect(detailsEl).not.toBeNull();
+    expect(
+      within(detailsEl as HTMLElement).getByTestId("local-llm-telemetry"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no telemetry block for a deterministic-only run", async () => {
+    getRunMock.mockResolvedValue({
+      ...baseRun,
+      provider_trace: [
+        {
+          step: "job_summary",
+          label: "Job summary",
+          provider: "deterministic",
+          provider_label: "Deterministic",
+          model: null,
+          status: "ok",
+          details: { context_budget_tokens: 8192 },
+        },
+      ],
+    });
+    getRunLogMock.mockResolvedValue({
+      run_id: "run-1",
+      lines: ["jobapply: preparing tailoring inputs"],
+      truncated: false,
+    });
+
+    renderRunDetail("run-1");
+
+    await waitFor(() =>
+      expect(screen.getByText(/^Advanced details$/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("local-llm-telemetry")).not.toBeInTheDocument();
+    expect(screen.queryByText(/local llm generation/i)).not.toBeInTheDocument();
   });
 });

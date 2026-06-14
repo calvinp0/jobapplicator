@@ -145,6 +145,7 @@ function defaultSettings(overrides = {}) {
     reserved_output_tokens: 1200,
     max_input_tokens: 6500,
     num_ctx: null,
+    max_output_tokens: null,
     allow_compression: true,
     allow_fallback: true,
     abort_on_over_budget: false,
@@ -519,6 +520,71 @@ describe("SettingsPage – Local LLM card", () => {
       expect(setLocalLlmSettingsMock).toHaveBeenCalledTimes(1),
     );
     expect(setLocalLlmSettingsMock.mock.calls[0][0].num_ctx).toBeNull();
+  });
+
+  it("loads a saved max output tokens value and sends edits through the API", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ max_output_tokens: 512 }),
+    );
+    setLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ max_output_tokens: 1024 }),
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    const maxOutputInput = within(card).getByLabelText(
+      /max output tokens/i,
+    ) as HTMLInputElement;
+    expect(maxOutputInput.value).toBe("512");
+
+    await user.clear(maxOutputInput);
+    await user.type(maxOutputInput, "1024");
+    await user.click(within(card).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(setLocalLlmSettingsMock).toHaveBeenCalledTimes(1),
+    );
+    expect(setLocalLlmSettingsMock.mock.calls[0][0].max_output_tokens).toBe(
+      1024,
+    );
+  });
+
+  it("treats an empty max output tokens field as unset when saving", async () => {
+    const user = userEvent.setup();
+    getLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ max_output_tokens: 512 }),
+    );
+    setLocalLlmSettingsMock.mockResolvedValue(
+      defaultSettings({ max_output_tokens: null }),
+    );
+
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    await user.clear(within(card).getByLabelText(/max output tokens/i));
+    await user.click(within(card).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(setLocalLlmSettingsMock).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      setLocalLlmSettingsMock.mock.calls[0][0].max_output_tokens,
+    ).toBeNull();
+  });
+
+  it("explains the max output tokens field maps to the provider-native cap", async () => {
+    renderPage();
+    const card = await waitFor(() => getCard());
+
+    expect(
+      within(card).getByLabelText(/max output tokens/i),
+    ).toBeInTheDocument();
+    expect(
+      within(card).getByText(/num_predict/i),
+    ).toBeInTheDocument();
+    expect(within(card).getByText(/max_tokens/i)).toBeInTheDocument();
   });
 
   it("shows the server-reported context after a verified connection test", async () => {

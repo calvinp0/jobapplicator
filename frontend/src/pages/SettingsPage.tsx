@@ -577,6 +577,9 @@ function LocalLlmCard() {
   // Kept as a string so the input can distinguish "blank = unset (null)"
   // from an explicit number.
   const [numCtx, setNumCtx] = useState("");
+  // Optional output cap (task 140). Same blank-means-unset string handling as
+  // numCtx so an empty field round-trips as null ("use the server's limit").
+  const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [allowCompression, setAllowCompression] = useState(true);
   const [allowFallback, setAllowFallback] = useState(true);
   const [abortOnOverBudget, setAbortOnOverBudget] = useState(false);
@@ -652,6 +655,9 @@ function LocalLlmCard() {
     setReservedOutputTokens(data.reserved_output_tokens ?? 1200);
     setMaxInputTokens(data.max_input_tokens ?? 6500);
     setNumCtx(data.num_ctx != null ? String(data.num_ctx) : "");
+    setMaxOutputTokens(
+      data.max_output_tokens != null ? String(data.max_output_tokens) : "",
+    );
     setAllowCompression(data.allow_compression ?? true);
     setAllowFallback(data.allow_fallback ?? true);
     setAbortOnOverBudget(data.abort_on_over_budget ?? false);
@@ -683,6 +689,9 @@ function LocalLlmCard() {
 
   // Blank means "unset": the server keeps its own default context length.
   const parsedNumCtx = numCtx.trim() === "" ? null : Number(numCtx);
+  // Blank means "unset": the server keeps its own output limit.
+  const parsedMaxOutputTokens =
+    maxOutputTokens.trim() === "" ? null : Number(maxOutputTokens);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -715,6 +724,7 @@ function LocalLlmCard() {
         reserved_output_tokens: reservedOutputTokens,
         max_input_tokens: maxInputTokens,
         num_ctx: parsedNumCtx,
+        max_output_tokens: parsedMaxOutputTokens,
         allow_compression: allowCompression,
         allow_fallback: allowFallback,
         abort_on_over_budget: abortOnOverBudget,
@@ -1252,6 +1262,27 @@ function LocalLlmCard() {
               context — treat the configured budget as an assumption.
             </p>
           ) : null}
+
+          <label className="field">
+            <span>Max output tokens (optional)</span>
+            <input
+              type="number"
+              min={1}
+              value={maxOutputTokens}
+              placeholder="Leave blank to use the server's own limit"
+              onChange={(e) => {
+                setMaxOutputTokens(e.target.value);
+                clearFeedback();
+              }}
+            />
+          </label>
+          <p className="settings-helper">
+            Optional cap on how much a local model may generate per call, sent
+            as the provider&apos;s own field — Ollama <code>num_predict</code> /
+            OpenAI-compatible <code>max_tokens</code>. It bounds generation at
+            the source before the deterministic fallback. Leave blank to use the
+            server&apos;s own limit.
+          </p>
 
           <dl className="run-meta">
             <dt>JobApplicator context budget</dt>
