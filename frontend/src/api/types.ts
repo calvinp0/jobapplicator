@@ -194,6 +194,17 @@ export interface ProviderTraceDetails {
   server_reported_context_tokens?: number | null;
   context_verified?: boolean | null;
   endpoint_host?: string | null;
+  // Local LLM generation telemetry from the preflight manifest's per-task
+  // ``performance`` object (tasks 142–145). Present only on a task that
+  // actually issued a local call; a deterministic-only step carries none of
+  // them. ``tokens_per_second`` / ``eval_count`` / ``prompt_eval_count`` are
+  // server-reported and Ollama-native only. ``thinking_returned`` is recorded
+  // on every attempted-local task and is ``true`` when the model returned
+  // reasoning (the reasoning text itself is never persisted).
+  tokens_per_second?: number | null;
+  eval_count?: number | null;
+  prompt_eval_count?: number | null;
+  thinking_returned?: boolean | null;
 }
 
 export interface ProviderTraceEvent {
@@ -759,6 +770,11 @@ export interface LocalLlmSettings {
   // context-budget fields only drive JobApplicator's own prompt budgeting.
   // null means "leave the server at its own default".
   num_ctx: number | null;
+  // Optional per-call output cap (task 140). Sent to the server as the
+  // provider-native field — Ollama ``options.num_predict`` /
+  // OpenAI-compatible ``max_tokens`` — to bound generation before the
+  // deterministic fallback. null means "use the server's own limit".
+  max_output_tokens: number | null;
   allow_compression: boolean;
   allow_fallback: boolean;
   abort_on_over_budget: boolean;
@@ -779,6 +795,7 @@ export interface LocalLlmSettingsUpdate {
   reserved_output_tokens: number;
   max_input_tokens?: number | null;
   num_ctx?: number | null;
+  max_output_tokens?: number | null;
   allow_compression: boolean;
   allow_fallback: boolean;
   abort_on_over_budget: boolean;
