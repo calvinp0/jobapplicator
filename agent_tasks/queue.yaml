@@ -2861,7 +2861,7 @@ tasks:
     file: "agent_tasks/143-local-llm-ollama-generation-metrics.md"
     branch: "agent/143-local-llm-ollama-generation-metrics"
     worktree: "agent-143-local-llm-ollama-generation-metrics"
-    status: "ready"
+    status: "done"
     depends_on:
       - "142-local-llm-ollama-thinking-field"
     verification:
@@ -2879,7 +2879,7 @@ tasks:
     file: "agent_tasks/144-local-llm-timeout-cause-classification.md"
     branch: "agent/144-local-llm-timeout-cause-classification"
     worktree: "agent-144-local-llm-timeout-cause-classification"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "143-local-llm-ollama-generation-metrics"
     verification:
