@@ -282,19 +282,43 @@ its entry also carries (task 133):
   Present only on attempted tasks; a deterministic-only task (local disabled,
   over-budget before the call, or skipped after repeated timeouts) omits it
   entirely so it stays neutral.
+- `thinking_returned` (task 142/145) — `true` when the model returned reasoning
+  (a non-empty structured `message.thinking`, or an inline `<think>` block that
+  was stripped before parsing), `false` otherwise. Recorded on **every**
+  attempted-local task entry. The reasoning text itself is never persisted; this
+  is only an observable signal that thinking occurred.
 - `performance` — a record of how the local call behaved:
   - `prompt_token_estimate` — the prompt token estimate the call was sent with.
     Reuses the budgeted `context.estimated_input_tokens_final`; it is not
-    recomputed.
+    recomputed. Kept **distinct** from the server-reported `prompt_eval_count`.
   - `elapsed_ms` — the call's measured elapsed time. Absent when the call timed
     out (the timeout fires before a latency is recorded).
   - `effective_timeout_seconds` — the per-call timeout that bounded the attempt
     (the provider-aware value resolved in task 130).
+  - Server-reported generation metrics (Ollama-native only, task 143/145), each
+    present only when the server reported it — the OpenAI-compatible surface
+    reports none, so its `performance` carries none of these:
+    - `prompt_eval_count` — the server's authoritative input-token count.
+    - `eval_count` — output tokens the server generated.
+    - `total_duration_ms` / `eval_duration_ms` — total and generation timings in
+      milliseconds (converted from the server's nanoseconds).
+    - `tokens_per_second` — derived as `eval_count / (eval_duration / 1e9)`.
+- `timeout_kind` (task 144/145) — recorded **only** when the fallback was caused
+  by a timeout, carrying the stable `error_kind` so a generation timeout
+  (`generation_timeout`) reads differently from an unreachable server
+  (`endpoint_unavailable`). Absent on a clean call or a non-timeout failure.
 
 A task that fell back *before* contacting the server (budget over-limit, or the
-task-132 skip path) is not "attempted" and records neither `local_attempted`
-nor `performance`; its prompt token estimate still lives in
-`context.estimated_input_tokens_final`.
+task-132 skip path) is not "attempted" and records neither `local_attempted`,
+`thinking_returned`, `performance`, nor `timeout_kind`; its prompt token estimate
+still lives in `context.estimated_input_tokens_final`.
+
+The output cap (`max_output_tokens`, task 140) is sent to the server
+automatically on every attempted local preflight call — preflight constructs the
+client from the saved config, so generation is bounded at the source
+(`options.num_predict` for Ollama-native, `max_tokens` for the OpenAI-compatible
+surface) *before* the deterministic fallback can kick in. It is a request-side
+control and is not echoed back into the manifest.
 
 If a local input remains too large and deterministic fallback is allowed, the
 task entry records `status = "fallback"`, `provider = "deterministic"`, and a
@@ -432,9 +456,11 @@ Artifacts:
 - `preflight_manifest.json` — `created_at`, top-level `provider`/`model`,
   `fallback_used` (and `fallback_reason` when a local task degraded), a
   `tasks` array recording per-task `name`/`provider`/`model`/`status`/`output`
-  (plus, on tasks that issued a local call, `local_attempted` and a
-  `performance` record of `prompt_token_estimate`/`elapsed_ms`/
-  `effective_timeout_seconds`), and — for local runs — the top-level
+  (plus, on tasks that issued a local call, `local_attempted`,
+  `thinking_returned`, a `performance` record of `prompt_token_estimate`/
+  `elapsed_ms`/`effective_timeout_seconds` and — on Ollama — server-reported
+  generation metrics, and a `timeout_kind` when a timeout caused the fallback),
+  and — for local runs — the top-level
   `local_attempted`/`local_degraded`/`local_skipped` signals and a `context`
   summary of the assumed vs. server-reported context (`assumed_context_tokens`,
   `server_reported_context_tokens`, `context_verified`). A `provider` of

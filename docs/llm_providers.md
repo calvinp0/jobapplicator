@@ -564,10 +564,16 @@ summary of the assumed vs. server-reported context for the run (task 127):
      "model": "llama3.1:8b", "status": "succeeded",
      "output": "input/preflight/ats_keywords.json",
      "local_attempted": true,
+     "thinking_returned": false,
      "performance": {
        "prompt_token_estimate": 5810,
        "elapsed_ms": 4210,
-       "effective_timeout_seconds": 180
+       "effective_timeout_seconds": 180,
+       "prompt_eval_count": 5774,
+       "eval_count": 612,
+       "total_duration_ms": 8120,
+       "eval_duration_ms": 4180,
+       "tokens_per_second": 146.4
      },
      "context": {
        "context_window_tokens": 8192,
@@ -660,6 +666,41 @@ and attempt signals in the manifest:
   task 130). A task that fell back *before* contacting the server (over budget,
   or skipped after repeated timeouts) is not "attempted" and records neither
   field.
+
+### Generation metrics, thinking, and timeout cause (task 145)
+
+When a preflight task actually issues a local call, the manifest also surfaces
+the generation controls and metrics that tasks 140–144 made observable, so a
+real run shows *cap output before fallback*, *Ollama eval counts*, and *thinking
+returned* end to end:
+
+- **Server-reported generation metrics** (Ollama-native only, task 143) are
+  added to the task's `performance` object alongside the estimate/latency/timeout
+  fields, each only when the server reported it: `prompt_eval_count` (the
+  authoritative input-token count, kept **distinct** from the
+  `prompt_token_estimate`), `eval_count` (output tokens), `total_duration_ms`,
+  `eval_duration_ms`, and the derived `tokens_per_second`. The OpenAI-compatible
+  surface does not report these, so its `performance` object carries none of
+  them.
+- **`thinking_returned`** (task 142) is recorded on **every** attempted-local
+  task entry — `true` when the model returned reasoning (a non-empty structured
+  `message.thinking`, or an inline `<think>` block that was stripped before
+  parsing), `false` otherwise. The reasoning text itself is never persisted; this
+  is only an observable signal that thinking occurred.
+- **`timeout_kind`** is recorded on a task entry **only** when the fallback was
+  caused by a timeout, carrying the task-144 `error_kind` so a generation timeout
+  (`generation_timeout`) reads differently from an unreachable server
+  (`endpoint_unavailable`). A clean call or a non-timeout failure (schema
+  validation, connection refused that is not a timeout) records no `timeout_kind`.
+
+The output cap (`max_output_tokens`, task 140) needs no extra preflight wiring:
+preflight builds the client from the saved config, so the cap is sent to the
+server automatically (`options.num_predict` for Ollama-native, `max_tokens` for
+the OpenAI-compatible surface) — generation is bounded at the source *before* the
+deterministic fallback can kick in.
+
+These fields are additive and only ever appear on attempted-local tasks; a
+deterministic-only task gains none of them.
 - **Per run (local runs only)** — top-level `local_attempted` (distinct from
   `fallback_used`: a run can fall back without ever issuing a local call, and a
   run can attempt local and still fall back), plus `local_degraded` and
