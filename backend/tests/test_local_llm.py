@@ -956,6 +956,146 @@ def test_client_json_only_instruction_present_under_all_thinking_modes(
             assert "json" in system_messages[0]["content"].lower()
 
 
+# ---- structured / inline reasoning ("thinking") signal (task 142) ----
+
+
+def _ollama_completion_with_thinking(
+    content: str, thinking: str, model: str = "llama3.1:8b"
+) -> dict:
+    """An Ollama native ``/api/chat`` body that carries structured thinking."""
+    return {
+        "model": model,
+        "message": {
+            "role": "assistant",
+            "content": content,
+            "thinking": thinking,
+        },
+        "done": True,
+    }
+
+
+def test_chat_json_flags_structured_ollama_thinking(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    secret = "let me reason step by step about the JSON the user asked for"
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _ollama_completion_with_thinking('{"ok": true}', secret)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "go"}],
+        required_fields=["ok"],
+        task="ats_keywords",
+    )
+
+    # The structured thinking is detected as a signal...
+    assert result.thinking_returned is True
+    assert result.schema_valid is True
+    assert result.parsed == {"ok": True}
+    # ...but the reasoning text never reaches the surfaced content or the
+    # parsed JSON, so it is not persisted by default.
+    assert secret not in (result.content or "")
+    assert secret not in str(result.parsed)
+
+
+def test_structured_thinking_never_surfaced_under_any_mode(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    secret = "chain-of-thought reasoning that must never be persisted"
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        return _ollama_completion_with_thinking('{"ok": true}', secret)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # The structured thinking text must stay out of content/parsed for every
+    # thinking_mode, and the signal must be set in each case.
+    for mode in local_llm.SUPPORTED_THINKING_MODES:
+        config = local_llm.LocalLLMConfig(
+            enabled=True,
+            provider=local_llm.PROVIDER_OLLAMA,
+            base_url="http://localhost:11434/v1",
+            model="llama3.1:8b",
+            thinking_mode=mode,
+        )
+        result = local_llm.LocalLLMClient(config).chat_json(
+            [{"role": "user", "content": "go"}],
+            required_fields=["ok"],
+            task="ats_keywords",
+        )
+        assert result.thinking_returned is True, mode
+        assert secret not in (result.content or ""), mode
+        assert secret not in str(result.parsed), mode
+
+
+def test_chat_json_flags_inline_think_block(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # A reasoning model that wraps valid JSON in an inline <think> block.
+        return _completion('<think>reasoning here</think>{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(enabled=True)
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "go"}],
+        required_fields=["ok"],
+        task="ats_keywords",
+    )
+
+    # A stripped inline <think> block reports thinking_returned too, and the
+    # reasoning never lands in the parsed JSON.
+    assert result.thinking_returned is True
+    assert result.schema_valid is True
+    assert result.parsed == {"ok": True}
+    assert "reasoning here" not in str(result.parsed)
+
+
+def test_chat_json_no_thinking_reports_false(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # No structured thinking and no inline <think> block.
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "go"}],
+        required_fields=["ok"],
+        task="ats_keywords",
+    )
+
+    # A response with no reasoning parses exactly as before, with the flag off.
+    assert result.thinking_returned is False
+    assert result.schema_valid is True
+    assert result.parsed == {"ok": True}
+
+
+def test_llm_call_result_thinking_returned_defaults_false():
+    import app.local_llm as local_llm
+
+    result = local_llm.LLMCallResult(
+        ok=True, provider="local_ollama", model="llama3.1:8b"
+    )
+    assert result.thinking_returned is False
+
+
 def test_client_ollama_bare_base_url_uses_native_chat(client, monkeypatch):
     import app.local_llm as local_llm
 

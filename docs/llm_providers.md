@@ -138,6 +138,16 @@ The Settings page exposes an **LLM Providers** section (separate from the
   structured call strips `<think>`/`<thinking>` blocks before parsing
   regardless of the selected mode. The default (`strip_thinking`) is safe for
   every model.
+
+  Separate from that inline `<think>` text, Ollama's native `/api/chat` can
+  return reasoning in a dedicated **structured `message.thinking`** field. That
+  field is **ignored for parsing** — it is never folded into the surfaced
+  `content` or the parsed JSON, so the reasoning text is **never persisted by
+  default** under any `thinking_mode`. The call result instead exposes a
+  `thinking_returned` boolean that signals reasoning *was* returned (a non-empty
+  structured `message.thinking`, or an inline `<think>` block that was stripped
+  before parsing), so the fact that the model reasoned stays observable for
+  later surfacing without keeping the reasoning text itself (task 142).
 - **Over-budget handling** — deterministic compression, deterministic
   fallback, and abort-on-over-budget controls. Local prompts are never
   silently truncated.

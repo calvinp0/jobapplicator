@@ -780,6 +780,14 @@ class LLMCallResult:
     schema_valid: Optional[bool] = None
     fallback_used: bool = False
     repaired: bool = False
+    # Whether the model returned reasoning ("thinking") alongside its answer
+    # (task 142). Set when an Ollama-native response carried a non-empty
+    # structured ``message.thinking`` field, or when the content carried an
+    # inline ``<think>`` block that was stripped before parsing. The reasoning
+    # text itself is never copied into ``content`` or ``parsed`` — this flag is
+    # only an observable signal that thinking occurred, so reasoning is not
+    # persisted by default while remaining surfaceable later.
+    thinking_returned: bool = False
     error: Optional[str] = None
     # Stable transport-failure classification (task 136). Set on a non-OK
     # result whose failure came from the HTTP boundary; ``None`` on success or
@@ -966,6 +974,34 @@ def _extract_content(body: dict[str, Any]) -> Optional[str]:
         content = message.get("content")
         if isinstance(content, str):
             return content
+    return None
+
+
+def _extract_thinking(body: dict[str, Any]) -> Optional[str]:
+    """Return the structured reasoning ("thinking") text from a response.
+
+    Ollama's native ``/api/chat`` returns reasoning in a separate
+    ``message.thinking`` string — distinct from the inline ``<think>...</think>``
+    text :func:`strip_thinking` handles. This is read *only* to detect that
+    thinking was returned (it sets :attr:`LLMCallResult.thinking_returned`); the
+    reasoning text is **never** folded into the surfaced content or the parsed
+    JSON, so it is not persisted by default (task 142). Returns the thinking
+    string when present and non-empty, else ``None``. The OpenAI-compatible
+    ``choices[0].message.thinking`` shape is handled defensively too.
+    """
+    message = body.get("message")
+    if isinstance(message, dict):
+        thinking = message.get("thinking")
+        if isinstance(thinking, str) and thinking.strip():
+            return thinking
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0] if isinstance(choices[0], dict) else None
+        message = first.get("message") if isinstance(first, dict) else None
+        if isinstance(message, dict):
+            thinking = message.get("thinking")
+            if isinstance(thinking, str) and thinking.strip():
+                return thinking
     return None
 
 
@@ -1544,12 +1580,18 @@ class LocalLLMClient:
                 latency_ms=latency_ms,
             )
         model = body.get("model") or self.config.model
+        # Record whether the model returned a structured ``message.thinking``
+        # field. It is detected here but never copied into ``content`` (only
+        # ``_extract_content`` feeds ``content``), so the reasoning text is not
+        # persisted by default while the fact that it occurred stays observable
+        # via ``thinking_returned`` (task 142).
         return LLMCallResult(
             ok=True,
             provider=self.provider_id,
             model=model,
             task=task,
             content=content,
+            thinking_returned=_extract_thinking(body) is not None,
             latency_ms=latency_ms,
         )
 
@@ -1577,6 +1619,14 @@ class LocalLLMClient:
             result.schema_valid = False
             _log_call(result)
             return result
+
+        # An inline ``<think>`` block in the content is reasoning too: flag it
+        # so ``thinking_returned`` is meaningful for both the structured
+        # ``message.thinking`` shape (set in ``chat``) and the inline shape. The
+        # block is stripped below before parsing, so the flag stays set even
+        # though the surfaced/parsed output never contains it (task 142).
+        if result.content and _THINK_BLOCK_RE.search(result.content):
+            result.thinking_returned = True
 
         # Strip any reasoning ("thinking") text from the content *before*
         # parsing, so a reasoning model that wraps valid JSON in a ``<think>``
@@ -1611,6 +1661,8 @@ class LocalLLMClient:
             retry.schema_valid = False
             _log_call(retry)
             return retry
+        if retry.content and _THINK_BLOCK_RE.search(retry.content):
+            retry.thinking_returned = True
         cleaned_retry = strip_thinking(retry.content)
         if self.config.thinking_mode == THINKING_MODE_HIDE:
             retry.content = cleaned_retry
