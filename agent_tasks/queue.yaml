@@ -2843,7 +2843,7 @@ tasks:
     file: "agent_tasks/142-local-llm-ollama-thinking-field.md"
     branch: "agent/142-local-llm-ollama-thinking-field"
     worktree: "agent-142-local-llm-ollama-thinking-field"
-    status: "ready"
+    status: "done"
     depends_on:
       - "141-local-llm-json-temperature-and-prompt"
     verification:
@@ -2861,7 +2861,7 @@ tasks:
     file: "agent_tasks/143-local-llm-ollama-generation-metrics.md"
     branch: "agent/143-local-llm-ollama-generation-metrics"
     worktree: "agent-143-local-llm-ollama-generation-metrics"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "142-local-llm-ollama-thinking-field"
     verification:
