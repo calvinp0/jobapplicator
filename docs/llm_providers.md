@@ -127,10 +127,11 @@ The Settings page exposes an **LLM Providers** section (separate from the
     persisted artifacts or logs downstream.
   - **`no_thinking`** — ask the model not to reason at all. For the **Ollama**
     provider the backend sends the native `think: false` option on the
-    `/api/chat` request; for **OpenAI-compatible** servers (which have no
-    portable disable-reasoning flag) it reinforces *reply with ONLY the JSON
-    object, no reasoning* in the system prompt. A provider-specific reasoning
-    flag is **never** sent to an OpenAI-compatible endpoint.
+    `/api/chat` request; a provider-specific reasoning flag is **never** sent to
+    an OpenAI-compatible endpoint. (The *reply with ONLY the JSON object, no
+    reasoning* system instruction is no longer specific to this mode — every
+    structured call now carries it regardless of `thinking_mode`; see
+    *Structured-call defaults* below.)
 
   Disabling reasoning is **best-effort** — a reasoning-tuned model may emit a
   `<think>` block anyway — so **stripping is the reliable mechanism**: every
@@ -363,6 +364,30 @@ returns a `ModelPullResult` collecting them, never raising on a transport or
 server-reported error.
 
 ## Schema validation and fallback
+
+### Structured-call defaults (task 141)
+
+To make the structured (JSON) calls the preflight pipeline relies on more
+deterministic and parse-friendly for small local models, every call with a JSON
+`response_format` gets two defaults, **regardless of `thinking_mode`**:
+
+- **Temperature `0`.** Structured calls request a deterministic temperature so
+  strict-JSON output and instruction-following are more reliable. It is sent
+  using each provider's native field — `options.temperature` for the
+  **Ollama** provider (in the same `options` block as any `num_ctx` /
+  `num_predict`) and the top-level `temperature` field for the
+  **OpenAI-compatible** provider. The value is **internal to the client** (a
+  hardcoded default for structured calls, not a persisted setting). A
+  user-configurable temperature is a possible future follow-up.
+- **A JSON-only instruction.** A concise *reply with ONLY the requested JSON
+  object — no reasoning, prose, or markdown* system message is prepended to the
+  request on both providers, reducing the prose-before-JSON failures the
+  thinking-strip step would otherwise clean up after the fact. It is added
+  exactly once (it subsumes the previous `no_thinking`-only injection).
+
+Non-structured / free-text calls (e.g. the `test_connection` probe) are
+unaffected: they send **no** forced temperature and no JSON-only system message,
+keeping the server's own defaults.
 
 For any local task that produces structured output, the client
 (`LocalLLMClient.chat_json`) requests a JSON object, validates required

@@ -91,9 +91,11 @@ DEFAULT_ABORT_ON_OVER_BUDGET = False
 #
 # - ``no_thinking``  — ask the model not to reason at all. Best-effort only:
 #   for the Ollama-native provider we send the documented ``think: false``
-#   option; for OpenAI-compatible servers we reinforce "reply with ONLY the
-#   JSON object, no reasoning" in the system prompt. A reasoning-tuned model
-#   may ignore both, so the strip step below is the reliable backstop.
+#   option. (The "reply with ONLY the JSON object, no reasoning" system prompt
+#   is no longer special to this mode — every structured call now carries it
+#   regardless of ``thinking_mode``; see ``_JSON_ONLY_SYSTEM_PROMPT``.) A
+#   reasoning-tuned model may ignore both, so the strip step below is the
+#   reliable backstop.
 # - ``strip_thinking`` — allow the model to think but remove the thinking
 #   text from the content *before* parsing. This is the safe default.
 # - ``hide_thinking`` — like strip for parsing, but also keep the reasoning
@@ -120,12 +122,31 @@ _THINK_BLOCK_RE = re.compile(
     r"<think(?:ing)?>.*?</think(?:ing)?>", re.IGNORECASE | re.DOTALL
 )
 
-# Best-effort reinforcement injected as a system message for OpenAI-compatible
-# servers under ``no_thinking`` (they have no native disable-reasoning flag).
-_NO_THINKING_SYSTEM_PROMPT = (
+# Concise "return JSON only, no reasoning" instruction injected as a leading
+# system message for *every* structured (JSON ``response_format``) call, on both
+# providers and under every ``thinking_mode``. A low temperature plus an explicit
+# JSON-only instruction makes strict-JSON output and instruction-following more
+# reliable for small local models and reduces the prose-before-JSON failures the
+# strip step would otherwise have to clean up after the fact. This subsumes the
+# previous ``no_thinking``-only OpenAI-compatible injection, so the instruction
+# is added exactly once (task 141). It remains best-effort — a reasoning-tuned
+# model may emit a ``<think>`` block anyway — so the strip step in ``chat_json``
+# stays the reliable backstop.
+_JSON_ONLY_SYSTEM_PROMPT = (
     "Reply with ONLY the requested JSON object. Do not include any reasoning, "
     "chain-of-thought, <think> blocks, prose, or markdown fences."
 )
+
+# Structured (JSON) calls request a deterministic temperature by default: a low
+# temperature makes strict-JSON output and instruction-following more reliable
+# for small local models. It is kept internal to the client for now — a
+# hardcoded default for structured calls, not a persisted setting — and is sent
+# using each provider's native field: ``options.temperature`` for the
+# Ollama-native surface and a top-level ``temperature`` for the
+# OpenAI-compatible surface. Non-structured / free-text calls (e.g.
+# ``test_connection``) send no temperature and keep the server's own default
+# (task 141).
+DEFAULT_JSON_TEMPERATURE = 0
 
 
 def strip_thinking(content: Optional[str]) -> Optional[str]:
@@ -1372,23 +1393,42 @@ class LocalLLMClient:
         # when (and only when) it is configured. The OpenAI-compatible provider
         # speaks ``/chat/completions`` and never sends num_ctx — there is no
         # per-request way to set it there (tasks 126, 129).
+        # Every structured (JSON) call reinforces a concise "JSON only, no
+        # reasoning/prose/markdown" instruction as a leading system message,
+        # regardless of provider or ``thinking_mode``. This is built once and
+        # shared by both provider branches so the instruction is added exactly
+        # once; free-text calls (no ``response_format``) are left untouched
+        # (task 141).
+        outbound_messages = messages
+        if response_format is not None:
+            outbound_messages = [
+                {"role": "system", "content": _JSON_ONLY_SYSTEM_PROMPT},
+                *messages,
+            ]
+
         if self.config.provider == PROVIDER_OLLAMA:
             url = self._ollama_native_chat_url()
             payload: dict[str, Any] = {
                 "model": self.config.model,
-                "messages": messages,
+                "messages": outbound_messages,
                 "stream": False,
             }
-            # ``options`` collects the Ollama-native generation controls. Both
-            # ``num_ctx`` (server context length) and ``num_predict`` (the
-            # output-token cap, task 140) live here, so the block is created
-            # once and shared — a cap set alongside num_ctx yields a single
-            # options block carrying both keys.
+            # ``options`` collects the Ollama-native generation controls.
+            # ``num_ctx`` (server context length), ``num_predict`` (the
+            # output-token cap, task 140), and ``temperature`` (the deterministic
+            # default for structured calls, task 141) all live here, so the block
+            # is created once and shared — a cap set alongside num_ctx and a
+            # structured-call temperature yield a single options block carrying
+            # every applicable key.
             options: dict[str, Any] = {}
             if self.config.num_ctx is not None:
                 options["num_ctx"] = self.config.num_ctx
             if self.config.max_output_tokens is not None:
                 options["num_predict"] = self.config.max_output_tokens
+            if response_format is not None:
+                # Structured calls request a deterministic temperature via the
+                # Ollama-native ``options.temperature`` field (task 141).
+                options["temperature"] = DEFAULT_JSON_TEMPERATURE
             if options:
                 payload["options"] = options
             if response_format is not None:
@@ -1407,20 +1447,12 @@ class LocalLLMClient:
                 payload["think"] = False
         else:
             url = self._chat_url()
-            # No-thinking on an OpenAI-compatible server: there is no portable
-            # native disable-reasoning flag, so we reinforce the instruction in
-            # a system message instead. A provider-specific reasoning flag is
-            # *never* sent to this surface. Best-effort, again backstopped by
-            # the strip step in ``chat_json`` (task 131).
-            outbound_messages = messages
-            if (
-                self.config.thinking_mode == THINKING_MODE_NO_THINKING
-                and response_format is not None
-            ):
-                outbound_messages = [
-                    {"role": "system", "content": _NO_THINKING_SYSTEM_PROMPT},
-                    *messages,
-                ]
+            # The OpenAI-compatible surface has no portable native
+            # disable-reasoning flag, so the JSON-only instruction is carried in
+            # the shared ``outbound_messages`` system message above (for every
+            # structured call, not just ``no_thinking``); a provider-specific
+            # reasoning flag is *never* sent to this surface. Best-effort, again
+            # backstopped by the strip step in ``chat_json`` (tasks 131, 141).
             payload = {
                 "model": self.config.model,
                 "messages": outbound_messages,
@@ -1432,6 +1464,10 @@ class LocalLLMClient:
                 payload["max_tokens"] = self.config.max_output_tokens
             if response_format is not None:
                 payload["response_format"] = response_format
+                # Structured calls request a deterministic temperature via the
+                # top-level ``temperature`` field — the OpenAI-compatible
+                # equivalent of Ollama's ``options.temperature`` (task 141).
+                payload["temperature"] = DEFAULT_JSON_TEMPERATURE
 
         headers: dict[str, str] = {}
         if self.config.api_key:
