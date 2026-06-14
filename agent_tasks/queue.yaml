@@ -2805,7 +2805,7 @@ tasks:
     file: "agent_tasks/140-local-llm-output-token-cap.md"
     branch: "agent/140-local-llm-output-token-cap"
     worktree: "agent-140-local-llm-output-token-cap"
-    status: "ready"
+    status: "done"
     depends_on:
       - "137-add-ollama-model-pull-endpoint"
     verification:
@@ -2825,7 +2825,7 @@ tasks:
     file: "agent_tasks/141-local-llm-json-temperature-and-prompt.md"
     branch: "agent/141-local-llm-json-temperature-and-prompt"
     worktree: "agent-141-local-llm-json-temperature-and-prompt"
-    status: "planned"
+    status: "ready"
     depends_on:
       - "140-local-llm-output-token-cap"
     verification:
