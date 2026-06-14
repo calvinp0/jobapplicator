@@ -671,6 +671,46 @@ def test_run_preflight_deterministic_run_has_no_context_summary(tmp_path):
 # ---- task 132: provider-degradation guardrails -----------------------
 
 
+def test_is_timeout_recognises_both_timeout_causes():
+    """_is_timeout treats both connection and generation timeouts as timeouts."""
+    # Connection timeout: endpoint_unavailable kind + the documented string.
+    connection = local_llm.LLMCallResult(
+        ok=False,
+        provider="local_openai_compatible",
+        model="llama3.1:8b",
+        error="timeout after 60s contacting http://localhost:11434/v1/chat/completions",
+        error_kind=local_llm.ENDPOINT_ERROR_UNAVAILABLE,
+    )
+    # Generation timeout: dedicated kind, different message (task 144).
+    generation = local_llm.LLMCallResult(
+        ok=False,
+        provider="local_openai_compatible",
+        model="llama3.1:8b",
+        error="generation timed out after 60s: reached http://localhost:11434/v1/chat/completions but it did not finish generating",
+        error_kind=local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT,
+    )
+    # A connection *refused* (also endpoint_unavailable) is NOT a timeout, and a
+    # schema/parse failure is not either.
+    refused = local_llm.LLMCallResult(
+        ok=False,
+        provider="local_openai_compatible",
+        model="llama3.1:8b",
+        error="connection error contacting http://localhost:11434/v1/chat/completions: Connection refused",
+        error_kind=local_llm.ENDPOINT_ERROR_UNAVAILABLE,
+    )
+    schema_failure = local_llm.LLMCallResult(
+        ok=False,
+        provider="local_openai_compatible",
+        model="llama3.1:8b",
+        error="response missing choices[0].message.content",
+    )
+
+    assert preflight._is_timeout(connection) is True
+    assert preflight._is_timeout(generation) is True
+    assert preflight._is_timeout(refused) is False
+    assert preflight._is_timeout(schema_failure) is False
+
+
 def test_local_timeout_marks_provider_degraded_but_not_skipped(
     tmp_path, monkeypatch
 ):
@@ -700,7 +740,10 @@ def test_local_timeout_marks_provider_degraded_but_not_skipped(
     first = manifest["tasks"][0]
     assert first["provider"] == preflight.DETERMINISTIC_PROVIDER
     assert first["fallback_used"] is True
-    assert first["fallback_reason"].startswith("timeout after")
+    # A bare ``TimeoutError`` from the read phase is a *generation* timeout
+    # (the server was reached but did not finish generating); it still counts
+    # as a timeout for degradation (task 144).
+    assert first["fallback_reason"].startswith("generation timed out after")
     # Later tasks recovered on the local provider (not skipped).
     for task in manifest["tasks"][1:]:
         assert task["provider"] == "local_openai_compatible"

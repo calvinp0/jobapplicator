@@ -229,8 +229,14 @@ clear, distinct error for each class. The kinds are:
 
 - `none` — success; the model responded.
 - `endpoint_unavailable` — the server could not be reached at all (connection
-  refused, DNS failure, timeout). Check the host/port and that the server is
-  running.
+  refused, DNS failure, **connection** timeout — connect/DNS never completed).
+  Check the host/port and that the server is running.
+- `generation_timeout` — the server **was** reached and accepted the request,
+  but generation did not finish within the timeout (task 144). This is a
+  different problem from `endpoint_unavailable`: a slow or overloaded model is
+  not an unreachable server. The fix is usually a longer **Timeout (seconds)**,
+  a smaller/faster model, or a smaller prompt — not a host/port change. See
+  *Connection vs. generation timeout* below for the attribution limits.
 - `bad_url` — the host is reachable but the endpoint or API surface looks wrong
   (e.g. a 404 / 405). Check the base URL and the selected provider — for
   example, pointing the **OpenAI-compatible** provider at a bare
@@ -248,6 +254,46 @@ clear, distinct error for each class. The kinds are:
 For the **Ollama-native** provider a successful test also returns the
 `installed_models` list (from `/api/tags`); for the OpenAI-compatible provider
 that list is empty because model listing is unsupported on that surface.
+
+#### Connection vs. generation timeout (task 144)
+
+A timeout is split into two distinct causes so the operator knows *why* a call
+timed out:
+
+- **Connection timeout** → `endpoint_unavailable`. The server could not be
+  reached within the timeout — the connect/DNS step never completed. This
+  belongs with the other "could not reach the server" failures, so it keeps the
+  `endpoint_unavailable` kind and the documented `timeout after Ns contacting
+  ...` error string. The fix is a host/port/server-running check.
+- **Generation timeout** → `generation_timeout`. The server *was* reached and
+  accepted the request, but generation did not finish in time. The error reads
+  `generation timed out after Ns: reached <url> but it did not finish
+  generating`. The fix is a longer timeout, a faster/smaller model, or a smaller
+  prompt — not a connectivity change.
+
+**How the two are told apart (and the limit).** The stdlib `urllib` client uses
+a single `timeout=` that bounds the *whole* request, so a perfectly clean
+attribution is impossible. The best available signal is **which exception type
+surfaced**:
+
+- `urllib` wraps a *connect-time* failure (including a connect-time
+  `TimeoutError` or `ConnectionRefusedError`) in a `URLError` raised before the
+  request completes → classified as a **connection** timeout
+  (`endpoint_unavailable`).
+- A *bare* `TimeoutError` can only surface from the **read** phase, which runs
+  after the connection succeeded and the request was dispatched → classified as
+  a **generation** timeout.
+
+Because the single timeout cannot separate "connected but stalled before the
+first byte" from "stalled mid-generation", both read-phase stalls count as a
+generation timeout. The label is only ever upgraded to `generation_timeout`
+when the connection is **known** to have succeeded; anything ambiguous stays
+`endpoint_unavailable`. Splitting the single timeout into separate connect/read
+bounds (which would need a different HTTP stack) is intentionally out of scope.
+
+Both timeout causes still count as *timeouts* for the preflight
+provider-degradation guardrails (task 132): a wedged-but-reachable model is
+abandoned the same way an unreachable one is.
 
 ### Server-context detection (task 127)
 
