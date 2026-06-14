@@ -19,6 +19,7 @@ monkeypatched so no live server is needed.
 from __future__ import annotations
 
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -1052,3 +1053,215 @@ def test_no_marker_on_clean_local_success(tmp_path, monkeypatch):
 
     joined = "\n".join(logs + progress)
     assert preflight.LOCAL_ATTEMPTED_FELL_BACK_MARKER not in joined
+
+
+# ---- task 145: generation metrics, thinking, timeout cause, output cap ----
+
+
+def _ollama_post_with_metrics(url, payload, *, headers=None, timeout=60.0):
+    """Ollama-native responses carrying generation metrics + a thinking block.
+
+    Reuses ``_fake_local_post_valid`` to pick task-appropriate JSON content,
+    then rewraps it in the native ``/api/chat`` shape with server-reported
+    token counts/durations and a structured ``message.thinking`` field, so the
+    client populates ``generation_metrics`` and ``thinking_returned``.
+    """
+    if url.endswith("/api/show"):
+        return _ollama_show(16384)
+    openai_body = _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+    content = openai_body["choices"][0]["message"]["content"]
+    return {
+        "model": "llama3.1:8b",
+        "message": {
+            "role": "assistant",
+            "content": content,
+            "thinking": "Let me work through the job description.",
+        },
+        "prompt_eval_count": 1234,
+        "eval_count": 567,
+        "total_duration": 8_000_000_000,  # 8s in nanoseconds
+        "eval_duration": 4_000_000_000,  # 4s in nanoseconds -> 567/4 = 141.8 tok/s
+    }
+
+
+def _ollama_config() -> local_llm.LocalLLMConfig:
+    return local_llm.LocalLLMConfig(
+        enabled=True, provider=local_llm.PROVIDER_OLLAMA
+    )
+
+
+def test_attempted_local_task_records_generation_metrics_and_thinking(
+    tmp_path, monkeypatch
+):
+    """An attempted Ollama task records server eval counts, tokens/sec, thinking."""
+    monkeypatch.setattr(local_llm, "_post_json", _ollama_post_with_metrics)
+    run_dir = _make_run_dir(tmp_path)
+
+    result = preflight.run_preflight(run_dir, config=_ollama_config())
+    assert result.fallback_used is False
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest["tasks"]:
+        assert task["provider"] == "local_ollama"
+        assert task["status"] == "succeeded"
+        assert task["local_attempted"] is True
+        # Reasoning came back (a structured message.thinking), recorded as a flag
+        # without persisting the reasoning text itself.
+        assert task["thinking_returned"] is True
+        perf = task["performance"]
+        # The estimate stays distinct from the server-reported count.
+        assert perf["prompt_token_estimate"] == (
+            task["context"]["estimated_input_tokens_final"]
+        )
+        assert perf["prompt_eval_count"] == 1234
+        assert perf["prompt_eval_count"] != perf["prompt_token_estimate"]
+        assert perf["eval_count"] == 567
+        assert perf["total_duration_ms"] == 8000
+        assert perf["eval_duration_ms"] == 4000
+        assert perf["tokens_per_second"] == 141.8
+        # The existing estimate/latency/timeout fields still ride alongside.
+        assert isinstance(perf["elapsed_ms"], int)
+        assert perf["effective_timeout_seconds"] == 180
+    data, reason = preflight.validate_manifest(manifest)
+    assert reason is None and data is not None
+
+
+def test_attempted_local_task_without_metrics_omits_metric_fields(
+    tmp_path, monkeypatch
+):
+    """The OpenAI-compatible provider reports no metrics, so none are recorded."""
+    monkeypatch.setattr(local_llm, "_post_json", _fake_local_post_valid)
+    run_dir = _make_run_dir(tmp_path)
+
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest["tasks"]:
+        assert task["local_attempted"] is True
+        # thinking_returned is always present on an attempted task (False here).
+        assert task["thinking_returned"] is False
+        perf = task["performance"]
+        # No server metrics: the estimate is recorded but none of the
+        # server-reported fields are.
+        assert "prompt_token_estimate" in perf
+        for key in (
+            "prompt_eval_count",
+            "eval_count",
+            "total_duration_ms",
+            "eval_duration_ms",
+            "tokens_per_second",
+        ):
+            assert key not in perf
+        assert "timeout_kind" not in task
+
+
+def test_generation_timeout_records_distinct_timeout_kind(tmp_path, monkeypatch):
+    """A generation-timeout fallback records generation_timeout as the cause."""
+    calls = {"n": 0}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        calls["n"] += 1
+        if calls["n"] == 1:  # only the first task times out mid-generation
+            raise TimeoutError("simulated generation timeout")
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    first = manifest["tasks"][0]
+    assert first["provider"] == preflight.DETERMINISTIC_PROVIDER
+    assert first["fallback_used"] is True
+    assert first["local_attempted"] is True
+    # A bare TimeoutError from the read phase is a *generation* timeout (the
+    # server was reached but did not finish): its cause reads distinctly from an
+    # unreachable server (task 144/145).
+    assert first["timeout_kind"] == local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT
+    # Later tasks recovered cleanly and carry no timeout cause.
+    for task in manifest["tasks"][1:]:
+        assert task["provider"] == "local_openai_compatible"
+        assert "timeout_kind" not in task
+    data, reason = preflight.validate_manifest(manifest)
+    assert reason is None and data is not None
+
+
+def test_connection_timeout_records_distinct_timeout_kind(tmp_path, monkeypatch):
+    """A connection-timeout fallback records endpoint_unavailable, not generation."""
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        # A connect-time timeout surfaces as a URLError wrapping a TimeoutError,
+        # which the client classifies as endpoint_unavailable with the documented
+        # "timeout after Ns contacting ..." string (task 144).
+        raise urllib.error.URLError(TimeoutError("connect timed out"))
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+    run_dir = _make_run_dir(tmp_path)
+
+    preflight.run_preflight(run_dir, config=_enabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    # The first two tasks each pay a connection timeout (then the rest skip).
+    first = manifest["tasks"][0]
+    assert first["fallback_used"] is True
+    assert first["local_attempted"] is True
+    assert first["timeout_kind"] == local_llm.ENDPOINT_ERROR_UNAVAILABLE
+    assert first["timeout_kind"] != local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT
+
+
+def test_deterministic_only_task_has_no_generation_fields(tmp_path):
+    """A deterministic-only run gains no thinking/metrics/timeout fields."""
+    run_dir = _make_run_dir(tmp_path)
+    preflight.run_preflight(run_dir, config=_disabled_config())
+
+    manifest = json.loads(
+        (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
+    )
+    for task in manifest["tasks"]:
+        assert "thinking_returned" not in task
+        assert "timeout_kind" not in task
+        assert "performance" not in task
+
+
+def test_configured_output_cap_reaches_local_request(tmp_path, monkeypatch):
+    """max_output_tokens flows through the normal config path to the request.
+
+    The cap is enforced at the server before the deterministic fallback can
+    kick in, so it must reach the request payload on both provider surfaces.
+    """
+    captured: list[dict] = []
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured.append(payload)
+        return _fake_local_post_valid(url, payload, headers=headers, timeout=timeout)
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # OpenAI-compatible: the cap rides the top-level ``max_tokens`` field.
+    run_dir_oai = _make_run_dir(tmp_path / "oai")
+    oai_cfg = local_llm.LocalLLMConfig(enabled=True, max_output_tokens=256)
+    preflight.run_preflight(run_dir_oai, config=oai_cfg)
+    chat_payloads = [p for p in captured if "messages" in p]
+    assert chat_payloads
+    assert all(p["max_tokens"] == 256 for p in chat_payloads)
+
+    # Ollama-native: the cap rides ``options.num_predict``.
+    captured.clear()
+    run_dir_ollama = _make_run_dir(tmp_path / "ollama")
+    ollama_cfg = local_llm.LocalLLMConfig(
+        enabled=True, provider=local_llm.PROVIDER_OLLAMA, max_output_tokens=128
+    )
+    preflight.run_preflight(run_dir_ollama, config=ollama_cfg)
+    # Filter out the /api/show detection probe, which has no chat messages.
+    chat_payloads = [p for p in captured if "messages" in p]
+    assert chat_payloads
+    assert all(p["options"]["num_predict"] == 128 for p in chat_payloads)

@@ -53,6 +53,7 @@ from .context_budget import (
     check_context_budget,
 )
 from .local_llm import (
+    GenerationMetrics,
     LLMCallResult,
     LocalLLMClient,
     LocalLLMConfig,
@@ -213,6 +214,16 @@ class PreflightTaskResult:
     prompt_token_estimate: Optional[int] = None
     latency_ms: Optional[int] = None
     effective_timeout_seconds: Optional[int] = None
+    # Local generation controls/metrics surfaced from the call result (task 145):
+    # ``generation_metrics`` are the server-reported Ollama eval counts/timings
+    # (task 143), ``thinking_returned`` records whether reasoning came back
+    # (task 142), and ``timeout_kind`` records *why* a timeout fell back — the
+    # ``error_kind`` from task 144 (``generation_timeout`` vs. the connection
+    # ``endpoint_unavailable``) — set only when the fallback was a timeout so a
+    # generation timeout reads differently from an unreachable server.
+    generation_metrics: Optional[GenerationMetrics] = None
+    thinking_returned: bool = False
+    timeout_kind: Optional[str] = None
 
     def manifest_entry(self) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -233,6 +244,10 @@ class PreflightTaskResult:
         # nor the ``performance`` object, so they stay neutral.
         if self.local_attempted:
             entry["local_attempted"] = True
+            # ``thinking_returned`` is always recorded on an attempted-local task
+            # so an operator can see whether the model emitted reasoning, even
+            # when it was stripped before parsing (task 142/145).
+            entry["thinking_returned"] = bool(self.thinking_returned)
             performance: dict[str, Any] = {}
             if self.prompt_token_estimate is not None:
                 performance["prompt_token_estimate"] = self.prompt_token_estimate
@@ -242,8 +257,30 @@ class PreflightTaskResult:
                 performance["effective_timeout_seconds"] = (
                     self.effective_timeout_seconds
                 )
+            # Server-reported generation metrics (Ollama-native only, task 143).
+            # ``prompt_eval_count`` is the server's authoritative input-token
+            # count, kept distinct from ``prompt_token_estimate`` (the estimate).
+            # Each field is added only when the server reported it, so the
+            # OpenAI-compatible provider (which reports none) gains nothing.
+            metrics = self.generation_metrics
+            if metrics is not None:
+                if metrics.prompt_eval_count is not None:
+                    performance["prompt_eval_count"] = metrics.prompt_eval_count
+                if metrics.eval_count is not None:
+                    performance["eval_count"] = metrics.eval_count
+                if metrics.total_duration_ms is not None:
+                    performance["total_duration_ms"] = metrics.total_duration_ms
+                if metrics.eval_duration_ms is not None:
+                    performance["eval_duration_ms"] = metrics.eval_duration_ms
+                if metrics.tokens_per_second is not None:
+                    performance["tokens_per_second"] = metrics.tokens_per_second
             if performance:
                 entry["performance"] = performance
+            # When the fallback was caused by a timeout, record its cause so a
+            # generation timeout reads differently from an unreachable server
+            # (task 144/145). Absent on a clean call or a non-timeout failure.
+            if self.timeout_kind is not None:
+                entry["timeout_kind"] = self.timeout_kind
         return entry
 
 
@@ -715,6 +752,10 @@ def _run_one(
         # token estimate reuses the figure already computed while budgeting.
         prompt_token_estimate = context_info.get("estimated_input_tokens_final")
         effective_timeout = cfg.effective_timeout_seconds
+        # ``timeout_kind`` is set only when the fallback was caused by a timeout,
+        # recording its task-144 ``error_kind`` so a generation timeout reads
+        # differently from an unreachable server (task 145).
+        timeout_kind: Optional[str] = None
         if call.ok and call.schema_valid and call.parsed is not None:
             data, reason = validator(call.parsed)
             if reason is None and data is not None:
@@ -729,6 +770,8 @@ def _run_one(
                     prompt_token_estimate=prompt_token_estimate,
                     latency_ms=call.latency_ms,
                     effective_timeout_seconds=effective_timeout,
+                    generation_metrics=call.generation_metrics,
+                    thinking_returned=call.thinking_returned,
                 )
             fallback_reason = f"local output failed schema validation: {reason}"
         else:
@@ -736,6 +779,7 @@ def _run_one(
             # ordinary schema/parse failure does not (task 132).
             if _is_timeout(call):
                 health.record_timeout()
+                timeout_kind = call.error_kind
             fallback_reason = (
                 call.error
                 or "local provider returned an invalid or unparseable response"
@@ -756,6 +800,9 @@ def _run_one(
         result.prompt_token_estimate = prompt_token_estimate
         result.latency_ms = call.latency_ms
         result.effective_timeout_seconds = effective_timeout
+        result.generation_metrics = call.generation_metrics
+        result.thinking_returned = call.thinking_returned
+        result.timeout_kind = timeout_kind
         return data, result
 
     # Deterministic is the intended provider (local disabled/not allowed).
