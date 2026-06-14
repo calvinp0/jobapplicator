@@ -1466,6 +1466,95 @@ def test_client_connection_error_reports_attempted_url(client, monkeypatch):
     assert "http://100.104.129.123:11434/api/chat" in (result.error or "")
 
 
+# ---- timeout cause classification (task 144) -------------------------
+
+
+def test_chat_classifies_generation_timeout(client, monkeypatch):
+    """A bare read-phase TimeoutError is a generation timeout, not unavailable."""
+    import app.local_llm as local_llm
+
+    # A *bare* TimeoutError reaches ``chat`` only from the read phase, after the
+    # connection succeeded and the request was dispatched — i.e. the server was
+    # reached but did not finish generating in time.
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        timeout_seconds=42,
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert result.ok is False
+    assert result.error_kind == local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT
+    assert result.error_kind == "generation_timeout"
+    # The message says generation timed out (not "could not reach"), names the
+    # bound, and preserves the attempted URL.
+    assert (result.error or "").startswith("generation timed out after 42s")
+    assert "http://localhost:11434/v1/chat/completions" in (result.error or "")
+
+
+def test_chat_classifies_connection_timeout_as_unavailable(client, monkeypatch):
+    """A connect-time timeout (URLError-wrapped) stays endpoint_unavailable."""
+    import app.local_llm as local_llm
+
+    # ``urllib`` wraps a connect-time timeout in a URLError whose reason is a
+    # TimeoutError — the connection never completed, so this is a *connection*
+    # timeout and must NOT be relabelled as a generation timeout.
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        timeout_seconds=30,
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert result.ok is False
+    assert result.error_kind == local_llm.ENDPOINT_ERROR_UNAVAILABLE
+    # The documented "timeout after Ns contacting ..." contract is preserved so
+    # preflight's _is_timeout still recognises the connection-timeout case.
+    assert (result.error or "").startswith("timeout after 30s contacting")
+
+
+def test_diagnose_connection_surfaces_generation_timeout(client, monkeypatch):
+    """diagnose_connection gives a distinct message for a generation timeout."""
+    import app.local_llm as local_llm
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # OpenAI-compatible provider: no pre-probe model listing, so the chat probe
+    # runs and surfaces the generation timeout.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    diagnosis = local_llm.LocalLLMClient(config).diagnose_connection()
+
+    assert diagnosis.ok is False
+    assert diagnosis.error_kind == local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT
+    # The diagnosis message is distinct from the endpoint-unavailable wording.
+    assert "generation timed out" in diagnosis.message.lower()
+    assert "could not reach" not in diagnosis.message.lower()
+
+
 # ---- task policy ------------------------------------------------------
 
 

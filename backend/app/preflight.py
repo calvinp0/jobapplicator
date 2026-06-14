@@ -561,16 +561,27 @@ def _is_timeout(call: LLMCallResult) -> bool:
     """Whether a failed local call timed out (vs. a schema/other failure).
 
     A timeout is identified from the :class:`LLMCallResult` contract in
-    :mod:`app.local_llm`: the call failed (``ok is False``) and its ``error``
-    is the documented ``"timeout after Ns contacting ..."`` string. Ordinary
-    schema-validation failures keep ``ok`` truthy (or carry a non-timeout
-    error) and therefore do **not** count as a timeout (task 132).
+    :mod:`app.local_llm`. **Both** timeout causes count toward the task-132
+    degraded/skip thresholds — a wedged-but-reachable model is just as worth
+    abandoning as an unreachable one:
+
+    - a **connection** timeout keeps the ``endpoint_unavailable`` kind and the
+      documented ``"timeout after Ns contacting ..."`` error string (which a
+      connection *refused* error — also ``endpoint_unavailable`` — does not
+      match, so the string is what distinguishes the timeout);
+    - a **generation** timeout carries the dedicated
+      :data:`~app.local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT` kind (task 144),
+      matched on ``error_kind`` rather than the error string.
+
+    Ordinary schema-validation failures keep ``ok`` truthy (or carry a
+    non-timeout error/kind) and therefore do **not** count as a timeout
+    (task 132).
     """
-    return (
-        not call.ok
-        and isinstance(call.error, str)
-        and call.error.startswith("timeout after")
-    )
+    if call.ok:
+        return False
+    if call.error_kind == local_llm.ENDPOINT_ERROR_GENERATION_TIMEOUT:
+        return True
+    return isinstance(call.error, str) and call.error.startswith("timeout after")
 
 
 def _preflight_context_budget(cfg: LocalLLMConfig) -> ContextBudget:

@@ -987,6 +987,19 @@ ENDPOINT_ERROR_UNAVAILABLE = "endpoint_unavailable"
 ENDPOINT_ERROR_BAD_URL = "bad_url"
 ENDPOINT_ERROR_UNEXPECTED = "unexpected"
 
+# A *generation* timeout: the server was reached and accepted the request, but
+# generation did not finish within the timeout (task 144). This is a different
+# operational problem from a *connection* timeout — a slow model is not an
+# unreachable server — so it gets its own stable kind. A connection timeout
+# (connect/DNS never completed) deliberately keeps the existing
+# ``endpoint_unavailable`` kind: it belongs with the other "could not reach the
+# server" failures, and reusing it avoids a redundant connection-timeout kind.
+#
+# Attribution caveat: with the stdlib ``urllib`` client a single ``timeout=``
+# bounds the whole request, so a perfectly clean split is impossible. The best
+# available signal is *which exception type* surfaced — see ``LocalLLMClient.chat``.
+ENDPOINT_ERROR_GENERATION_TIMEOUT = "generation_timeout"
+
 # Connection-test diagnosis kinds (task 136). The transport kinds above are
 # reused verbatim; these two extend the set for the operational test endpoint:
 # ``model_not_installed`` is derived from the installed-model list (not a
@@ -1383,10 +1396,13 @@ class ConnectionDiagnosis:
     *why* a test failed via a stable :attr:`error_kind` and, for the
     Ollama-native provider, reporting the installed model list. ``error_kind``
     is :data:`ERROR_KIND_NONE` on success, and one of
-    :data:`ENDPOINT_ERROR_UNAVAILABLE`, :data:`ENDPOINT_ERROR_BAD_URL`,
-    :data:`ERROR_KIND_MODEL_NOT_INSTALLED`, or :data:`ENDPOINT_ERROR_UNEXPECTED`
-    on failure. ``message`` is a human-readable line that reflects the kind so
-    the UI can show a clear, distinct error for each class.
+    :data:`ENDPOINT_ERROR_UNAVAILABLE`, :data:`ENDPOINT_ERROR_GENERATION_TIMEOUT`,
+    :data:`ENDPOINT_ERROR_BAD_URL`, :data:`ERROR_KIND_MODEL_NOT_INSTALLED`, or
+    :data:`ENDPOINT_ERROR_UNEXPECTED` on failure. ``message`` is a human-readable
+    line that reflects the kind so the UI can show a clear, distinct error for
+    each class. A generation timeout (server reached but did not finish in time)
+    is distinguished from a connection timeout (server unreachable, which keeps
+    the ``endpoint_unavailable`` kind) (task 144).
     """
 
     ok: bool
@@ -1411,6 +1427,12 @@ def _probe_failure_message(kind: str, detail: Optional[str]) -> str:
         return (
             "Endpoint unavailable — could not reach the local LLM server. "
             f"{detail}"
+        )
+    if kind == ENDPOINT_ERROR_GENERATION_TIMEOUT:
+        return (
+            "Generation timed out — the server was reached but did not finish "
+            f"generating in time. The model may be slow or overloaded, or the "
+            f"timeout may be too short. {detail}"
         )
     if kind == ENDPOINT_ERROR_BAD_URL:
         return (
@@ -1626,6 +1648,14 @@ class LocalLLMClient:
                 error_kind=kind,
             )
         except urllib.error.URLError as exc:
+            # ``urllib`` wraps a *connect-time* failure (connect/DNS never
+            # completed, including a connect-time ``TimeoutError`` or
+            # ``ConnectionRefusedError``) in a ``URLError`` raised from inside
+            # ``urlopen`` before the request finishes. So a ``URLError`` whose
+            # reason is a ``TimeoutError`` is a **connection timeout**: the
+            # server could not be reached in time. It keeps the existing
+            # ``endpoint_unavailable`` kind and the documented "timeout after Ns
+            # contacting ..." string (which preflight's ``_is_timeout`` matches).
             reason = exc.reason
             if isinstance(reason, TimeoutError):
                 msg = f"timeout after {effective_timeout}s contacting {url}"
@@ -1640,13 +1670,33 @@ class LocalLLMClient:
                 error_kind=ENDPOINT_ERROR_UNAVAILABLE,
             )
         except TimeoutError:
+            # A *bare* ``TimeoutError`` (not wrapped in ``URLError``) reaches
+            # here from the read phase — ``urlopen``'s response-header read or
+            # ``resp.read()`` in ``_post_json`` — which only runs *after* the
+            # connection was established and the request was dispatched. The
+            # connection is therefore known to have succeeded, so this is a
+            # **generation timeout**: the reachable server simply did not finish
+            # generating in time. We label it accordingly rather than as an
+            # unreachable endpoint.
+            #
+            # Attribution limit: the single ``urllib`` ``timeout=`` bounds the
+            # whole request, so we cannot tell a server that accepted the
+            # connection but stalled *before* the first byte from one that
+            # stalled *mid-generation* — both surface as a bare read-phase
+            # ``TimeoutError`` and both count as a generation timeout here. We
+            # only ever upgrade to the generation-timeout label when the
+            # connection is known to have succeeded (this branch); the
+            # connect-time case above stays ``endpoint_unavailable``.
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
                 model=self.config.model,
                 task=task,
-                error=f"timeout after {effective_timeout}s contacting {url}",
-                error_kind=ENDPOINT_ERROR_UNAVAILABLE,
+                error=(
+                    f"generation timed out after {effective_timeout}s: reached "
+                    f"{url} but it did not finish generating"
+                ),
+                error_kind=ENDPOINT_ERROR_GENERATION_TIMEOUT,
             )
         except (json.JSONDecodeError, ValueError) as exc:
             return LLMCallResult(
@@ -1955,13 +2005,17 @@ class LocalLLMClient:
         the chat probe surfaces a raw ``HTTP 404``. The three failure classes
         are therefore distinguishable:
 
-        - **endpoint unavailable** — the server could not be reached at all;
+        - **endpoint unavailable** — the server could not be reached at all
+          (including a connection timeout — connect/DNS never completed);
+        - **generation timeout** — the server was reached but did not finish
+          generating in time (task 144);
         - **wrong provider URL** — reachable host but the path/surface is wrong;
         - **missing model** — server reachable, configured model not installed.
 
         For the **OpenAI-compatible** provider model listing is unsupported, so
         a missing model cannot be detected pre-probe; the chat probe runs and
-        any transport failure is still classified. Never raises.
+        any transport failure (including a generation timeout) is still
+        classified. Never raises.
         """
         installed_models: list[str] = []
         if self.config.provider == PROVIDER_OLLAMA:
