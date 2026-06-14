@@ -530,8 +530,15 @@ def test_client_formats_openai_compatible_request(client, monkeypatch):
     assert result.ok is True
     assert captured["url"] == "http://localhost:11434/v1/chat/completions"
     assert captured["payload"]["model"] == "qwen2.5-coder:14b"
-    assert captured["payload"]["messages"] == [{"role": "user", "content": "hi"}]
+    # Structured calls prepend a JSON-only system instruction, then the
+    # caller's messages (task 141).
+    sent_messages = captured["payload"]["messages"]
+    assert sent_messages[0]["role"] == "system"
+    assert "json" in sent_messages[0]["content"].lower()
+    assert sent_messages[1:] == [{"role": "user", "content": "hi"}]
     assert captured["payload"]["response_format"] == {"type": "json_object"}
+    # Structured calls request a deterministic temperature of 0 (task 141).
+    assert captured["payload"]["temperature"] == 0
     assert captured["headers"]["Authorization"] == "Bearer tok"
     assert captured["timeout"] == 42
 
@@ -657,7 +664,9 @@ def test_client_sends_num_predict_for_ollama_native(client, monkeypatch):
 
     assert result.ok is True
     assert captured["url"] == "http://localhost:11434/api/chat"
-    assert captured["payload"]["options"] == {"num_predict": 256}
+    # The structured call also adds the deterministic temperature to the same
+    # options block (task 141).
+    assert captured["payload"]["options"] == {"num_predict": 256, "temperature": 0}
 
 
 def test_client_sends_num_predict_and_num_ctx_in_single_options_block(
@@ -768,6 +777,183 @@ def test_client_omits_max_tokens_for_openai_compatible_when_unset(
     local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
 
     assert "max_tokens" not in captured["payload"]
+
+
+# ---- structured-call temperature + JSON-only instruction (task 141) --
+
+
+def test_client_structured_call_sends_temperature_zero_ollama(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _ollama_completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # A structured Ollama call with no num_ctx / num_predict still produces a
+    # single options block carrying just the deterministic temperature.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    assert captured["payload"]["options"] == {"temperature": 0}
+    assert captured["payload"]["options"]["temperature"] == (
+        local_llm.DEFAULT_JSON_TEMPERATURE
+    )
+    # The JSON-only instruction is prepended as a leading system message.
+    sent_messages = captured["payload"]["messages"]
+    assert sent_messages[0]["role"] == "system"
+    assert "json" in sent_messages[0]["content"].lower()
+    assert sent_messages[1:] == [{"role": "user", "content": "hi"}]
+
+
+def test_client_structured_call_sends_temperature_zero_openai_compatible(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        response_format={"type": "json_object"},
+    )
+
+    # OpenAI-compatible sends temperature as a top-level field, never via an
+    # options/num_predict block.
+    assert captured["payload"]["temperature"] == local_llm.DEFAULT_JSON_TEMPERATURE
+    assert "options" not in captured["payload"]
+
+
+def test_client_non_structured_call_sends_no_temperature(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # A free-text (non-structured) OpenAI-compatible call must not force a
+    # temperature and must not prepend a JSON-only system message.
+    oai = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    local_llm.LocalLLMClient(oai).chat([{"role": "user", "content": "hi"}])
+    assert "temperature" not in captured["payload"]
+    assert captured["payload"]["messages"] == [{"role": "user", "content": "hi"}]
+
+    # Same for the Ollama-native provider: no options block at all (no
+    # num_ctx / num_predict / temperature) for a free-text call.
+    captured.clear()
+
+    def fake_post_ollama(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _ollama_completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post_ollama)
+
+    ollama = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    local_llm.LocalLLMClient(ollama).chat([{"role": "user", "content": "hi"}])
+    assert "options" not in captured["payload"]
+    assert captured["payload"]["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_test_connection_sends_no_temperature(client, monkeypatch):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        return _completion("pong")
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # test_connection is a non-structured probe: it must not force a temperature.
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+    )
+    local_llm.LocalLLMClient(config).test_connection()
+    assert "temperature" not in captured["payload"]
+
+
+def test_client_json_only_instruction_present_under_all_thinking_modes(
+    client, monkeypatch
+):
+    import app.local_llm as local_llm
+
+    captured: dict = {}
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        captured["payload"] = payload
+        if "/api/chat" in url:
+            return _ollama_completion('{"ok": true}')
+        return _completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    # Every structured call carries the JSON-only instruction exactly once,
+    # for both providers and under every thinking_mode (task 141).
+    for provider in (
+        local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        local_llm.PROVIDER_OLLAMA,
+    ):
+        for mode in local_llm.SUPPORTED_THINKING_MODES:
+            captured.clear()
+            config = local_llm.LocalLLMConfig(
+                enabled=True,
+                provider=provider,
+                base_url="http://localhost:11434/v1",
+                model="llama3.1:8b",
+                thinking_mode=mode,
+            )
+            local_llm.LocalLLMClient(config).chat(
+                [{"role": "user", "content": "hi"}],
+                response_format={"type": "json_object"},
+            )
+            sent_messages = captured["payload"]["messages"]
+            system_messages = [
+                m for m in sent_messages if m["role"] == "system"
+            ]
+            # Present, and not duplicated by the no_thinking path.
+            assert len(system_messages) == 1, (provider, mode, sent_messages)
+            assert "json" in system_messages[0]["content"].lower()
 
 
 def test_client_ollama_bare_base_url_uses_native_chat(client, monkeypatch):
