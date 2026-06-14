@@ -767,6 +767,78 @@ def _repair_prompt(required_fields: list[str], reason: str) -> str:
 # ---- Call result -----------------------------------------------------
 
 
+@dataclass(frozen=True)
+class GenerationMetrics:
+    """Server-reported generation telemetry from an Ollama-native response.
+
+    Ollama's native ``/api/chat`` response returns authoritative token counts
+    and timings: ``prompt_eval_count`` (input tokens), ``eval_count`` (output
+    tokens), and ``total_duration`` / ``eval_duration`` (nanoseconds). The
+    durations are converted to milliseconds here, and ``tokens_per_second`` is
+    derived as ``eval_count / (eval_duration / 1e9)``. Any field is ``None``
+    when the server did not report it (and ``tokens_per_second`` is ``None``
+    whenever ``eval_duration`` is zero or missing, to avoid a divide error).
+
+    These metrics are **Ollama-native only** and best-effort: the
+    OpenAI-compatible surface does not return them, so the call result leaves
+    them unpopulated there (task 143).
+    """
+
+    prompt_eval_count: Optional[int] = None
+    eval_count: Optional[int] = None
+    total_duration_ms: Optional[int] = None
+    eval_duration_ms: Optional[int] = None
+    tokens_per_second: Optional[float] = None
+
+
+def extract_generation_metrics(body: dict[str, Any]) -> Optional[GenerationMetrics]:
+    """Extract Ollama-native generation telemetry from a response ``body``.
+
+    Pure and total: every field degrades to ``None`` for a missing or
+    malformed value and the function never raises. Returns ``None`` when the
+    body carries none of the metric fields at all (e.g. an OpenAI-compatible
+    response, which never reports them), so callers get a clean "no metrics"
+    signal rather than an all-``None`` holder. ``tokens_per_second`` is
+    ``None`` whenever ``eval_duration`` is zero or missing, avoiding a divide
+    error. The nanosecond ``total_duration`` / ``eval_duration`` are converted
+    to milliseconds (task 143).
+    """
+    if not isinstance(body, dict):
+        return None
+    prompt_eval_count = _coerce_optional_int(body.get("prompt_eval_count"))
+    eval_count = _coerce_optional_int(body.get("eval_count"))
+    total_duration_ns = _coerce_optional_int(body.get("total_duration"))
+    eval_duration_ns = _coerce_optional_int(body.get("eval_duration"))
+    if (
+        prompt_eval_count is None
+        and eval_count is None
+        and total_duration_ns is None
+        and eval_duration_ns is None
+    ):
+        return None
+    total_duration_ms = (
+        round(total_duration_ns / 1e6) if total_duration_ns is not None else None
+    )
+    eval_duration_ms = (
+        round(eval_duration_ns / 1e6) if eval_duration_ns is not None else None
+    )
+    # A zero or missing ``eval_duration`` (falsy) leaves tokens/sec ``None``
+    # rather than dividing by zero; likewise a missing ``eval_count``.
+    if eval_count is not None and eval_duration_ns:
+        tokens_per_second: Optional[float] = round(
+            eval_count / (eval_duration_ns / 1e9), 1
+        )
+    else:
+        tokens_per_second = None
+    return GenerationMetrics(
+        prompt_eval_count=prompt_eval_count,
+        eval_count=eval_count,
+        total_duration_ms=total_duration_ms,
+        eval_duration_ms=eval_duration_ms,
+        tokens_per_second=tokens_per_second,
+    )
+
+
 @dataclass
 class LLMCallResult:
     """Outcome of a local LLM call, including provenance for logging."""
@@ -794,6 +866,10 @@ class LLMCallResult:
     # for non-transport failures (e.g. over-budget refusal, schema validation).
     error_kind: Optional[str] = None
     latency_ms: Optional[int] = None
+    # Server-reported generation telemetry for a successful Ollama-native call
+    # (tokens, durations, derived tokens/sec). ``None`` on failure and for the
+    # OpenAI-compatible provider, which does not report these fields (task 143).
+    generation_metrics: Optional[GenerationMetrics] = None
     context: Optional[dict[str, Any]] = None
 
 
@@ -802,15 +878,29 @@ def _log_call(result: LLMCallResult) -> None:
         schema = "n/a"
     else:
         schema = "passed" if result.schema_valid else "failed"
-    logger.info(
+    # The existing fields are kept verbatim; tokens/sec and the output-token
+    # count are *appended* when the server reported them, so callers/tests that
+    # match on the original prefix are unaffected (task 143).
+    message = (
         "LLM provider: %s | Model: %s | Task: %s | "
-        "Schema validation: %s | Fallback used: %s",
+        "Schema validation: %s | Fallback used: %s"
+    )
+    args: list[Any] = [
         result.provider,
         result.model,
         result.task or "n/a",
         schema,
         "yes" if result.fallback_used else "no",
-    )
+    ]
+    metrics = result.generation_metrics
+    if metrics is not None:
+        if metrics.tokens_per_second is not None:
+            message += " | Tokens/sec: %s"
+            args.append(metrics.tokens_per_second)
+        if metrics.eval_count is not None:
+            message += " | Output tokens: %s"
+            args.append(metrics.eval_count)
+    logger.info(message, *args)
 
 
 # ---- HTTP layer (stdlib; monkeypatchable in tests) -------------------
@@ -1585,6 +1675,15 @@ class LocalLLMClient:
         # ``_extract_content`` feeds ``content``), so the reasoning text is not
         # persisted by default while the fact that it occurred stays observable
         # via ``thinking_returned`` (task 142).
+        # Ollama's native ``/api/chat`` response carries server-reported
+        # generation telemetry (token counts and timings); the OpenAI-compatible
+        # surface does not, so metrics are extracted only for the Ollama-native
+        # provider and left ``None`` otherwise (task 143).
+        generation_metrics = (
+            extract_generation_metrics(body)
+            if self.config.provider == PROVIDER_OLLAMA
+            else None
+        )
         return LLMCallResult(
             ok=True,
             provider=self.provider_id,
@@ -1593,6 +1692,7 @@ class LocalLLMClient:
             content=content,
             thinking_returned=_extract_thinking(body) is not None,
             latency_ms=latency_ms,
+            generation_metrics=generation_metrics,
         )
 
     def chat_json(
