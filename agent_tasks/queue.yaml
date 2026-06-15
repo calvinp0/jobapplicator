@@ -2936,3 +2936,21 @@ tasks:
       - "frontend/src/test/runDetailProgress.test.tsx"
       - "agent_tasks/146-frontend-local-llm-generation-controls.md"
       - "agent_tasks/queue.yaml"
+  - id: "147-add-local-llm-admin-monitor"
+    title: "Add local LLM admin monitor and streaming diagnostics"
+    file: "agent_tasks/131-add-local-llm-admin-monitor.md"
+    branch: "agent/147-add-local-llm-admin-monitor"
+    worktree: "agent-147-add-local-llm-admin-monitor"
+    status: "ready"
+    depends_on: []
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest backend/tests"
+      - "cd frontend && npm run build"
+      - "cd frontend && npm test -- --run"
+    allowed_paths:
+      - "backend/**"
+      - "frontend/**"
+      - "agent_tasks/147-add-local-llm-admin-monitor.md"
+      - "agent_tasks/queue.yaml"
+      - "docs/**"
