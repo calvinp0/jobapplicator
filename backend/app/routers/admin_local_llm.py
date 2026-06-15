@@ -16,4 +16,3 @@ router = APIRouter(prefix="/admin/local-llm", tags=["admin-local-llm"])
 def get_local_llm_diagnostics() -> dict[str, Any]:
     """Return the current in-memory local LLM diagnostic snapshot."""
     return diagnostics_store.snapshot()
-

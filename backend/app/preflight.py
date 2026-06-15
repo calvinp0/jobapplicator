@@ -102,11 +102,11 @@ STATUS_FALLBACK = "fallback"
 # Provider-degradation guardrails (task 132). A slow or wedged local server
 # otherwise makes *every* eligible preflight task pay a full timeout before
 # falling back, multiplying the wasted wall-clock by the number of tasks. The
-# first local timeout in a run marks the provider degraded; once this many
-# timeouts accumulate the remaining tasks skip the local provider entirely and
-# go straight to the deterministic extractor. The threshold is deliberately
-# small (2) so a single cold task can still recover while a genuinely
-# unresponsive server is abandoned after one extra confirmation.
+# once this many local timeouts accumulate in a run, the provider is marked
+# degraded and the remaining tasks skip it entirely, going straight to the
+# deterministic extractor. The threshold is deliberately small (2) so a single
+# cold task can still recover while a genuinely unresponsive server is
+# abandoned after one extra confirmation.
 LOCAL_SKIP_TIMEOUT_THRESHOLD = 2
 
 # Recorded as the per-task ``fallback_reason`` when a task is routed straight
@@ -304,9 +304,9 @@ class PreflightResult:
     manifest_path: Optional[Path] = None
     artifact_paths: dict[str, Path] = field(default_factory=dict)
     # Per-run provider-degradation state (task 132), exposed in-memory for the
-    # manifest/run-trace task (133). ``local_degraded`` is set after the first
-    # local timeout; ``local_skipped`` after the repeated-timeout threshold,
-    # once the remaining tasks bypass the local provider entirely.
+    # manifest/run-trace task (133). ``local_degraded`` and ``local_skipped``
+    # are set after the repeated-timeout threshold, once the remaining tasks
+    # bypass the local provider entirely.
     local_degraded: bool = False
     local_skipped: bool = False
 
@@ -324,9 +324,9 @@ class _ProviderHealth:
     degraded: bool = False
 
     def record_timeout(self) -> None:
-        """Note a local timeout; the first one marks the provider degraded."""
+        """Note a local timeout and degrade only at the repeated-timeout threshold."""
         self.timeouts += 1
-        self.degraded = True
+        self.degraded = self.timeouts >= LOCAL_SKIP_TIMEOUT_THRESHOLD
 
     @property
     def skip_local(self) -> bool:
@@ -712,11 +712,11 @@ def _run_one(
     deterministic output is itself validated so a bug there surfaces as a
     failed task rather than a malformed artifact.
 
-    ``health`` carries the per-run provider-degradation state (task 132): a
-    local timeout marks the provider degraded, and once the run has seen the
-    repeated-timeout threshold the local provider is skipped for this and every
-    later task — routed straight to the deterministic floor. Skipping never
-    raises; the deterministic path already guarantees a valid artifact.
+    ``health`` carries the per-run provider-degradation state (task 132): once
+    the run has seen the repeated-timeout threshold, the local provider is
+    marked degraded and skipped for this and every later task — routed straight
+    to the deterministic floor. Skipping never raises; the deterministic path
+    already guarantees a valid artifact.
     """
     use_local = client is not None and local_allowed_for_task(spec.policy_task, cfg)
 
@@ -798,16 +798,17 @@ def _run_one(
                 )
             fallback_reason = f"local output failed schema validation: {reason}"
         else:
-            # A timeout degrades the provider for the rest of the run; an
-            # ordinary schema/parse failure does not (task 132).
+            # Repeated timeouts degrade the provider for the rest of the run;
+            # an ordinary schema/parse failure does not (task 132).
             if _is_timeout(call):
                 health.record_timeout()
                 timeout_kind = call.error_kind
-                diagnostics_store.mark_provider_degraded(
-                    run_id=run_id,
-                    reason=call.error or "local LLM timeout",
-                    timeout_failures=health.timeouts,
-                )
+                if health.degraded:
+                    diagnostics_store.mark_provider_degraded(
+                        run_id=run_id,
+                        reason=call.error or "local LLM timeout",
+                        timeout_failures=health.timeouts,
+                    )
             fallback_reason = (
                 call.error
                 or "local provider returned an invalid or unparseable response"

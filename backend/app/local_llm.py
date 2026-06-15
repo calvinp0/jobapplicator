@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import urllib.error
@@ -48,6 +49,7 @@ from .local_llm_diagnostics import (
     TIMEOUT_CONNECT,
     TIMEOUT_GENERATION,
     TIMEOUT_READ,
+    TIMEOUT_STALLED,
     diagnostics_store,
 )
 from .llm_providers import CLAUDE_CODE_PROVIDER_ID
@@ -88,6 +90,8 @@ DEFAULT_MAX_INPUT_TOKENS = 6500
 DEFAULT_ALLOW_COMPRESSION = True
 DEFAULT_ALLOW_FALLBACK = True
 DEFAULT_ABORT_ON_OVER_BUDGET = False
+DEFAULT_OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS = 60.0
+OLLAMA_STREAM_IDLE_TIMEOUT_ENV = "LOCAL_LLM_OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS"
 
 # ---- Reasoning ("thinking") controls (task 131) ----------------------
 #
@@ -999,6 +1003,7 @@ def _post_json_stream_with_connect_event(
     *,
     headers: Optional[dict[str, str]] = None,
     timeout: float = 60.0,
+    idle_timeout: Optional[float] = None,
     on_connected=None,
 ):
     """POST JSON and yield NDJSON objects, notifying after headers arrive."""
@@ -1010,11 +1015,51 @@ def _post_json_stream_with_connect_event(
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         if on_connected is not None:
             on_connected()
-        for raw_line in resp:
-            line = raw_line.decode("utf-8").strip()
-            if not line:
-                continue
-            yield json.loads(line)
+        _set_response_read_timeout(resp, idle_timeout)
+        try:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+                yield json.loads(line)
+        except TimeoutError as exc:
+            if idle_timeout is not None and idle_timeout > 0:
+                raise LocalLLMStreamStalledTimeout(
+                    f"Ollama stream stalled for more than {idle_timeout:g}s"
+                ) from exc
+            raise
+
+
+def _set_response_read_timeout(resp: Any, idle_timeout: Optional[float]) -> None:
+    """Best-effort idle timeout for urllib streaming response reads."""
+    if idle_timeout is None or idle_timeout <= 0:
+        return
+    socket_obj = getattr(resp, "fp", None)
+    socket_obj = getattr(socket_obj, "raw", None)
+    socket_obj = getattr(socket_obj, "_sock", None)
+    settimeout = getattr(socket_obj, "settimeout", None)
+    if callable(settimeout):
+        settimeout(idle_timeout)
+
+
+class LocalLLMStreamStalledTimeout(TimeoutError):
+    """Raised when an Ollama stream stops producing chunks after starting."""
+
+
+def _ollama_stream_idle_timeout_seconds(request_timeout: float) -> Optional[float]:
+    raw = os.getenv(OLLAMA_STREAM_IDLE_TIMEOUT_ENV)
+    if raw is None:
+        configured = DEFAULT_OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS
+    else:
+        try:
+            configured = float(raw)
+        except ValueError:
+            configured = DEFAULT_OLLAMA_STREAM_IDLE_TIMEOUT_SECONDS
+    if configured <= 0:
+        return None
+    if request_timeout <= 0:
+        return configured
+    return min(configured, request_timeout)
 
 
 # ---- Endpoint error classification (task 135) ------------------------
@@ -1760,6 +1805,28 @@ class LocalLLMClient:
                 error_kind=ENDPOINT_ERROR_UNAVAILABLE,
                 diagnostic_request_id=diagnostic.request_id,
             )
+        except LocalLLMStreamStalledTimeout:
+            idle_timeout = _ollama_stream_idle_timeout_seconds(effective_timeout)
+            idle_label = f"{idle_timeout:g}s" if idle_timeout is not None else f"{effective_timeout}s"
+            error = (
+                f"generation stalled after {idle_label}: reached "
+                f"{url} but the stream stopped producing chunks"
+            )
+            diagnostics_store.complete_request(
+                diagnostic.request_id,
+                status=STATUS_FAILED,
+                error=error,
+                timeout_kind=TIMEOUT_STALLED,
+            )
+            return LLMCallResult(
+                ok=False,
+                provider=self.provider_id,
+                model=self.config.model,
+                task=task,
+                error=error,
+                error_kind=ENDPOINT_ERROR_GENERATION_TIMEOUT,
+                diagnostic_request_id=diagnostic.request_id,
+            )
         except TimeoutError:
             # A *bare* ``TimeoutError`` (not wrapped in ``URLError``) reaches
             # here from the read phase — ``urlopen``'s response-header read or
@@ -1887,6 +1954,8 @@ class LocalLLMClient:
         content_parts: list[str] = []
         final_body: dict[str, Any] = {}
         first_chunk_seen = False
+        last_chunk_monotonic: Optional[float] = None
+        idle_timeout = _ollama_stream_idle_timeout_seconds(timeout)
 
         if getattr(_post_json, "__module__", __name__) != __name__:
             diagnostics_store.add_event(diagnostic_request_id, None, None, "connected to Ollama")
@@ -1916,43 +1985,67 @@ class LocalLLMClient:
                 "connected to Ollama",
             )
 
-        for line in _post_json_stream_with_connect_event(
-            url,
-            payload,
-            headers=headers,
-            timeout=timeout,
-            on_connected=connected,
-        ):
-            if not isinstance(line, dict):
-                continue
-            if not first_chunk_seen:
-                first_chunk_seen = True
-                diagnostics_store.add_event(
-                    diagnostic_request_id, None, None, "first chunk received"
+        try:
+            for line in _post_json_stream_with_connect_event(
+                url,
+                payload,
+                headers=headers,
+                timeout=timeout,
+                idle_timeout=idle_timeout,
+                on_connected=connected,
+            ):
+                now = time.monotonic()
+                if (
+                    first_chunk_seen
+                    and idle_timeout is not None
+                    and last_chunk_monotonic is not None
+                    and now - last_chunk_monotonic > idle_timeout
+                ):
+                    raise LocalLLMStreamStalledTimeout(
+                        f"Ollama stream stalled for more than {idle_timeout:g}s"
+                    )
+                if not isinstance(line, dict):
+                    continue
+                if not first_chunk_seen:
+                    first_chunk_seen = True
+                    diagnostics_store.add_event(
+                        diagnostic_request_id, None, None, "first chunk received"
+                    )
+                final_body = line
+                message = line.get("message")
+                thinking = ""
+                content = ""
+                if isinstance(message, dict):
+                    raw_thinking = message.get("thinking")
+                    raw_content = message.get("content")
+                    thinking = raw_thinking if isinstance(raw_thinking, str) else ""
+                    content = raw_content if isinstance(raw_content, str) else ""
+                if thinking:
+                    diagnostics_store.add_event(
+                        diagnostic_request_id, None, None, "thinking stream started"
+                    )
+                if content:
+                    content_parts.append(content)
+                diagnostics_store.update_chunk(
+                    diagnostic_request_id,
+                    thinking_chars=len(thinking),
+                    content_chars=len(content),
                 )
-            final_body = line
-            message = line.get("message")
-            thinking = ""
-            content = ""
-            if isinstance(message, dict):
-                raw_thinking = message.get("thinking")
-                raw_content = message.get("content")
-                thinking = raw_thinking if isinstance(raw_thinking, str) else ""
-                content = raw_content if isinstance(raw_content, str) else ""
-            if thinking:
+                last_chunk_monotonic = now
+                if line.get("done") is True:
+                    diagnostics_store.update_final_metrics(diagnostic_request_id, line)
+                    break
+        except LocalLLMStreamStalledTimeout as exc:
+            if first_chunk_seen:
                 diagnostics_store.add_event(
-                    diagnostic_request_id, None, None, "thinking stream started"
+                    diagnostic_request_id,
+                    None,
+                    None,
+                    "stream stalled waiting for next chunk",
+                    kind=STATUS_FAILED,
                 )
-            if content:
-                content_parts.append(content)
-            diagnostics_store.update_chunk(
-                diagnostic_request_id,
-                thinking_chars=len(thinking),
-                content_chars=len(content),
-            )
-            if line.get("done") is True:
-                diagnostics_store.update_final_metrics(diagnostic_request_id, line)
-                break
+                raise LocalLLMStreamStalledTimeout(str(exc) or "stream stalled") from exc
+            raise TimeoutError(str(exc) or "stream read timed out") from exc
 
         if content_parts:
             final_body = dict(final_body)

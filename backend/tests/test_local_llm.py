@@ -17,6 +17,7 @@ live server is needed.
 from __future__ import annotations
 
 import sys
+import time
 import urllib.error
 
 
@@ -2796,7 +2797,15 @@ def test_ollama_streaming_updates_diagnostic_state(client, monkeypatch):
 
     diagnostics_store.reset()
 
-    def fake_stream(url, payload, *, headers=None, timeout=60.0, on_connected=None):
+    def fake_stream(
+        url,
+        payload,
+        *,
+        headers=None,
+        timeout=60.0,
+        idle_timeout=None,
+        on_connected=None,
+    ):
         if on_connected is not None:
             on_connected()
         yield {"message": {"thinking": "private reasoning"}, "done": False}
@@ -2893,7 +2902,15 @@ def test_timeout_classification_no_chunk_vs_partial_chunk(client, monkeypatch):
 
     diagnostics_store.reset()
 
-    def no_chunk(url, payload, *, headers=None, timeout=60.0, on_connected=None):
+    def no_chunk(
+        url,
+        payload,
+        *,
+        headers=None,
+        timeout=60.0,
+        idle_timeout=None,
+        on_connected=None,
+    ):
         if on_connected is not None:
             on_connected()
         raise TimeoutError()
@@ -2917,7 +2934,15 @@ def test_timeout_classification_no_chunk_vs_partial_chunk(client, monkeypatch):
 
     diagnostics_store.reset()
 
-    def partial_chunk(url, payload, *, headers=None, timeout=60.0, on_connected=None):
+    def partial_chunk(
+        url,
+        payload,
+        *,
+        headers=None,
+        timeout=60.0,
+        idle_timeout=None,
+        on_connected=None,
+    ):
         if on_connected is not None:
             on_connected()
         yield {"message": {"content": "partial"}, "done": False}
@@ -2933,6 +2958,47 @@ def test_timeout_classification_no_chunk_vs_partial_chunk(client, monkeypatch):
     assert result.ok is False
     second = client.get("/admin/local-llm/diagnostics").json()["recent_requests"][0]
     assert second["timeout_kind"] == "generation_timeout"
+
+
+def test_ollama_streaming_classifies_late_chunk_as_stalled_timeout(monkeypatch):
+    from app import local_llm
+    from app.local_llm_diagnostics import diagnostics_store
+
+    diagnostics_store.reset()
+    monkeypatch.setenv(local_llm.OLLAMA_STREAM_IDLE_TIMEOUT_ENV, "0.01")
+
+    def late_chunk(
+        url,
+        payload,
+        *,
+        headers=None,
+        timeout=60.0,
+        idle_timeout=None,
+        on_connected=None,
+    ):
+        if on_connected is not None:
+            on_connected()
+        yield {"message": {"content": "partial"}, "done": False}
+        time.sleep(0.02)
+        yield {"message": {"content": "late"}, "done": False}
+
+    monkeypatch.setattr(local_llm, "_post_json_stream_with_connect_event", late_chunk)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        task=local_llm.TASK_JOB_SUMMARY,
+    )
+
+    assert result.ok is False
+    record = diagnostics_store.snapshot()["recent_requests"][0]
+    assert record["timeout_kind"] == "stalled_generation_timeout"
+    assert record["content_detected"] is True
 
 
 def test_pull_model_is_only_called_from_the_pull_endpoint():

@@ -712,10 +712,13 @@ def test_is_timeout_recognises_both_timeout_causes():
     assert preflight._is_timeout(schema_failure) is False
 
 
-def test_local_timeout_marks_provider_degraded_but_not_skipped(
+def test_single_local_timeout_falls_back_but_does_not_mark_provider_degraded(
     tmp_path, monkeypatch
 ):
-    """A single early timeout degrades the provider; later tasks still try it."""
+    """A single early timeout falls back; later tasks still try local."""
+    from app.local_llm_diagnostics import diagnostics_store
+
+    diagnostics_store.reset()
     calls = {"n": 0}
 
     def fake_post(url, payload, *, headers=None, timeout=60.0):
@@ -729,11 +732,12 @@ def test_local_timeout_marks_provider_degraded_but_not_skipped(
 
     result = preflight.run_preflight(run_dir, config=_enabled_config())
 
-    # One timeout: degraded, but below the skip threshold so the provider is
-    # still attempted on later tasks.
-    assert result.local_degraded is True
+    # One timeout: fallback is used, but provider degradation is only published
+    # after the repeated-timeout threshold, so later tasks still try local.
+    assert result.local_degraded is False
     assert result.local_skipped is False
     assert result.fallback_used is True
+    assert diagnostics_store.snapshot()["provider_degraded"] == []
 
     manifest = json.loads(
         (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
@@ -771,6 +775,9 @@ def test_schema_failure_does_not_mark_provider_degraded(tmp_path, monkeypatch):
 
 def test_repeated_timeouts_skip_local_provider(tmp_path, monkeypatch):
     """After the threshold of timeouts, later tasks bypass the local call."""
+    from app.local_llm_diagnostics import diagnostics_store
+
+    diagnostics_store.reset()
     calls = {"n": 0}
 
     def fake_post(url, payload, *, headers=None, timeout=60.0):
@@ -788,6 +795,9 @@ def test_repeated_timeouts_skip_local_provider(tmp_path, monkeypatch):
     assert result.local_degraded is True
     assert result.local_skipped is True
     assert result.fallback_used is True
+    degraded = diagnostics_store.snapshot()["provider_degraded"]
+    assert degraded
+    assert degraded[0]["timeout_failures"] == preflight.LOCAL_SKIP_TIMEOUT_THRESHOLD
 
     manifest = json.loads(
         (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
@@ -969,11 +979,11 @@ def test_manifest_distinguishes_attempted_from_fallback_on_timeout(
     manifest = json.loads(
         (run_dir / "input" / "preflight" / "preflight_manifest.json").read_text()
     )
-    # Local was attempted; the run fell back; the provider degraded (one
-    # timeout) but did not cross the skip threshold.
+    # Local was attempted and the run fell back, but one timeout does not
+    # publish provider degradation.
     assert manifest["local_attempted"] is True
     assert manifest["fallback_used"] is True
-    assert manifest["local_degraded"] is True
+    assert manifest["local_degraded"] is False
     assert manifest["local_skipped"] is False
     # The timed-out task still recorded that local was attempted, with the
     # effective timeout that bounded it (no elapsed time on a timeout).
