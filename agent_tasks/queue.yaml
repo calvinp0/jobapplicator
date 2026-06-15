@@ -2954,3 +2954,101 @@ tasks:
       - "agent_tasks/147-add-local-llm-admin-monitor.md"
       - "agent_tasks/queue.yaml"
       - "docs/**"
+
+  - id: "148-local-llm-diagnostic-stream-accuracy"
+    title: "Make local LLM streaming diagnostics accurate (once-only events, separate thinking/content counts)"
+    file: "agent_tasks/148-local-llm-diagnostic-stream-accuracy.md"
+    branch: "agent/148-local-llm-diagnostic-stream-accuracy"
+    worktree: "agent-148-local-llm-diagnostic-stream-accuracy"
+    status: "planned"
+    depends_on:
+      - "147-add-local-llm-admin-monitor"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/local_llm_diagnostics.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/148-local-llm-diagnostic-stream-accuracy.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "149-local-llm-empty-content-suitability-warning"
+    title: "Fail thinking-only schema calls and emit a model-suitability warning"
+    file: "agent_tasks/149-local-llm-empty-content-suitability-warning.md"
+    branch: "agent/149-local-llm-empty-content-suitability-warning"
+    worktree: "agent-149-local-llm-empty-content-suitability-warning"
+    status: "planned"
+    depends_on:
+      - "148-local-llm-diagnostic-stream-accuracy"
+    verification:
+      - "python -m pytest backend/tests/test_local_llm.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/local_llm.py"
+      - "backend/app/local_llm_diagnostics.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/149-local-llm-empty-content-suitability-warning.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "150-preflight-per-task-json-schema-examples"
+    title: "Add per-task JSON schema examples to local LLM preflight prompts"
+    file: "agent_tasks/150-preflight-per-task-json-schema-examples.md"
+    branch: "agent/150-preflight-per-task-json-schema-examples"
+    worktree: "agent-150-preflight-per-task-json-schema-examples"
+    status: "planned"
+    depends_on:
+      - "149-local-llm-empty-content-suitability-warning"
+    verification:
+      - "python -m pytest backend/tests/test_preflight.py"
+      - "python -m pytest"
+    allowed_paths:
+      - "backend/app/preflight.py"
+      - "backend/tests/**"
+      - "docs/llm_providers.md"
+      - "agent_tasks/150-preflight-per-task-json-schema-examples.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "151-frontend-reasoning-mode-setting"
+    title: "Add reasoning-mode control (disabled/hidden/allowed) to LLM Provider settings"
+    file: "agent_tasks/151-frontend-reasoning-mode-setting.md"
+    branch: "agent/151-frontend-reasoning-mode-setting"
+    worktree: "agent-151-frontend-reasoning-mode-setting"
+    status: "planned"
+    depends_on:
+      - "147-add-local-llm-admin-monitor"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/SettingsPage.tsx"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/test/localLlmSettings.test.tsx"
+      - "frontend/src/test/llmProviderSettings.test.tsx"
+      - "docs/llm_providers.md"
+      - "agent_tasks/151-frontend-reasoning-mode-setting.md"
+      - "agent_tasks/queue.yaml"
+
+  - id: "152-frontend-monitor-thinking-content-lifecycle"
+    title: "Show thinking vs content lifecycle and suitability warning in the Local LLM Monitor"
+    file: "agent_tasks/152-frontend-monitor-thinking-content-lifecycle.md"
+    branch: "agent/152-frontend-monitor-thinking-content-lifecycle"
+    worktree: "agent-152-frontend-monitor-thinking-content-lifecycle"
+    status: "planned"
+    depends_on:
+      - "149-local-llm-empty-content-suitability-warning"
+      - "151-frontend-reasoning-mode-setting"
+    verification:
+      - "cd frontend && npm test -- --run"
+      - "cd frontend && npm run build"
+    allowed_paths:
+      - "frontend/src/pages/LocalLlmMonitorPage.tsx"
+      - "frontend/src/api/types.ts"
+      - "frontend/src/api/index.ts"
+      - "frontend/src/styles.css"
+      - "frontend/src/test/localLlmMonitor.test.tsx"
+      - "agent_tasks/152-frontend-monitor-thinking-content-lifecycle.md"
+      - "agent_tasks/queue.yaml"
