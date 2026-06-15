@@ -2938,7 +2938,7 @@ tasks:
       - "agent_tasks/queue.yaml"
   - id: "147-add-local-llm-admin-monitor"
     title: "Add local LLM admin monitor and streaming diagnostics"
-    file: "agent_tasks/131-add-local-llm-admin-monitor.md"
+    file: "agent_tasks/147-add-local-llm-admin-monitor.md"
     branch: "agent/147-add-local-llm-admin-monitor"
     worktree: "agent-147-add-local-llm-admin-monitor"
     status: "ready"
