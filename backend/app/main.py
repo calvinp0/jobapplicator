@@ -12,6 +12,7 @@ from .db import Base, engine, ensure_runtime_columns, get_db
 from .models import ClaudeRun
 from .routers import (
     activity,
+    admin_local_llm,
     applications,
     captures,
     evidence_banks,
@@ -364,6 +365,7 @@ def create_app() -> FastAPI:
     app.include_router(files.router)
     app.include_router(llm_providers.router)
     app.include_router(local_llm.router)
+    app.include_router(admin_local_llm.router)
     app.include_router(settings.router)
     app.include_router(gmail.router)
     app.include_router(prompts.router)

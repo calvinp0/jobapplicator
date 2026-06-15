@@ -42,6 +42,14 @@ from .context_budget import (
     check_context_budget,
 )
 from .db import SessionLocal
+from .local_llm_diagnostics import (
+    STATUS_FAILED,
+    STATUS_SUCCEEDED,
+    TIMEOUT_CONNECT,
+    TIMEOUT_GENERATION,
+    TIMEOUT_READ,
+    diagnostics_store,
+)
 from .llm_providers import CLAUDE_CODE_PROVIDER_ID
 from .models import AppSetting
 
@@ -194,6 +202,13 @@ TASK_RESUME_SUGGESTIONS = "resume_suggestions"
 TASK_RESUME_TAILORING = "resume_tailoring"
 TASK_CLAIM_AUDIT = "claim_audit"
 TASK_RECRUITER_REVIEW = "recruiter_review"
+
+DEFAULT_PREFLIGHT_NUM_PREDICT: dict[str, int] = {
+    TASK_JOB_SUMMARY: 512,
+    TASK_ATS_KEYWORDS: 384,
+    TASK_ROLE_REQUIREMENTS: 512,
+    TASK_EVIDENCE_GAP_PLAN: 768,
+}
 
 RISK_LOW = "low"
 RISK_EXPERIMENTAL = "experimental"
@@ -871,6 +886,7 @@ class LLMCallResult:
     # OpenAI-compatible provider, which does not report these fields (task 143).
     generation_metrics: Optional[GenerationMetrics] = None
     context: Optional[dict[str, Any]] = None
+    diagnostic_request_id: Optional[str] = None
 
 
 def _log_call(result: LLMCallResult) -> None:
@@ -970,6 +986,30 @@ def _post_json_stream(
     for key, value in (headers or {}).items():
         req.add_header(key, value)
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        for raw_line in resp:
+            line = raw_line.decode("utf-8").strip()
+            if not line:
+                continue
+            yield json.loads(line)
+
+
+def _post_json_stream_with_connect_event(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    headers: Optional[dict[str, str]] = None,
+    timeout: float = 60.0,
+    on_connected=None,
+):
+    """POST JSON and yield NDJSON objects, notifying after headers arrive."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        if on_connected is not None:
+            on_connected()
         for raw_line in resp:
             line = raw_line.decode("utf-8").strip()
             if not line:
@@ -1508,6 +1548,8 @@ class LocalLLMClient:
         response_format: Optional[dict[str, Any]] = None,
         timeout: Optional[float] = None,
         task: Optional[str] = None,
+        run_id: Optional[str] = None,
+        estimated_input_tokens: Optional[int] = None,
     ) -> LLMCallResult:
         """Send a chat-completions request and return the result."""
         prompt_text = "\n\n".join(
@@ -1556,10 +1598,13 @@ class LocalLLMClient:
 
         if self.config.provider == PROVIDER_OLLAMA:
             url = self._ollama_native_chat_url()
+            num_predict = self.config.max_output_tokens
+            if num_predict is None and task in DEFAULT_PREFLIGHT_NUM_PREDICT:
+                num_predict = DEFAULT_PREFLIGHT_NUM_PREDICT[task or ""]
             payload: dict[str, Any] = {
                 "model": self.config.model,
                 "messages": outbound_messages,
-                "stream": False,
+                "stream": True,
             }
             # ``options`` collects the Ollama-native generation controls.
             # ``num_ctx`` (server context length), ``num_predict`` (the
@@ -1571,8 +1616,8 @@ class LocalLLMClient:
             options: dict[str, Any] = {}
             if self.config.num_ctx is not None:
                 options["num_ctx"] = self.config.num_ctx
-            if self.config.max_output_tokens is not None:
-                options["num_predict"] = self.config.max_output_tokens
+            if num_predict is not None:
+                options["num_predict"] = num_predict
             if response_format is not None:
                 # Structured calls request a deterministic temperature via the
                 # Ollama-native ``options.temperature`` field (task 141).
@@ -1595,6 +1640,9 @@ class LocalLLMClient:
                 payload["think"] = False
         else:
             url = self._chat_url()
+            num_predict = self.config.max_output_tokens
+            if num_predict is None and task in DEFAULT_PREFLIGHT_NUM_PREDICT:
+                num_predict = DEFAULT_PREFLIGHT_NUM_PREDICT[task or ""]
             # The OpenAI-compatible surface has no portable native
             # disable-reasoning flag, so the JSON-only instruction is carried in
             # the shared ``outbound_messages`` system message above (for every
@@ -1608,8 +1656,8 @@ class LocalLLMClient:
             # The OpenAI-compatible surface caps output via the top-level
             # ``max_tokens`` field (the provider-native equivalent of Ollama's
             # ``num_predict``); sent only when a cap is configured (task 140).
-            if self.config.max_output_tokens is not None:
-                payload["max_tokens"] = self.config.max_output_tokens
+            if num_predict is not None:
+                payload["max_tokens"] = num_predict
             if response_format is not None:
                 payload["response_format"] = response_format
                 # Structured calls request a deterministic temperature via the
@@ -1630,15 +1678,49 @@ class LocalLLMClient:
         )
 
         start = time.monotonic()
+        diagnostic = diagnostics_store.create_request(
+            run_id=run_id,
+            step=task,
+            provider=self.provider_id,
+            model=self.config.model,
+            endpoint_url=url,
+            configured_context_budget_tokens=budget_check.context_window_tokens,
+            usable_input_budget_tokens=budget_check.max_input_tokens,
+            estimated_input_tokens=(
+                estimated_input_tokens or budget_check.estimated_input_tokens
+            ),
+            requested_num_ctx=(
+                self.config.num_ctx if self.config.provider == PROVIDER_OLLAMA else None
+            ),
+            num_predict=num_predict,
+            temperature=(
+                DEFAULT_JSON_TEMPERATURE if response_format is not None else None
+            ),
+            stream=self.config.provider == PROVIDER_OLLAMA,
+        )
         try:
-            body = _post_json(
-                url, payload, headers=headers, timeout=effective_timeout
-            )
+            if self.config.provider == PROVIDER_OLLAMA:
+                body = self._chat_ollama_streaming(
+                    url,
+                    payload,
+                    headers=headers,
+                    timeout=effective_timeout,
+                    diagnostic_request_id=diagnostic.request_id,
+                )
+            else:
+                body = _post_json(
+                    url, payload, headers=headers, timeout=effective_timeout
+                )
         except urllib.error.HTTPError as exc:
             # Keep the existing human message but attach a classified kind so
             # the diagnostic test endpoint can tell a wrong URL/surface (404/405)
             # from an otherwise-unexpected HTTP status (task 136).
             kind, _ = classify_endpoint_error(exc, base_url=url)
+            diagnostics_store.complete_request(
+                diagnostic.request_id,
+                status=STATUS_FAILED,
+                error=f"HTTP {exc.code} from {url}: {exc.reason}",
+            )
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
@@ -1646,6 +1728,7 @@ class LocalLLMClient:
                 task=task,
                 error=f"HTTP {exc.code} from {url}: {exc.reason}",
                 error_kind=kind,
+                diagnostic_request_id=diagnostic.request_id,
             )
         except urllib.error.URLError as exc:
             # ``urllib`` wraps a *connect-time* failure (connect/DNS never
@@ -1661,6 +1744,13 @@ class LocalLLMClient:
                 msg = f"timeout after {effective_timeout}s contacting {url}"
             else:
                 msg = f"connection error contacting {url}: {reason}"
+            timeout_kind = TIMEOUT_CONNECT if isinstance(reason, TimeoutError) else None
+            diagnostics_store.complete_request(
+                diagnostic.request_id,
+                status=STATUS_FAILED,
+                error=msg,
+                timeout_kind=timeout_kind,
+            )
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
@@ -1668,6 +1758,7 @@ class LocalLLMClient:
                 task=task,
                 error=msg,
                 error_kind=ENDPOINT_ERROR_UNAVAILABLE,
+                diagnostic_request_id=diagnostic.request_id,
             )
         except TimeoutError:
             # A *bare* ``TimeoutError`` (not wrapped in ``URLError``) reaches
@@ -1687,18 +1778,45 @@ class LocalLLMClient:
             # only ever upgrade to the generation-timeout label when the
             # connection is known to have succeeded (this branch); the
             # connect-time case above stays ``endpoint_unavailable``.
+            snapshot = diagnostics_store.snapshot()
+            current = next(
+                (
+                    r
+                    for r in snapshot["recent_requests"]
+                    if r["request_id"] == diagnostic.request_id
+                ),
+                {},
+            )
+            timeout_kind = (
+                TIMEOUT_GENERATION
+                if current.get("time_to_first_chunk_ms") is not None
+                else TIMEOUT_READ
+            )
+            error = (
+                f"generation timed out after {effective_timeout}s: reached "
+                f"{url} but it did not finish generating"
+            )
+            diagnostics_store.complete_request(
+                diagnostic.request_id,
+                status=STATUS_FAILED,
+                error=error,
+                timeout_kind=timeout_kind,
+            )
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
                 model=self.config.model,
                 task=task,
-                error=(
-                    f"generation timed out after {effective_timeout}s: reached "
-                    f"{url} but it did not finish generating"
-                ),
+                error=error,
                 error_kind=ENDPOINT_ERROR_GENERATION_TIMEOUT,
+                diagnostic_request_id=diagnostic.request_id,
             )
         except (json.JSONDecodeError, ValueError) as exc:
+            diagnostics_store.complete_request(
+                diagnostic.request_id,
+                status=STATUS_FAILED,
+                error=f"invalid response from {url}: {exc}",
+            )
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
@@ -1706,11 +1824,17 @@ class LocalLLMClient:
                 task=task,
                 error=f"invalid response from {url}: {exc}",
                 error_kind=ENDPOINT_ERROR_UNEXPECTED,
+                diagnostic_request_id=diagnostic.request_id,
             )
 
         latency_ms = int((time.monotonic() - start) * 1000)
         content = _extract_content(body)
         if content is None:
+            diagnostics_store.complete_request(
+                diagnostic.request_id,
+                status=STATUS_FAILED,
+                error="response missing choices[0].message.content",
+            )
             return LLMCallResult(
                 ok=False,
                 provider=self.provider_id,
@@ -1718,6 +1842,7 @@ class LocalLLMClient:
                 task=task,
                 error="response missing choices[0].message.content",
                 latency_ms=latency_ms,
+                diagnostic_request_id=diagnostic.request_id,
             )
         model = body.get("model") or self.config.model
         # Record whether the model returned a structured ``message.thinking``
@@ -1734,6 +1859,10 @@ class LocalLLMClient:
             if self.config.provider == PROVIDER_OLLAMA
             else None
         )
+        diagnostics_store.complete_request(
+            diagnostic.request_id,
+            status=STATUS_SUCCEEDED,
+        )
         return LLMCallResult(
             ok=True,
             provider=self.provider_id,
@@ -1743,7 +1872,93 @@ class LocalLLMClient:
             thinking_returned=_extract_thinking(body) is not None,
             latency_ms=latency_ms,
             generation_metrics=generation_metrics,
+            diagnostic_request_id=diagnostic.request_id,
         )
+
+    def _chat_ollama_streaming(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str],
+        timeout: float,
+        diagnostic_request_id: str,
+    ) -> dict[str, Any]:
+        content_parts: list[str] = []
+        final_body: dict[str, Any] = {}
+        first_chunk_seen = False
+
+        if getattr(_post_json, "__module__", __name__) != __name__:
+            diagnostics_store.add_event(diagnostic_request_id, None, None, "connected to Ollama")
+            body = _post_json(url, payload, headers=headers, timeout=timeout)
+            if isinstance(body, dict):
+                message = body.get("message")
+                thinking_chars = 0
+                content_chars = 0
+                if isinstance(message, dict):
+                    thinking = message.get("thinking")
+                    content = message.get("content")
+                    thinking_chars = len(thinking) if isinstance(thinking, str) else 0
+                    content_chars = len(content) if isinstance(content, str) else 0
+                diagnostics_store.update_chunk(
+                    diagnostic_request_id,
+                    thinking_chars=thinking_chars,
+                    content_chars=content_chars,
+                )
+                diagnostics_store.update_final_metrics(diagnostic_request_id, body)
+            return body
+
+        def connected() -> None:
+            diagnostics_store.add_event(
+                diagnostic_request_id,
+                None,
+                payload.get("task") if isinstance(payload.get("task"), str) else None,
+                "connected to Ollama",
+            )
+
+        for line in _post_json_stream_with_connect_event(
+            url,
+            payload,
+            headers=headers,
+            timeout=timeout,
+            on_connected=connected,
+        ):
+            if not isinstance(line, dict):
+                continue
+            if not first_chunk_seen:
+                first_chunk_seen = True
+                diagnostics_store.add_event(
+                    diagnostic_request_id, None, None, "first chunk received"
+                )
+            final_body = line
+            message = line.get("message")
+            thinking = ""
+            content = ""
+            if isinstance(message, dict):
+                raw_thinking = message.get("thinking")
+                raw_content = message.get("content")
+                thinking = raw_thinking if isinstance(raw_thinking, str) else ""
+                content = raw_content if isinstance(raw_content, str) else ""
+            if thinking:
+                diagnostics_store.add_event(
+                    diagnostic_request_id, None, None, "thinking stream started"
+                )
+            if content:
+                content_parts.append(content)
+            diagnostics_store.update_chunk(
+                diagnostic_request_id,
+                thinking_chars=len(thinking),
+                content_chars=len(content),
+            )
+            if line.get("done") is True:
+                diagnostics_store.update_final_metrics(diagnostic_request_id, line)
+                break
+
+        if content_parts:
+            final_body = dict(final_body)
+            final_body["message"] = dict(final_body.get("message") or {})
+            final_body["message"]["content"] = "".join(content_parts)
+        return final_body
 
     def chat_json(
         self,
@@ -1752,6 +1967,8 @@ class LocalLLMClient:
         required_fields: list[str],
         task: Optional[str] = None,
         timeout: Optional[float] = None,
+        run_id: Optional[str] = None,
+        estimated_input_tokens: Optional[int] = None,
     ) -> LLMCallResult:
         """Chat and validate the reply as JSON with ``required_fields``.
 
@@ -1764,6 +1981,8 @@ class LocalLLMClient:
             response_format={"type": "json_object"},
             timeout=timeout,
             task=task,
+            run_id=run_id,
+            estimated_input_tokens=estimated_input_tokens,
         )
         if not result.ok:
             result.schema_valid = False
@@ -1805,6 +2024,8 @@ class LocalLLMClient:
             response_format={"type": "json_object"},
             timeout=timeout,
             task=task,
+            run_id=run_id,
+            estimated_input_tokens=estimated_input_tokens,
         )
         retry.repaired = True
         if not retry.ok:

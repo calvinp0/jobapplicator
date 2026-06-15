@@ -35,6 +35,7 @@ def client() -> Iterator:
     # Reload modules so the engine picks up the new env var.
     for mod_name in [
         "app.main",
+        "app.routers.admin_local_llm",
         "app.routers.activity",
         "app.routers.applications",
         "app.routers.captures",
@@ -61,6 +62,7 @@ def client() -> Iterator:
         "app.claude_worker",
         "app.preflight",
         "app.llm_providers",
+        "app.local_llm_diagnostics",
         "app.local_llm",
         "app.gmail_client",
         "app.settings",

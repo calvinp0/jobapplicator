@@ -13,6 +13,7 @@ import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { ApplicationDetailPage } from "./pages/ApplicationDetailPage";
 import { PromptsPage } from "./pages/PromptsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { LocalLlmMonitorPage } from "./pages/LocalLlmMonitorPage";
 
 export function App() {
   return (
@@ -39,6 +40,7 @@ export function App() {
           element={<ApplicationDetailPage />}
         />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/admin/local-llm" element={<LocalLlmMonitorPage />} />
         <Route path="/prompts" element={<PromptsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

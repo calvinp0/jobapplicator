@@ -44,6 +44,10 @@ import type {
   LlmProvider,
   LlmProviderSetting,
   LocalLlmModelsResult,
+  LocalLlmDiagnosticEvent,
+  LocalLlmDiagnosticRecord,
+  LocalLlmDiagnosticsSnapshot,
+  LocalLlmProviderDegradedState,
   LocalLlmPullEvent,
   LocalLlmPullRequest,
   LocalLlmSettings,
@@ -116,6 +120,10 @@ export type {
   LlmProvider,
   LlmProviderSetting,
   LocalLlmModelsResult,
+  LocalLlmDiagnosticEvent,
+  LocalLlmDiagnosticRecord,
+  LocalLlmDiagnosticsSnapshot,
+  LocalLlmProviderDegradedState,
   LocalLlmPullEvent,
   LocalLlmPullRequest,
   LocalLlmSettings,
@@ -521,6 +529,10 @@ export function listLocalLlmModels(
   if (overrides.provider) params.set("provider", overrides.provider);
   const query = params.toString();
   return apiRequest(`/llm/local/models${query ? `?${query}` : ""}`);
+}
+
+export function getLocalLlmDiagnostics(): Promise<LocalLlmDiagnosticsSnapshot> {
+  return apiRequest("/admin/local-llm/diagnostics");
 }
 
 /**

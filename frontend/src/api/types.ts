@@ -205,6 +205,7 @@ export interface ProviderTraceDetails {
   eval_count?: number | null;
   prompt_eval_count?: number | null;
   thinking_returned?: boolean | null;
+  diagnostic_request_id?: string | null;
 }
 
 export interface ProviderTraceEvent {
@@ -841,6 +842,75 @@ export interface LocalLlmModelsResult {
   models: string[];
   error: string | null;
   error_kind: string | null;
+}
+
+export interface LocalLlmDiagnosticRecord {
+  request_id: string;
+  run_id: string | null;
+  step: string | null;
+  provider: string;
+  model: string;
+  endpoint_host: string;
+  endpoint_path: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  elapsed_ms: number;
+  configured_context_budget_tokens: number | null;
+  usable_input_budget_tokens: number | null;
+  estimated_input_tokens: number | null;
+  requested_num_ctx: number | null;
+  num_ctx_sent: boolean;
+  num_predict: number | null;
+  temperature: number | null;
+  stream: boolean;
+  server_reported_context_tokens: number | null;
+  active_runner_context_tokens: number | null;
+  context_trust_status: string;
+  time_to_first_chunk_ms: number | null;
+  time_to_first_content_ms: number | null;
+  prompt_eval_count: number | null;
+  prompt_eval_duration_ms: number | null;
+  eval_count: number;
+  eval_duration_ms: number;
+  total_duration_ms: number | null;
+  load_duration_ms: number | null;
+  tokens_per_second: number | null;
+  approx_generated_chars: number;
+  approx_generated_tokens: number;
+  thinking_detected: boolean;
+  content_detected: boolean;
+  last_chunk_at: string | null;
+  fallback_used: boolean;
+  fallback_reason: string | null;
+  error: string | null;
+  timeout_kind: string | null;
+}
+
+export interface LocalLlmDiagnosticEvent {
+  event_id: string;
+  request_id: string | null;
+  run_id: string | null;
+  step: string | null;
+  created_at: string;
+  message: string;
+  kind: string;
+}
+
+export interface LocalLlmProviderDegradedState {
+  run_id: string | null;
+  degraded: boolean;
+  reason: string | null;
+  timeout_failures: number;
+  updated_at: string;
+}
+
+export interface LocalLlmDiagnosticsSnapshot {
+  active_request: LocalLlmDiagnosticRecord | null;
+  active_requests: LocalLlmDiagnosticRecord[];
+  recent_requests: LocalLlmDiagnosticRecord[];
+  recent_events: LocalLlmDiagnosticEvent[];
+  provider_degraded: LocalLlmProviderDegradedState[];
 }
 
 // ---- Explicit model pull (task 137 backend / task 139 UI) ----

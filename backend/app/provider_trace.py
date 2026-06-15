@@ -208,6 +208,7 @@ class TraceEvent:
     server_reported_context_tokens: Optional[int] = None
     context_verified: Optional[bool] = None
     endpoint_host: Optional[str] = None
+    diagnostic_request_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.label is None:
@@ -224,6 +225,7 @@ class TraceEvent:
             "server_reported_context_tokens": self.server_reported_context_tokens,
             "context_verified": self.context_verified,
             "endpoint_host": self.endpoint_host,
+            "diagnostic_request_id": self.diagnostic_request_id,
         }
         return {k: v for k, v in raw.items() if v is not None}
 
@@ -293,6 +295,7 @@ def events_from_preflight(result: Any) -> list[TraceEvent]:
                 context_budget_tokens=context.get("context_window_tokens"),
                 usable_input_tokens=context.get("max_input_tokens"),
                 requested_num_ctx=context.get("requested_num_ctx"),
+                diagnostic_request_id=getattr(task, "diagnostic_request_id", None),
             )
         )
     return events

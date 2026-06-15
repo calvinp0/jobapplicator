@@ -4659,6 +4659,16 @@ fieldset.field legend {
   font-size: 12px;
 }
 
+.provider-trace-diagnostics-link {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+}
+
+.provider-trace-diagnostics-link span {
+  color: var(--text-subtle);
+  margin-left: var(--space-1);
+}
+
 .provider-trace-advanced {
   margin-top: var(--space-1);
   font-size: 12px;
@@ -4683,6 +4693,108 @@ fieldset.field legend {
 
 .provider-trace-advanced-list dd {
   margin: 0;
+}
+
+/* Local LLM admin monitor */
+.local-llm-monitor-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.monitor-fields {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.monitor-field {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.45fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.monitor-field dt {
+  color: var(--muted-fg);
+  font-size: 13px;
+}
+
+.monitor-field dd {
+  margin: 0;
+  color: var(--content-fg);
+  overflow-wrap: anywhere;
+}
+
+.monitor-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.monitor-events li {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.monitor-events time,
+.monitor-table th {
+  color: var(--muted-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.monitor-table-wrap {
+  overflow-x: auto;
+}
+
+.monitor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.monitor-table th,
+.monitor-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.monitor-table td {
+  color: var(--content-fg);
+}
+
+.monitor-table .mono {
+  font-family: var(--font-mono);
+}
+
+.monitor-degraded {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .monitor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-field,
+  .monitor-events li {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
 }
 
 /* Provenance strip in the review workspace top bar. */

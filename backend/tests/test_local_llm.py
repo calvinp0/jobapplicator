@@ -572,7 +572,7 @@ def test_client_sends_num_ctx_for_ollama_native(client, monkeypatch):
     assert captured["url"] == "http://localhost:11434/api/chat"
     # The configured server context reaches the request body.
     assert captured["payload"]["options"]["num_ctx"] == 16384
-    assert captured["payload"]["stream"] is False
+    assert captured["payload"]["stream"] is True
     # Native surface uses top-level "format", not OpenAI's response_format.
     assert captured["payload"]["format"] == "json"
     assert "response_format" not in captured["payload"]
@@ -632,7 +632,7 @@ def test_client_ollama_without_num_ctx_uses_native_chat(client, monkeypatch):
     local_llm.LocalLLMClient(config).chat([{"role": "user", "content": "hi"}])
 
     assert captured["url"] == "http://localhost:11434/api/chat"
-    assert captured["payload"]["stream"] is False
+    assert captured["payload"]["stream"] is True
     assert "options" not in captured["payload"]
 
 
@@ -2785,6 +2785,154 @@ def test_pull_endpoint_refuses_non_ollama_provider(client, monkeypatch):
     resp = client.post("/llm/local/pull", json={"model": "llama3.1:8b"})
     assert resp.status_code == 409, resp.text
     assert "ollama" in resp.json()["detail"].lower()
+
+
+# ---- local LLM diagnostics monitor (task 147) ------------------------
+
+
+def test_ollama_streaming_updates_diagnostic_state(client, monkeypatch):
+    from app import local_llm
+    from app.local_llm_diagnostics import diagnostics_store
+
+    diagnostics_store.reset()
+
+    def fake_stream(url, payload, *, headers=None, timeout=60.0, on_connected=None):
+        if on_connected is not None:
+            on_connected()
+        yield {"message": {"thinking": "private reasoning"}, "done": False}
+        yield {"message": {"content": '{"ok": true}'}, "done": False}
+        yield {
+            "message": {"content": ""},
+            "done": True,
+            "prompt_eval_count": 12,
+            "prompt_eval_duration": 2_000_000_000,
+            "eval_count": 3,
+            "eval_duration": 1_000_000_000,
+            "total_duration": 3_000_000_000,
+            "load_duration": 100_000_000,
+        }
+
+    monkeypatch.setattr(local_llm, "_post_json_stream_with_connect_event", fake_stream)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="qwen3.5:9b",
+        num_ctx=16000,
+    )
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "return json"}],
+        required_fields=["ok"],
+        task=local_llm.TASK_ATS_KEYWORDS,
+        run_id="run-1",
+        estimated_input_tokens=3842,
+    )
+
+    assert result.ok is True
+    assert result.parsed == {"ok": True}
+    assert result.thinking_returned is True
+    snapshot = client.get("/admin/local-llm/diagnostics").json()
+    record = snapshot["recent_requests"][0]
+    assert record["run_id"] == "run-1"
+    assert record["step"] == "ats_keywords"
+    assert record["endpoint_host"] == "localhost:11434"
+    assert record["endpoint_path"] == "/api/chat"
+    assert record["requested_num_ctx"] == 16000
+    assert record["num_predict"] == 384
+    assert record["temperature"] == 0
+    assert record["stream"] is True
+    assert record["thinking_detected"] is True
+    assert record["content_detected"] is True
+    assert record["prompt_eval_count"] == 12
+    assert record["prompt_eval_duration_ms"] == 2000
+    assert record["eval_count"] == 3
+    assert record["eval_duration_ms"] == 1000
+    assert record["tokens_per_second"] == 3.0
+    public = str(snapshot)
+    assert "private reasoning" not in public
+    assert "return json" not in public
+
+
+def test_diagnostic_api_does_not_expose_api_key_or_raw_prompt(client, monkeypatch):
+    from app import local_llm
+    from app.local_llm_diagnostics import diagnostics_store
+
+    diagnostics_store.reset()
+
+    def fake_post(url, payload, *, headers=None, timeout=60.0):
+        assert headers == {"Authorization": "Bearer secret-key"}
+        return _completion('{"ok": true}')
+
+    monkeypatch.setattr(local_llm, "_post_json", fake_post)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OPENAI_COMPATIBLE,
+        base_url="http://localhost:11434/v1",
+        model="llama3.1:8b",
+        api_key="secret-key",
+    )
+    result = local_llm.LocalLLMClient(config).chat_json(
+        [{"role": "user", "content": "raw prompt secret"}],
+        required_fields=["ok"],
+        task=local_llm.TASK_JOB_SUMMARY,
+    )
+    assert result.ok is True
+
+    snapshot = client.get("/admin/local-llm/diagnostics").json()
+    public = str(snapshot)
+    assert "secret-key" not in public
+    assert "Authorization" not in public
+    assert "raw prompt secret" not in public
+
+
+def test_timeout_classification_no_chunk_vs_partial_chunk(client, monkeypatch):
+    from app import local_llm
+    from app.local_llm_diagnostics import diagnostics_store
+
+    diagnostics_store.reset()
+
+    def no_chunk(url, payload, *, headers=None, timeout=60.0, on_connected=None):
+        if on_connected is not None:
+            on_connected()
+        raise TimeoutError()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(local_llm, "_post_json_stream_with_connect_event", no_chunk)
+
+    config = local_llm.LocalLLMConfig(
+        enabled=True,
+        provider=local_llm.PROVIDER_OLLAMA,
+        base_url="http://localhost:11434",
+        model="llama3.1:8b",
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        task=local_llm.TASK_JOB_SUMMARY,
+    )
+    assert result.ok is False
+    first = client.get("/admin/local-llm/diagnostics").json()["recent_requests"][0]
+    assert first["timeout_kind"] == "read_timeout"
+
+    diagnostics_store.reset()
+
+    def partial_chunk(url, payload, *, headers=None, timeout=60.0, on_connected=None):
+        if on_connected is not None:
+            on_connected()
+        yield {"message": {"content": "partial"}, "done": False}
+        raise TimeoutError()
+
+    monkeypatch.setattr(
+        local_llm, "_post_json_stream_with_connect_event", partial_chunk
+    )
+    result = local_llm.LocalLLMClient(config).chat(
+        [{"role": "user", "content": "hi"}],
+        task=local_llm.TASK_JOB_SUMMARY,
+    )
+    assert result.ok is False
+    second = client.get("/admin/local-llm/diagnostics").json()["recent_requests"][0]
+    assert second["timeout_kind"] == "generation_timeout"
 
 
 def test_pull_model_is_only_called_from_the_pull_endpoint():

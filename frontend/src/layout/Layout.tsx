@@ -46,6 +46,7 @@ const CONFIGURE_GROUP: NavGroup = {
   items: [
     { to: "/prompts", label: "Prompt harnesses" },
     { to: "/settings", label: "Settings" },
+    { to: "/admin/local-llm", label: "Local LLM monitor" },
   ],
 };
 

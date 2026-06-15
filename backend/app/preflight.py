@@ -63,6 +63,10 @@ from .local_llm import (
     TASK_ROLE_REQUIREMENTS,
     local_allowed_for_task,
 )
+from .local_llm_diagnostics import (
+    STATUS_FALLBACK,
+    diagnostics_store,
+)
 
 # ---- Layout ----------------------------------------------------------
 
@@ -224,6 +228,7 @@ class PreflightTaskResult:
     generation_metrics: Optional[GenerationMetrics] = None
     thinking_returned: bool = False
     timeout_kind: Optional[str] = None
+    diagnostic_request_id: Optional[str] = None
 
     def manifest_entry(self) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -281,6 +286,8 @@ class PreflightTaskResult:
             # (task 144/145). Absent on a clean call or a non-timeout failure.
             if self.timeout_kind is not None:
                 entry["timeout_kind"] = self.timeout_kind
+            if self.diagnostic_request_id is not None:
+                entry["diagnostic_request_id"] = self.diagnostic_request_id
         return entry
 
 
@@ -368,6 +375,7 @@ def run_preflight(
             on_progress(msg)
 
     run_dir = Path(run_dir)
+    run_id = run_dir.name
     input_dir = run_dir / INPUT_DIRNAME
     preflight_dir = input_dir / PREFLIGHT_DIRNAME
     preflight_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +461,7 @@ def run_preflight(
         validator=validate_job_summary,
         log=log,
         health=health,
+        run_id=run_id,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_JOB_SUMMARY.artifact, data, results, result, artifact_paths, log)
@@ -470,6 +479,7 @@ def run_preflight(
         validator=validate_ats_keywords,
         log=log,
         health=health,
+        run_id=run_id,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_ATS_KEYWORDS.artifact, data, results, result, artifact_paths, log)
@@ -487,6 +497,7 @@ def run_preflight(
         validator=validate_role_requirements,
         log=log,
         health=health,
+        run_id=run_id,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_ROLE_REQUIREMENTS.artifact, data, results, result, artifact_paths, log)
@@ -507,6 +518,7 @@ def run_preflight(
         validator=validate_evidence_gap_plan,
         log=log,
         health=health,
+        run_id=run_id,
     )
     _stamp_timing(result, _t0, _started)
     _write_artifact(preflight_dir, _SPEC_EVIDENCE_GAP_PLAN.artifact, data, results, result, artifact_paths, log)
@@ -691,6 +703,7 @@ def _run_one(
     validator: Callable[[Any], tuple[Optional[dict[str, Any]], Optional[str]]],
     log: Callable[[str], None],
     health: _ProviderHealth,
+    run_id: Optional[str] = None,
 ) -> tuple[dict[str, Any], PreflightTaskResult]:
     """Resolve one task to (artifact_data, task_result).
 
@@ -714,6 +727,13 @@ def _run_one(
             log(
                 f"jobapply: {LOCAL_SKIPPED_REASON}; using deterministic "
                 f"{spec.name} extractor"
+            )
+            diagnostics_store.record_degraded_skip(
+                run_id=run_id,
+                step=spec.policy_task,
+                provider=local_llm._local_provider_label(cfg),
+                model=cfg.model,
+                reason=LOCAL_SKIPPED_REASON,
             )
             return _deterministic_result(
                 spec,
@@ -746,6 +766,8 @@ def _run_one(
             messages,
             required_fields=list(spec.required_fields),
             task=spec.policy_task,
+            run_id=run_id,
+            estimated_input_tokens=context_info.get("estimated_input_tokens_final"),
         )
         # A local call was actually issued: capture its performance record
         # (task 133) regardless of whether it ultimately validated. The prompt
@@ -772,6 +794,7 @@ def _run_one(
                     effective_timeout_seconds=effective_timeout,
                     generation_metrics=call.generation_metrics,
                     thinking_returned=call.thinking_returned,
+                    diagnostic_request_id=call.diagnostic_request_id,
                 )
             fallback_reason = f"local output failed schema validation: {reason}"
         else:
@@ -780,6 +803,11 @@ def _run_one(
             if _is_timeout(call):
                 health.record_timeout()
                 timeout_kind = call.error_kind
+                diagnostics_store.mark_provider_degraded(
+                    run_id=run_id,
+                    reason=call.error or "local LLM timeout",
+                    timeout_failures=health.timeouts,
+                )
             fallback_reason = (
                 call.error
                 or "local provider returned an invalid or unparseable response"
@@ -803,6 +831,16 @@ def _run_one(
         result.generation_metrics = call.generation_metrics
         result.thinking_returned = call.thinking_returned
         result.timeout_kind = timeout_kind
+        result.diagnostic_request_id = call.diagnostic_request_id
+        if call.diagnostic_request_id is not None:
+            diagnostics_store.complete_request(
+                call.diagnostic_request_id,
+                status=STATUS_FALLBACK,
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+                error=call.error,
+                timeout_kind=timeout_kind,
+            )
         return data, result
 
     # Deterministic is the intended provider (local disabled/not allowed).

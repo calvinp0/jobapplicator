@@ -1,4 +1,5 @@
 import type { ProviderSummary, ProviderTraceEvent } from "../api/types";
+import { Link } from "react-router-dom";
 
 /**
  * Provider/run trace display (task 129).
@@ -51,6 +52,14 @@ function ProviderTraceRow({ event }: { event: ProviderTraceEvent }) {
       </div>
       {event.warning ? (
         <p className="provider-trace-row-warning">{event.warning}</p>
+      ) : null}
+      {details.diagnostic_request_id || event.warning?.toLowerCase().includes("local llm") ? (
+        <p className="provider-trace-diagnostics-link">
+          <Link to="/admin/local-llm">Open Local LLM diagnostics</Link>
+          {details.diagnostic_request_id ? (
+            <span> request {details.diagnostic_request_id.slice(0, 8)}</span>
+          ) : null}
+        </p>
       ) : null}
       {hasAdvancedDetails(event) ? (
         <details className="provider-trace-advanced">
