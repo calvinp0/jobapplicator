@@ -298,6 +298,26 @@ commit_dirty_task_worktree() {
   git -C "$wt_path" commit -m "$message"
 }
 
+amend_dirty_fix_worktree() {
+  local task_id="$1" wt_path="$2" journal_path="$3"
+
+  printf '  Agent left a dirty worktree after a successful fix; amending task commit.\n'
+  journal_kv "$journal_path" "auto_fix_amend" "attempt"
+
+  git -C "$wt_path" add -A -- . \
+    ':(exclude).agentctl/reviews/**' \
+    ':(exclude).agentctl/verifications/**'
+  if git -C "$wt_path" diff --cached --quiet; then
+    journal_kv "$journal_path" "auto_fix_amend" "skipped: no staged changes"
+    return 1
+  fi
+  if ! git -C "$wt_path" commit --amend --no-edit; then
+    journal_kv "$journal_path" "auto_fix_amend" "FAIL"
+    return 1
+  fi
+  journal_kv "$journal_path" "auto_fix_amend" "PASS"
+}
+
 task_worktree_dirty_status() {
   local wt_path="$1"
   git -C "$wt_path" status --porcelain \
@@ -3181,12 +3201,22 @@ work_one_task() {
           local wt_path
           wt_path="$(worktree_path "$worktree")"
           if [[ -n "$wt_path" && -n "$(task_worktree_dirty_status "$wt_path")" ]]; then
-            journal_kv "$journal_path" "post_fix_check" "dirty"
-            work_stop "$task_id" "$journal_path" "$worktree" \
-              "task worktree is dirty after fix" \
-              "dirty-after-fix" \
-              "cd $wt_path && git status; finish, commit, or clean"
-            return 1
+            journal_kv "$journal_path" "post_fix_check" "dirty; attempting harness amend"
+            if ! amend_dirty_fix_worktree "$task_id" "$wt_path" "$journal_path"; then
+              work_stop "$task_id" "$journal_path" "$worktree" \
+                "task worktree is dirty after fix" \
+                "dirty-after-fix" \
+                "cd $wt_path && git status; finish, commit, or clean"
+              return 1
+            fi
+            if [[ -n "$(task_worktree_dirty_status "$wt_path")" ]]; then
+              journal_kv "$journal_path" "post_fix_check" "dirty after harness amend"
+              work_stop "$task_id" "$journal_path" "$worktree" \
+                "task worktree is still dirty after harness amend" \
+                "dirty-after-harness-amend" \
+                "cd $wt_path && git status; finish, commit, or clean"
+              return 1
+            fi
           fi
           journal_kv "$journal_path" "post_fix_check" "clean"
         fi
