@@ -77,6 +77,18 @@
 #                                    exactly one file, the review artifact.)
 #   CLAUDE_FIX_PERMISSION_MODE       Permission mode for fix. Default: acceptEdits
 #   CLAUDE_PLAN_PERMISSION_MODE      Permission mode for plan. Default: acceptEdits
+#   Per-phase model + reasoning effort (Claude agent only; codex ignores these
+#   and uses CODEX_MODEL). Each value is passed to `claude` as --model / --effort.
+#   An empty value omits the flag, inheriting the session/CLI default. Effort is
+#   one of low|medium|high|xhigh|max. Defaults encode the cost/quality split:
+#   cheap high-volume work (run, fix) on Sonnet, judgment work (review, plan)
+#   on Opus. Override any of them per invocation, e.g.
+#     CLAUDE_MODEL=opus CLAUDE_EFFORT=xhigh scripts/agentctl.sh run 014
+#     CLAUDE_REVIEW_MODEL= scripts/agentctl.sh review 014   # inherit default
+#   CLAUDE_MODEL / CLAUDE_EFFORT                     run phase.   Default: sonnet / high
+#   CLAUDE_FIX_MODEL / CLAUDE_FIX_EFFORT             fix phase.   Default: sonnet / high
+#   CLAUDE_REVIEW_MODEL / CLAUDE_REVIEW_EFFORT       review phase. Default: opus / high
+#   CLAUDE_PLAN_MODEL / CLAUDE_PLAN_EFFORT           plan phase.  Default: opus / high
 #   CLAUDE_PYTHON                    Python interpreter used to parse YAML. Default: python3
 #   CODEX_BIN                        Codex executable. Default: codex
 #   CODEX_MODEL                      Optional model override passed as --model.
@@ -97,6 +109,19 @@ CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_REVIEW_PERMISSION_MODE="${CLAUDE_REVIEW_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_FIX_PERMISSION_MODE="${CLAUDE_FIX_PERMISSION_MODE:-acceptEdits}"
 CLAUDE_PLAN_PERMISSION_MODE="${CLAUDE_PLAN_PERMISSION_MODE:-acceptEdits}"
+# Per-phase model + reasoning effort (Claude agent only). Empty = inherit the
+# session/CLI default. Defaults: cheap high-volume work (run/fix) on Sonnet,
+# judgment work (review/plan) on Opus. See the header comment for details.
+# Note: use `${VAR-default}` (not `:-`) so an explicitly-empty override
+# (CLAUDE_REVIEW_MODEL=) is honored as "inherit", not replaced by the default.
+CLAUDE_MODEL="${CLAUDE_MODEL-sonnet}"
+CLAUDE_EFFORT="${CLAUDE_EFFORT-high}"
+CLAUDE_FIX_MODEL="${CLAUDE_FIX_MODEL-sonnet}"
+CLAUDE_FIX_EFFORT="${CLAUDE_FIX_EFFORT-high}"
+CLAUDE_REVIEW_MODEL="${CLAUDE_REVIEW_MODEL-opus}"
+CLAUDE_REVIEW_EFFORT="${CLAUDE_REVIEW_EFFORT-high}"
+CLAUDE_PLAN_MODEL="${CLAUDE_PLAN_MODEL-opus}"
+CLAUDE_PLAN_EFFORT="${CLAUDE_PLAN_EFFORT-high}"
 CLAUDE_PYTHON="${CLAUDE_PYTHON:-python3}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CODEX_MODEL="${CODEX_MODEL:-}"
@@ -205,14 +230,69 @@ claude_worktree_args() {
   printf -- '--worktree\n%s\n' "$worktree"
 }
 
-run_agent_exec() {
-  local worktree="$1" permission_mode="$2" prompt="$3"
+# claude_phase_policy <phase>
+#
+# Print "<model>\t<effort>" for a lifecycle phase (run|fix|review|plan),
+# resolved from the per-phase env vars. Either field may be empty, meaning
+# "inherit the session/CLI default" (omit the flag). Unknown phases resolve
+# to empty/empty so callers degrade to the session default rather than error.
+claude_phase_policy() {
+  case "$1" in
+    run)    printf '%s\t%s\n' "$CLAUDE_MODEL"        "$CLAUDE_EFFORT" ;;
+    fix)    printf '%s\t%s\n' "$CLAUDE_FIX_MODEL"    "$CLAUDE_FIX_EFFORT" ;;
+    review) printf '%s\t%s\n' "$CLAUDE_REVIEW_MODEL" "$CLAUDE_REVIEW_EFFORT" ;;
+    plan)   printf '%s\t%s\n' "$CLAUDE_PLAN_MODEL"   "$CLAUDE_PLAN_EFFORT" ;;
+    *)      printf '\t\n' ;;
+  esac
+}
+
+# claude_model_effort_args <phase>
+#
+# Print the --model / --effort flags (one token per line, for mapfile) for the
+# given phase, omitting whichever value is empty. Mirrors claude_worktree_args.
+claude_model_effort_args() {
+  # Parse with parameter expansion, not `IFS=$'\t' read`: tab is IFS-whitespace,
+  # so `read` would collapse a leading empty field (empty model + set effort)
+  # and misassign the effort to --model.
+  local policy model effort
+  policy="$(claude_phase_policy "$1")"
+  model="${policy%%$'\t'*}"
+  effort="${policy#*$'\t'}"
+  [[ -n "$model" ]]  && printf -- '--model\n%s\n' "$model"
+  [[ -n "$effort" ]] && printf -- '--effort\n%s\n' "$effort"
+  return 0
+}
+
+# agent_model_effort_display <phase>
+#
+# Human-readable "model / effort" for logs and journals. For codex, model
+# selection is global (CODEX_MODEL) and effort is not a CLI flag, so report
+# that instead of the (ignored) Claude per-phase vars.
+agent_model_effort_display() {
+  local policy model effort
   case "$(normalize_agent "$AGENTCTL_AGENT")" in
     claude)
-      local wt_args=()
+      policy="$(claude_phase_policy "$1")"
+      model="${policy%%$'\t'*}"
+      effort="${policy#*$'\t'}"
+      printf '%s / %s' "${model:-(session default)}" "${effort:-(session default)}"
+      ;;
+    codex)
+      printf '%s / (codex effort via profile)' "${CODEX_MODEL:-(default)}"
+      ;;
+  esac
+}
+
+run_agent_exec() {
+  local worktree="$1" permission_mode="$2" prompt="$3" phase="${4:-run}"
+  case "$(normalize_agent "$AGENTCTL_AGENT")" in
+    claude)
+      local wt_args=() me_args=()
       mapfile -t wt_args < <(claude_worktree_args "$worktree")
+      mapfile -t me_args < <(claude_model_effort_args "$phase")
       "$CLAUDE_BIN" \
         "${wt_args[@]}" \
+        "${me_args[@]}" \
         --permission-mode "$permission_mode" \
         -p "$prompt"
       ;;
@@ -223,13 +303,15 @@ run_agent_exec() {
 }
 
 run_agent_interactive() {
-  local worktree="$1" permission_mode="$2" prompt="$3"
+  local worktree="$1" permission_mode="$2" prompt="$3" phase="${4:-run}"
   case "$(normalize_agent "$AGENTCTL_AGENT")" in
     claude)
-      local wt_args=()
+      local wt_args=() me_args=()
       mapfile -t wt_args < <(claude_worktree_args "$worktree")
+      mapfile -t me_args < <(claude_model_effort_args "$phase")
       "$CLAUDE_BIN" \
         "${wt_args[@]}" \
+        "${me_args[@]}" \
         --permission-mode "$permission_mode" \
         "$prompt"
       ;;
@@ -523,6 +605,7 @@ cmd_run_interactive() {
   printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
   if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
     printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
+    printf '  model/effort:    %s\n' "$(agent_model_effort_display run)"
   else
     printf '  sandbox: %s\n' "$CODEX_SANDBOX"
     printf '  ask-for-approval: %s\n' "$CODEX_ASK_FOR_APPROVAL"
@@ -530,7 +613,7 @@ cmd_run_interactive() {
   printf '\nInteractive supervised mode: the agent will stop before committing and wait for you to type "commit".\n\n'
 
   if ! ( cd "$launch_dir" && run_agent_interactive \
-      "$worktree" "$CLAUDE_PERMISSION_MODE" "$prompt" ); then
+      "$worktree" "$CLAUDE_PERMISSION_MODE" "$prompt" "run" ); then
     die "$(agent_name) exited with a non-zero status"
   fi
 
@@ -922,6 +1005,7 @@ cmd_run() {
   printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
   if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
     printf '  permission-mode: %s\n' "$CLAUDE_PERMISSION_MODE"
+    printf '  model/effort:    %s\n' "$(agent_model_effort_display run)"
   else
     printf '  sandbox: %s\n' "$CODEX_SANDBOX"
   fi
@@ -931,7 +1015,7 @@ cmd_run() {
   # that honor it, but we do not rely on it alone (see
   # docs/contracts/agent_orchestration.md - "Worktree Isolation").
   if ! ( cd "$launch_dir" && run_agent_exec \
-      "$worktree" "$CLAUDE_PERMISSION_MODE" "$prompt" ); then
+      "$worktree" "$CLAUDE_PERMISSION_MODE" "$prompt" "run" ); then
     die "$(agent_name) exited with a non-zero status"
   fi
 
@@ -988,6 +1072,7 @@ cmd_review() {
   printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
   if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
     printf '  permission-mode: %s\n' "$CLAUDE_REVIEW_PERMISSION_MODE"
+    printf '  model/effort:    %s\n' "$(agent_model_effort_display review)"
   else
     printf '  sandbox: %s\n' "$CODEX_SANDBOX"
   fi
@@ -995,7 +1080,7 @@ cmd_review() {
 
   # Launch from inside the task worktree path (see cmd_run for rationale).
   if ! ( cd "$launch_dir" && run_agent_exec \
-      "$worktree" "$CLAUDE_REVIEW_PERMISSION_MODE" "$prompt" ); then
+      "$worktree" "$CLAUDE_REVIEW_PERMISSION_MODE" "$prompt" "review" ); then
     die "$(agent_name) exited with a non-zero status"
   fi
 
@@ -2686,6 +2771,7 @@ cmd_fix_verification_failure() {
   printf '  agent:            %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
   if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
     printf '  permission-mode:  %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+    printf '  model/effort:     %s\n' "$(agent_model_effort_display fix)"
   else
     printf '  sandbox:          %s\n' "$CODEX_SANDBOX"
   fi
@@ -2695,7 +2781,7 @@ cmd_fix_verification_failure() {
 
   local rc=0
   if ( cd "$launch_dir" && run_agent_exec \
-      "$worktree" "$CLAUDE_FIX_PERMISSION_MODE" "$prompt" ); then
+      "$worktree" "$CLAUDE_FIX_PERMISSION_MODE" "$prompt" "fix" ); then
     rc=0
   else
     rc=$?
@@ -2822,13 +2908,14 @@ cmd_fix() {
   printf '  agent:           %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
   if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
     printf '  permission-mode: %s\n' "$CLAUDE_FIX_PERMISSION_MODE"
+    printf '  model/effort:    %s\n' "$(agent_model_effort_display fix)"
   else
     printf '  sandbox:         %s\n' "$CODEX_SANDBOX"
   fi
   printf '  review artifact: %s (verdict: %s)\n' "$artifact_path" "$verdict"
 
   if ! ( cd "$launch_dir" && run_agent_exec \
-      "$worktree" "$CLAUDE_FIX_PERMISSION_MODE" "$prompt" ); then
+      "$worktree" "$CLAUDE_FIX_PERMISSION_MODE" "$prompt" "fix" ); then
     die "$(agent_name) exited with a non-zero status"
   fi
 
@@ -2982,6 +3069,10 @@ work_one_task() {
     printf 'worktree: %s\n' "$worktree"
     printf 'main_commit_at_start: %s\n' "$main_sha"
     printf 'command: work %s\n' "$task_id"
+    printf 'agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
+    printf 'model_effort_run: %s\n' "$(agent_model_effort_display run)"
+    printf 'model_effort_review: %s\n' "$(agent_model_effort_display review)"
+    printf 'model_effort_fix: %s\n' "$(agent_model_effort_display fix)"
     printf 'start_time: %s\n' "$start_time"
     printf 'dry_run: %s\n' "$([[ "$dry_run" -eq 1 ]] && printf yes || printf no)"
     printf 'max_fix_attempts: %d\n' "$max_fix_attempts"
@@ -2995,6 +3086,7 @@ work_one_task() {
   # --- Stage 1: Run --------------------------------------------------------
   printf '\n[1/4] Run\n'
   journal_section "$journal_path" "Stage 1: Run"
+  journal_kv "$journal_path" "model_effort" "$(agent_model_effort_display run)"
 
   if [[ "$dry_run" -eq 1 ]]; then
     printf '  (dry-run) would invoke: %s run %s\n' "$0" "$task_id"
@@ -3084,6 +3176,7 @@ work_one_task() {
   while true; do
     printf '\n[2/4] Review (attempt %d)\n' "$((attempt + 1))"
     journal_section "$journal_path" "Stage 2: Review (attempt $((attempt + 1)))"
+    journal_kv "$journal_path" "model_effort" "$(agent_model_effort_display review)"
 
     if [[ "$dry_run" -eq 1 ]]; then
       printf '  (dry-run) would invoke: %s review %s\n' "$0" "$task_id"
@@ -3170,6 +3263,7 @@ work_one_task() {
         attempt=$((attempt + 1))
         printf '\n[3/4] Fix attempt %d/%d\n' "$attempt" "$max_fix_attempts"
         journal_section "$journal_path" "Stage 3: Fix attempt $attempt"
+        journal_kv "$journal_path" "model_effort" "$(agent_model_effort_display fix)"
 
         local required
         required="$(read_review_section "$task_id" "Required fixes" 2>/dev/null || true)"
@@ -4329,6 +4423,7 @@ plan_local() {
   printf '  agent: %s\n' "$(normalize_agent "$AGENTCTL_AGENT")"
   if [[ "$(normalize_agent "$AGENTCTL_AGENT")" == "claude" ]]; then
     printf '  permission-mode: %s\n' "$CLAUDE_PLAN_PERMISSION_MODE"
+    printf '  model/effort:    %s\n' "$(agent_model_effort_display plan)"
   else
     printf '  sandbox: %s\n' "$CODEX_SANDBOX"
   fi
@@ -4338,7 +4433,7 @@ plan_local() {
   # Run the planner in the real main checkout (no --worktree main shadow), so
   # its task files and queue edits land where `work` and the operator commit.
   if ! ( cd "$REPO_ROOT" && run_agent_exec \
-      "main" "$CLAUDE_PLAN_PERMISSION_MODE" "$prompt" ); then
+      "main" "$CLAUDE_PLAN_PERMISSION_MODE" "$prompt" "plan" ); then
     die "$(agent_name) exited with a non-zero status"
   fi
 
